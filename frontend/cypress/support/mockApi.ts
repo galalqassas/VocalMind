@@ -10,6 +10,7 @@ import {
   mockPolicyViolations,
   mockUtterances,
   mockWeeklyTrend,
+  mockKBArticles,
 } from '../../src/app/data/mockData';
 import type {
   AgentProfile,
@@ -44,6 +45,7 @@ export interface AppScenario {
   chat?: MockRouteResponse<{ answer: string; context: string }>;
   dashboard?: MockRouteResponse<DashboardStats>;
   faqs?: MockRouteResponse<FAQData[]>;
+  kb?: MockRouteResponse<FAQData[]>;
   interactionDetails?: Record<string, MockRouteResponse<InteractionDetail>>;
   interactions?: MockRouteResponse<InteractionSummary[]>;
   logout?: MockRouteResponse<Record<string, never>>;
@@ -122,6 +124,7 @@ export function buildAssistantResponse(
     mode: 'chat',
     sql: 'SELECT * FROM interactions LIMIT 5',
     execution_time: '120ms',
+    executionTime: '120ms',
     data: [
       { name: 'Sarah M.', score: 92 },
       { name: 'John D.', score: 85 },
@@ -171,8 +174,8 @@ function buildUtterances(interaction: InteractionSummary): UtteranceData[] {
   if (cannedUtterances.length > 0) {
     return cannedUtterances.map((utterance) => ({
       ...utterance,
-      fusedEmotion: utterance.fusedEmotion ?? utterance.emotion,
-      fusedConfidence: utterance.fusedConfidence ?? utterance.confidence,
+      fusedEmotion: (utterance as any).fusedEmotion ?? utterance.emotion,
+      fusedConfidence: (utterance as any).fusedConfidence ?? utterance.confidence,
     }));
   }
 
@@ -431,8 +434,7 @@ function buildLlmTriggers(
       citations: [],
     },
     nliPolicy: {
-      nliCategory:
-        policyViolations.length > 0 ? 'Contradiction' : 'Entailment',
+      nliCategory: (policyViolations.length > 0 ? 'Contradiction' : 'Entailment') as "Contradiction" | "Entailment" | "Benign Deviation" | "Policy Hallucination",
       justification:
         policyViolations.length > 0
           ? 'The transcript conflicts with the escalation policy requirements.'
@@ -465,13 +467,6 @@ export function buildInteractionDetail(
   const llmTriggers = buildLlmTriggers(interaction, policyViolations);
 
   return {
-    interaction: {
-      ...interaction,
-    },
-    utterances: buildUtterances(interaction),
-    emotionEvents: buildEmotionEvents(interaction),
-    policyViolations,
-    llmTriggers,
     emotionComparison: null,
     ragCompliance: null,
     emotionTriggers: null,
@@ -539,7 +534,7 @@ function inferRoleFromLoginBody(body: unknown): TestRole {
 }
 
 function replyWith<T>(
-  req: Cypress.Request,
+  req: any,
   response: MockRouteResponse<T> | undefined,
   fallbackBody: T,
   alias?: string,
@@ -616,6 +611,10 @@ export function registerApiScenario(scenario: AppScenario = {}) {
 
   cy.intercept('GET', '**/api/v1/knowledge/faqs', (req) => {
     replyWith(req, scenario.faqs, cloneData(mockFAQs), 'getFaqs');
+  });
+
+  cy.intercept('GET', '**/api/v1/knowledge/kb', (req) => {
+    replyWith(req, scenario.kb, cloneData(mockKBArticles), 'getKB');
   });
 
   cy.intercept('GET', '**/api/v1/agents', (req) => {

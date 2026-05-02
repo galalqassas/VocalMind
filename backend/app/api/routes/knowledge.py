@@ -15,12 +15,14 @@ from app.core.config import settings
 from app.models.organization import Organization
 from app.models.policy import CompanyPolicy, OrganizationPolicy, PolicyCompliance
 from app.models.faq import FAQArticle, OrganizationFAQArticle
+from app.llm_trigger.service import invalidate_llm_trigger_cache
 
 router = APIRouter()
 
 POLICY_DOCS_FOLDER = "policy-docs"
 SOP_DOCS_FOLDER = "sop-procedures"
 LEGACY_FAQ_DOCS_FOLDER = "faq-docs"
+KB_DOCS_FOLDER = "kb"
 
 # --- Schemas ---
 
@@ -165,6 +167,7 @@ async def create_policy(session: SessionDep, current_user: CurrentUser, data: Po
     )
     session.add(org_link)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -204,6 +207,7 @@ async def upload_policy(
     )
     session.add(org_link)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -260,6 +264,7 @@ async def replace_policy_upload(
     policy.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(policy)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -278,6 +283,7 @@ async def toggle_policy(session: SessionDep, current_user: CurrentUser, policy_i
     org_policy.is_active = not org_policy.is_active
     session.add(org_policy)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "isActive": org_policy.is_active}
 
 
@@ -480,6 +486,7 @@ async def delete_policy(
             _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, policy_id)
             
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "message": "Policy deleted"}
 
 
@@ -519,3 +526,170 @@ async def delete_faq(
             
     await session.commit()
     return {"status": "success", "message": "FAQ deleted"}
+
+
+# --- Knowledge Base Endpoints ---
+
+
+KB_CATEGORY_PREFIX = "kb:"
+
+
+def _is_kb_article(faq: FAQArticle) -> bool:
+    return (faq.category or "").startswith(KB_CATEGORY_PREFIX)
+
+
+def _kb_display_category(raw_category: str) -> str:
+    if raw_category.startswith(KB_CATEGORY_PREFIX):
+        return raw_category[len(KB_CATEGORY_PREFIX):].strip() or "General"
+    return raw_category
+
+
+@router.get("/kb")
+async def list_kb_articles(session: SessionDep, current_user: CurrentUser):
+    """List all knowledge base articles for the organization."""
+    result = await session.exec(
+        select(FAQArticle, OrganizationFAQArticle)
+        .join(OrganizationFAQArticle, OrganizationFAQArticle.article_id == FAQArticle.id)
+        .where(
+            OrganizationFAQArticle.organization_id == current_user.organization_id,
+            FAQArticle.category.startswith(KB_CATEGORY_PREFIX),  # type: ignore[union-attr]
+        )
+        .order_by(FAQArticle.question)
+    )
+    rows = result.all()
+    return [
+        {
+            "id": str(faq.id),
+            "documentType": "kb",
+            "title": faq.question,
+            "category": _kb_display_category(faq.category),
+            "content": faq.answer,
+            "preview": faq.answer[:60] + "..." if len(faq.answer) > 60 else faq.answer,
+            "lastUpdated": faq.updated_at.strftime("%Y-%m-%d") if faq.updated_at else "",
+            "isActive": org_link.is_active,
+            "usageCount": 0,
+        }
+        for faq, org_link in rows
+    ]
+
+
+@router.post("/kb/upload")
+async def upload_kb_article(
+    session: SessionDep,
+    current_user: CurrentUser,
+    title: str = Form(default=""),
+    category: str = Form(default="General"),
+    file: UploadFile = File(...),
+):
+    """Upload a PDF as a knowledge base article."""
+    kb_id = uuid4()
+    extracted_text, _ = await _store_pdf_upload(
+        session,
+        current_user,
+        file,
+        settings.KNOWLEDGE_DOCS_ROOT,
+        KB_DOCS_FOLDER,
+        str(kb_id),
+    )
+    faq = FAQArticle(
+        id=kb_id,
+        question=_fallback_label(title, Path(file.filename or "kb").stem.replace("_", " ").title()),
+        answer=extracted_text or _fallback_label(title, "Uploaded KB document"),
+        category=f"{KB_CATEGORY_PREFIX}{_fallback_label(category, 'General')}",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    session.add(faq)
+    await session.flush()
+
+    org_link = OrganizationFAQArticle(
+        organization_id=current_user.organization_id,
+        article_id=faq.id,
+        is_active=True,
+    )
+    session.add(org_link)
+    await session.commit()
+    return {"status": "success", "id": str(faq.id)}
+
+
+@router.patch("/kb/{kb_id}/upload")
+async def replace_kb_upload(
+    session: SessionDep,
+    current_user: CurrentUser,
+    kb_id: str,
+    title: str = Form(default=""),
+    category: str = Form(default=""),
+    file: UploadFile = File(...),
+):
+    """Replace an existing KB article with a newer PDF version."""
+    result = await session.exec(select(FAQArticle).where(FAQArticle.id == kb_id))
+    faq = result.first()
+    if not faq or not _is_kb_article(faq):
+        raise HTTPException(status_code=404, detail="KB article not found")
+
+    extracted_text, _ = await _store_pdf_upload(
+        session,
+        current_user,
+        file,
+        settings.KNOWLEDGE_DOCS_ROOT,
+        KB_DOCS_FOLDER,
+        kb_id,
+    )
+    faq.question = _fallback_label(title, faq.question)
+    faq.answer = extracted_text or faq.answer
+    if category.strip():
+        faq.category = f"{KB_CATEGORY_PREFIX}{category.strip()}"
+    faq.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(faq)
+    await session.commit()
+    return {"status": "success", "id": str(faq.id)}
+
+
+@router.post("/kb/{kb_id}/toggle")
+async def toggle_kb_article(session: SessionDep, current_user: CurrentUser, kb_id: str):
+    """Toggle a KB article's active status."""
+    result = await session.exec(
+        select(OrganizationFAQArticle).where(
+            OrganizationFAQArticle.organization_id == current_user.organization_id,
+            OrganizationFAQArticle.article_id == kb_id,
+        )
+    )
+    org_faq = result.first()
+    if not org_faq:
+        return {"status": "error", "message": "KB article not found"}
+    org_faq.is_active = not org_faq.is_active
+    session.add(org_faq)
+    await session.commit()
+    return {"status": "success", "isActive": org_faq.is_active}
+
+
+@router.delete("/kb/{kb_id}")
+async def delete_kb_article(
+    session: SessionDep,
+    current_user: CurrentUser,
+    kb_id: str,
+):
+    """Remove a KB article from the organization."""
+    stmt = select(OrganizationFAQArticle).where(
+        OrganizationFAQArticle.organization_id == current_user.organization_id,
+        OrganizationFAQArticle.article_id == kb_id,
+    )
+    res = await session.exec(stmt)
+    org_faq = res.first()
+    if not org_faq:
+        return {"status": "error", "message": "KB article not found in your organization"}
+    await session.delete(org_faq)
+
+    other_res = await session.exec(
+        select(OrganizationFAQArticle).where(OrganizationFAQArticle.article_id == kb_id)
+    )
+    if not other_res.first():
+        faq_res = await session.exec(select(FAQArticle).where(FAQArticle.id == kb_id))
+        faq = faq_res.first()
+        if faq:
+            await session.delete(faq)
+            org_slug = await _get_org_slug(session, current_user.organization_id)
+            _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, kb_id)
+
+    await session.commit()
+    return {"status": "success", "message": "KB article deleted"}

@@ -45,6 +45,8 @@ pnpm-debug.log*
 
 # ── Testing & Code Coverage ───────────────────────────────────────────────
 .pytest_cache/
+.pytest_tmp/
+.pytest-tmp/
 .coverage
 .coverage.*
 .cache
@@ -113,6 +115,8 @@ backend/app/schemas/__pycache__/
 backend/app/services/
 backend/tests/__pycache__/
 backend/startup.log
+backend/test_results.json
+backend/telecom_test_results.json
 
 # ── Frontend Local ───────────────────────────────────────────────────────
 frontend/.env.local
@@ -128,6 +132,8 @@ frontend/.pytest_cache/
 *.bin
 *.onnx
 *.h5
+speaker_classifier_export.zip
+services/whisperx/models/speaker_role/distilbert/
 
 # ── Audio & Media Files ─────────────────────────────────────────────────
 *.flac
@@ -151,3 +157,7 @@ sop-standards/**/parsed-docs/
 
 # ── Lockfiles & Build Info ──────────────────────────────────────────────
 uv.lock
+
+# ── Local CLI binaries (download separately; do not commit) ─────────────
+tools/supabase-cli/supabase.exe
+tools/supabase_windows_amd64.tar.gz
