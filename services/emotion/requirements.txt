@@ -4,6 +4,7 @@ python-multipart
 torch
 funasr
 modelscope
+torch
 torchaudio
 soundfile
 numpy

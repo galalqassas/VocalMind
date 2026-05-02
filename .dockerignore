@@ -1,0 +1,16 @@
+**/node_modules
+**/.venv
+**/.next
+**/dist
+**/build
+**/*.pyc
+**/__pycache__
+**/.git
+**/.env
+**/.env.local
+**/coverage
+**/htmlcov
+**/parsed_docs
+**/NA_docs
+**/model_cache
+**/hf_cache

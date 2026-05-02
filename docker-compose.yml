@@ -63,13 +63,14 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-snowflake-arctic-embed2}
       - SOP_RETRIEVAL_TOP_K=${SOP_RETRIEVAL_TOP_K:-3}
       # Text emotion
-      - TEXT_EMOTION_PROVIDER=${TEXT_EMOTION_PROVIDER:-rule_based}
+      - TEXT_EMOTION_PROVIDER=${TEXT_EMOTION_PROVIDER:-hf_transformers}
       - TEXT_EMOTION_MODEL=${TEXT_EMOTION_MODEL:-j-hartmann/emotion-english-distilroberta-base}
       # Keep backend relabeling disabled to avoid double speaker-role assignment.
       - SPEAKER_ROLE_MODEL_DIR=/app/models/speaker_role/distilbert
       - BACKEND_SPEAKER_RELABEL_ENABLED=false
     volumes:
       - ./backend/app:/app/app
+      - ./backend/scripts:/app/scripts
       - ./backend/storage:/app/storage
       - ./sop-standards:/app/sop-standards
       - ./AudioData:/AudioData
