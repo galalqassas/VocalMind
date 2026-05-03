@@ -10,25 +10,25 @@ Implementation: `services/rag/ingest.py`
 
 Expected source structure under `DOCS_DIR`:
 
-1. `sop-standards/{org}/policy-docs/*.pdf`
-2. `sop-standards/{org}/sop-procedures/*.pdf`
+1. `data/sop-standards/{org}/policy-docs/*.pdf`
+2. `data/sop-standards/{org}/sop-procedures/*.pdf`
 
 Legacy fallback:
-1. `sop-standards/{org}/*.pdf`
+1. `data/sop-standards/{org}/*.pdf`
 
 ## Outputs
 
 For each processed file (per org):
-1. Raw markdown: `sop-standards/{org}/parsed-docs/{file}_raw.md`
-2. Clean markdown: `sop-standards/{org}/parsed-docs/{file}.md`
-3. Chunk debug file: `sop-standards/{org}/parsed-docs/{file}_chunks.md`
-4. Validation report: `sop-standards/{org}/parsed-docs/{file}_validation.json`
+1. Raw markdown: `data/sop-standards/{org}/parsed-docs/{file}_raw.md`
+2. Clean markdown: `data/sop-standards/{org}/parsed-docs/{file}.md`
+3. Chunk debug file: `data/sop-standards/{org}/parsed-docs/{file}_chunks.md`
+4. Validation report: `data/sop-standards/{org}/parsed-docs/{file}_validation.json`
 5. Qdrant Vectors: 
    - `policy-docs` go to `vocalmind_parents` / `vocalmind_children`
    - `sop-procedures` go to `vocalmind_sop_parents` / `vocalmind_sop_children`
 
 Global run report:
-1. `sop-standards/_pipeline_report.json`
+1. `data/sop-standards/_pipeline_report.json`
 
 ## 8-Stage Pipeline
 
@@ -82,8 +82,8 @@ python main.py --ingest --force
 ## Operational Notes
 
 1. Ensure Qdrant and Ollama are up before ingestion
-2. Ensure `DOCS_DIR` points to `sop-standards`
-3. Ensure `PARSED_DIR` points to `sop-standards`
+2. Ensure `DOCS_DIR` points to `data/sop-standards`
+3. Ensure `PARSED_DIR` points to `data/sop-standards`
 4. Re-run ingestion whenever PDFs are added or updated
 
 ## Troubleshooting
@@ -93,7 +93,7 @@ python main.py --ingest --force
 - Confirm files are `.pdf`
 
 2. Empty or weak retrieval later
-- Verify markdown artifacts exist in `sop-standards/{org}/parsed-docs`
+- Verify markdown artifacts exist in `data/sop-standards/{org}/parsed-docs`
 - Confirm Qdrant collections contain points
 
 3. Embedding errors

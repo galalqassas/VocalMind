@@ -87,28 +87,28 @@ See `docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md` for the full
 
 Canonical root:
 
-`sop-standards/`
+`data/sop-standards/`
 
 Per organization:
 
-1. `sop-standards/{org}/policy-docs/*.pdf`
+1. `data/sop-standards/{org}/policy-docs/*.pdf`
 - Source policy PDFs.
 - Consumed by RAG ingestion (Docling converts PDF -> markdown).
 
-2. `sop-standards/{org}/sop-procedures/*.pdf`
+2. `data/sop-standards/{org}/sop-procedures/*.pdf`
 - Source SOP PDFs from organizations.
 - Also ingested and converted by Docling.
 
 ## Parsed Markdown and Runtime Consumption
 
 1. RAG ingestion writes converted markdown into:
-- `sop-standards/{org}/parsed-docs/*.md`
+- `data/sop-standards/{org}/parsed-docs/*.md`
 
 2. Backend SOP retrieval reads SOP context from parsed markdown:
 - For each SOP PDF in `sop-procedures`, backend looks up matching stem in `parsed_docs`.
 - Example:
-  - source: `sop-standards/nexalink/sop-procedures/01-refund.pdf`
-  - parsed: `sop-standards/nexalink/parsed-docs/01-refund.md`
+  - source: `data/sop-standards/nexalink/sop-procedures/01-refund.pdf`
+  - parsed: `data/sop-standards/nexalink/parsed-docs/01-refund.md`
 
 3. If no parsed markdown exists, retrieval has backward compatibility fallback for direct text files in `sop-procedures` (`.md` / `.txt`).
 
@@ -117,10 +117,10 @@ Per organization:
 ### Backend (`backend/app/core/config.py`)
 
 1. `SOP_DOCS_ROOT`
-- Default: `sop-standards`
+- Default: `sop-standards` (container path; host path is `data/sop-standards`)
 
 2. `SOP_PARSED_DOCS_ROOT`
-- Default: `sop-standards` (resolved as `sop-standards/{org}/parsed-docs`)
+- Default: `sop-standards` (container path; resolved as `sop-standards/{org}/parsed-docs`)
 
 3. `SOP_RETRIEVAL_TOP_K`
 - Used for Qdrant fallback retrieval.
@@ -131,7 +131,7 @@ Per organization:
 ### RAG (`services/rag/config.py`, `.env`)
 
 1. `DOCS_DIR`
-- Expected to point to `sop-standards`
+- Expected to point to `data/sop-standards`
 
 2. `PARSED_DIR`
 - Base output root for parsed markdown and pipeline report.
@@ -175,7 +175,7 @@ The interaction detail response now exposes:
 When process adherence analysis needs SOP context:
 
 1. If supplied `retrieved_sop_from_pinecone` is non-empty, use it.
-2. Else attempt manual SOP context from `sop-standards/{org}/sop-procedures` via parsed markdown.
+2. Else attempt manual SOP context from `data/sop-standards/{org}/sop-procedures` via parsed markdown.
 3. Else query dedicated SOP Qdrant fallback (`SOPRetriever` pointing to `vocalmind_sop_parents`).
 
 ## Ingestion Behavior for PDF Discovery
@@ -256,11 +256,11 @@ When adding or updating organization docs:
 
 2. SOP steps missing unexpectedly
 - Ensure SOP PDFs exist in `sop-procedures`.
-- Ensure parsed markdown exists in `sop-standards/{org}/parsed-docs` after ingestion.
+- Ensure parsed markdown exists in `data/sop-standards/{org}/parsed-docs` after ingestion.
 - Ensure file stems match expected names.
 
 3. No policy context
-- Verify `DOCS_DIR` points to `sop-standards`.
+- Verify `DOCS_DIR` points to `data/sop-standards`.
 - Re-run ingestion and confirm Qdrant collections are populated.
 
 4. Wrong organization SOP used

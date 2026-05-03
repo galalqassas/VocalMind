@@ -1,6 +1,6 @@
 # Pipeline Benchmarks
 
-This directory provides deterministic component-level benchmark data used by `infra/scripts/eval_*.py`.
+This directory provides deterministic component-level benchmark data used by `infra/scripts/eval/eval_*.py`.
 
 - `expected/`: Ground-truth labels per component.
 - `fixtures/baseline_predictions.json`: Automated baseline predictions snapshot.
@@ -10,5 +10,5 @@ This directory provides deterministic component-level benchmark data used by `in
 Run all evaluators from repo root:
 
 ```bash
-python infra/scripts/eval_all.py
+python infra/scripts/eval/eval_all.py
 ```

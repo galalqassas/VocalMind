@@ -8,7 +8,7 @@ import httpx
 
 
 DEFAULT_BASE_URL = "https://etta-cleistogamous-untangentially.ngrok-free.dev"
-DEFAULT_AUDIO_FILE = Path("AudioData/nexalink/sample.wav")
+DEFAULT_AUDIO_FILE = Path("infra/fixtures/audio/nexalink/sample.wav")
 HEADERS = {"ngrok-skip-browser-warning": "true"}
 
 

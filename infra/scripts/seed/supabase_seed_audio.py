@@ -2,15 +2,15 @@
 """
 Upload local audio into Supabase Storage and register interactions via the backend API.
 
-Typical (NileTech benchmark set under AudioData/):
-  cd backend && uv run python ../infra/scripts/supabase_seed_audio.py
+Typical (NileTech benchmark set under infra/fixtures/audio/):
+  cd backend && uv run python ../infra/scripts/seed/supabase_seed_audio.py
 
 All .mp3 in a folder:
-  cd backend && uv run python ../infra/scripts/supabase_seed_audio.py --glob "*.mp3"
+  cd backend && uv run python ../infra/scripts/seed/supabase_seed_audio.py --glob "*.mp3"
 
 Explicit paths (anywhere on disk):
-  cd backend && uv run python ../infra/scripts/supabase_seed_audio.py \\
-    --file ../AudioData/foo.mp3 --file D:/calls/bar.wav
+  cd backend && uv run python ../infra/scripts/seed/supabase_seed_audio.py \\
+    --file ../infra/fixtures/audio/foo.mp3 --file D:/calls/bar.wav
 
 Add uploads without wiping org DB / storage prefix (append-only):
   ... supabase_seed_audio.py --no-reset --glob "*.mp3" --storage-subdir my-batch-2026-04
@@ -32,7 +32,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[3]
 
 DEFAULT_BENCHMARK_FILES = (
     "easy_no_overlap.mp3",
@@ -234,8 +234,8 @@ def main() -> int:
     parser.add_argument(
         "--audio-dir",
         type=Path,
-        default=REPO / "AudioData",
-        help="Base directory for --glob and --names (default: repo AudioData/)",
+        default=REPO / "infra" / "fixtures" / "audio",
+        help="Base directory for --glob and --names (default: repo infra/fixtures/audio/)",
     )
     parser.add_argument(
         "--file",

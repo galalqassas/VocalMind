@@ -1,0 +1,25 @@
+[project]
+name = "vocalmind-vad"
+version = "1.0.0"
+description = "VocalMind Voice Activity Detection microservice (Silero VAD)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "torch==2.4.1",
+    "torchaudio==2.4.1",
+    "soundfile",
+    "pydub",
+    "packaging",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.11.0",
+]

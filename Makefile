@@ -90,28 +90,28 @@ llm-trigger-test: ## Run full LLM-trigger validation (backend + RAG + frontend)
 	cd frontend && npm run test -- --run src/tests/AgentCallDetail.test.tsx
 
 quality-eval-transcript: ## Run transcript quality benchmark
-	python infra/scripts/eval_transcript.py
+	python infra/scripts/eval/eval_transcript.py
 
 quality-eval-emotion: ## Run emotion quality benchmark
-	python infra/scripts/eval_emotion.py
+	python infra/scripts/eval/eval_emotion.py
 
 quality-eval-policy: ## Run policy quality benchmark
-	python infra/scripts/eval_policy.py
+	python infra/scripts/eval/eval_policy.py
 
 quality-eval-rag: ## Run RAG quality benchmark
-	python infra/scripts/eval_rag.py
+	python infra/scripts/eval/eval_rag.py
 
 quality-eval-resolution: ## Run resolution quality benchmark
-	python infra/scripts/eval_resolution.py
+	python infra/scripts/eval/eval_resolution.py
 
 quality-eval-all: ## Run all component quality benchmarks (fails on regression)
-	python infra/scripts/eval_all.py
+	python infra/scripts/eval/eval_all.py
 
 e2e-local-audio: ## Full local E2E on default mounted audio (login, ingest, poll, assert)
 	python infra/scripts/e2e_local_audio.py --include-llm
 
 seed-manager-supabase-audio: ## Clear manager org via Supabase, upload audio to Storage, POST from-storage (see supabase_seed_audio.py --help)
-	cd backend && uv run python ../infra/scripts/supabase_seed_audio.py
+	cd backend && uv run python ../infra/scripts/seed/supabase_seed_audio.py
 
 # ── CI/CD ─────────────────────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ test-rag: rag-lint rag-test
 # ── Database ──────────────────────────────────────────────────────────────
 
 seed: ## Seed the database
-	cd backend && uv run python ../infra/scripts/seed_database.py
+	cd backend && uv run python ../infra/scripts/seed/seed_database.py
 
 migrate: ## Run database migrations
 	cd backend && uv run python ../infra/scripts/migrate.py

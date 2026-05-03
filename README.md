@@ -86,16 +86,20 @@ VocalMind/
 ├── backend/          # FastAPI API gateway
 ├── frontend/         # React dashboard (Manager & Agent routes)
 ├── services/         # Microservices (VAD, WhisperX, Emotion, RAG)
-├── infra/            # DB initialization and python seed scripts
+├── infra/            # DB init, seed/eval scripts, quality benchmarks, test fixtures
+│   ├── db/           # PostgreSQL schema & seed SQL
+│   ├── benchmarks/   # Quality benchmark data (expected, fixtures, schema)
+│   ├── scripts/      # Operational scripts (seed/, eval/, e2e, migrate)
+│   └── fixtures/     # Test audio files & external API fixtures
+├── data/             # Runtime data consumed by services
+│   └── sop-standards/# SOP procedures & policy documents for RAG ingestion
 ├── research/         # Jupyter notebooks & prototype scripts
-├── data/             # General data and reference materials
-├── docker/           # Shared Docker configuration artifacts
-├── docs/             # Documentation assets
-├── AudioData/        # Sample audio inputs for testing
+├── docs/             # Documentation (explainability, LLM trigger, RAG, design, frontend)
+├── tools/            # Local CLI tools (Supabase CLI)
 ├── .github/          # CI workflows (ci.yml, backend.yml, frontend.yml, rag_ci.yml)
 ├── docker-compose.yml# Multi-container service definitions
 ├── Makefile          # Unified development commands
-└── CONTRIBUTING.md   # Guidelines
+└── README.md
 ```
 
 ---
@@ -137,7 +141,7 @@ make prepare-speaker-model  # Extract speaker-role classifier for WhisperX
 ### Utility Scripts
 ```bash
 python infra/scripts/measure_dashboard_baseline.py --api-base http://localhost:8000/api/v1
-python kaggle/scripts/kaggle_api_smoke_test.py --audio-file AudioData/nexalink/sample.wav
+python infra/fixtures/kaggle/kaggle_api_smoke_test.py --audio-file infra/fixtures/audio/nexalink/sample.wav
 ```
 
 ### Speaker Classifier Artifact

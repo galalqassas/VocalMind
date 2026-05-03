@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: vocalmind_dev
     volumes:
       - vocalmind_data:/var/lib/postgresql/data
-      - ./infra/docker/init-db:/docker-entrypoint-initdb.d
+      - ./infra/db:/docker-entrypoint-initdb.d
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U vocalmind" ]
       interval: 5s
@@ -72,8 +72,8 @@ services:
       - ./backend/app:/app/app
       - ./backend/scripts:/app/scripts
       - ./backend/storage:/app/storage
-      - ./sop-standards:/app/sop-standards
-      - ./AudioData:/AudioData
+      - ./data/sop-standards:/app/sop-standards
+      - ./infra/fixtures/audio:/AudioData
       - ./services/whisperx/models/speaker_role/distilbert:/app/models/speaker_role/distilbert:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
@@ -151,7 +151,7 @@ services:
       qdrant:
         condition: service_healthy
     volumes:
-      - ./sop-standards:/app/sop-standards
+      - ./data/sop-standards:/app/sop-standards
       - ./storage/guidelines:/app/storage/guidelines
       - ./storage/knowledge:/app/storage/knowledge
     environment:

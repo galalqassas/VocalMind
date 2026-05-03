@@ -26,7 +26,7 @@ except ImportError:
 
 ROOT = Path(__file__).parent.parent
 ENV_FILE = ROOT / ".env"
-SCHEMA_FILE = ROOT / "docker" / "init-db" / "01_schema.sql"
+SCHEMA_FILE = ROOT / "db" / "01_schema.sql"
 
 def load_config() -> str:
     """Load DATABASE_URL from environment or .env."""

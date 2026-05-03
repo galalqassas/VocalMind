@@ -19,7 +19,7 @@ It also now feeds the Evidence-Anchored Explainability Layer used in manager cal
 - Children collection: compact snippets for answer fact-checking
 
 2. Per-organization isolation
-- Documents are discovered by org folder under `sop-standards/{org}`
+- Documents are discovered by org folder under `data/sop-standards/{org}`
 - Retrieval can be filtered by org metadata
 
 3. Query modes
@@ -65,22 +65,22 @@ It also now feeds the Evidence-Anchored Explainability Layer used in manager cal
 ## Directory Layout (Current)
 
 1. Source docs
-- `sop-standards/{org}/policy-docs/*.pdf`
-- `sop-standards/{org}/sop-procedures/*.pdf`
+- `data/sop-standards/{org}/policy-docs/*.pdf`
+- `data/sop-standards/{org}/sop-procedures/*.pdf`
 
 2. Parsed markdown outputs
-- `sop-standards/{org}/parsed-docs/*.md`
+- `data/sop-standards/{org}/parsed-docs/*.md`
 
 3. Pipeline report
-- `sop-standards/_pipeline_report.json`
+- `data/sop-standards/_pipeline_report.json`
 
 ## Config Summary
 
 1. `DOCS_DIR`
-- Base source root (default: `sop-standards`)
+- Base source root (default: `data/sop-standards`)
 
 2. `PARSED_DIR`
-- Base output root for parsed markdown + pipeline report (default: `sop-standards`)
+- Base output root for parsed markdown + pipeline report (default: `data/sop-standards`)
 
 3. `QDRANT_URL`
 - Vector DB endpoint

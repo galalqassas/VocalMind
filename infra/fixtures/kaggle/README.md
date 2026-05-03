@@ -64,5 +64,5 @@ curl -X POST https://etta-cleistogamous-untangentially.ngrok-free.dev/full \
 Run the repo-level smoke test helper from project root:
 
 ```bash
-python kaggle/scripts/kaggle_api_smoke_test.py --audio-file AudioData/nexalink/sample.wav
+python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file infra/fixtures/audio/nexalink/sample.wav
 ```

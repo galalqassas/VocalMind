@@ -150,7 +150,7 @@ Experiments/
 # ── RAG & Services ───────────────────────────────────────────────────────
 services/rag/parsed_docs/
 services/rag/logs/
-sop-standards/**/parsed-docs/
+data/sop-standards/**/parsed-docs/
 
 # ── Docker Build Cache ───────────────────────────────────────────────────
 .docker/buildx-cache/

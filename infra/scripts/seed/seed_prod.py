@@ -27,7 +27,7 @@ def load_config():
     if db_url:
         return db_url
     
-    env_path = ROOT.parent.parent / "backend" / ".env"
+    env_path = ROOT.parent.parent.parent / "backend" / ".env"
     if HAS_DOTENV and env_path.exists():
         load_dotenv(env_path)
         return os.getenv("DATABASE_URL")

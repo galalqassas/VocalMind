@@ -5,13 +5,13 @@ on:
     branches: [main]
     paths:
       - "infra/benchmarks/**"
-      - "infra/scripts/eval_*.py"
+      - "infra/scripts/eval/**"
       - ".github/workflows/quality-benchmarks.yml"
   push:
     branches: ["**"]
     paths:
       - "infra/benchmarks/**"
-      - "infra/scripts/eval_*.py"
+      - "infra/scripts/eval/**"
       - ".github/workflows/quality-benchmarks.yml"
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Run quality benchmark suite
-        run: python infra/scripts/eval_all.py
+        run: python infra/scripts/eval/eval_all.py
 
       - name: Upload benchmark reports
         if: always()

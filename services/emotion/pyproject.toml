@@ -1,0 +1,26 @@
+[project]
+name = "vocalmind-emotion"
+version = "1.0.0"
+description = "VocalMind audio emotion recognition microservice (FunASR)"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "torch",
+    "funasr",
+    "modelscope",
+    "torchaudio",
+    "soundfile",
+    "numpy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "ruff>=0.11.0",
+]

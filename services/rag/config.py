@@ -92,11 +92,11 @@ class Settings(BaseSettings):
     # Paths
     BASE_DIR: Path = SERVICE_DIR
     DOCS_DIR: Path = Field(
-        default_factory=lambda: REPO_ROOT / "sop-standards",
+        default_factory=lambda: REPO_ROOT / "data" / "sop-standards",
         alias="DOCS_DIR",
     )
     PARSED_DIR: Path = Field(
-        default_factory=lambda: REPO_ROOT / "sop-standards",
+        default_factory=lambda: REPO_ROOT / "data" / "sop-standards",
         alias="PARSED_DIR",
     )
 
