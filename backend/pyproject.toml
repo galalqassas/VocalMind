@@ -20,6 +20,14 @@ dependencies = [
     "pytest>=9.0.2",
     "qdrant-client>=1.15.1",
     "python-multipart>=0.0.22",
+    # Required so `from rag.evaluator import PolicyComplianceEvaluator` succeeds.
+    # services/rag is mounted into the backend container at /app/rag and its
+    # query_engine/evaluator modules pull in groq, llama-index, dotenv, ftfy.
+    "groq>=0.30.0",
+    "llama-index-core>=0.14.0",
+    "llama-index-llms-groq>=0.3.0",
+    "python-dotenv>=1.0.0",
+    "ftfy>=6.1.0",
     "sqlmodel>=0.0.33",
     "supabase>=2.28.0",
     "tenacity>=9.1.4",

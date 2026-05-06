@@ -93,8 +93,28 @@ def _log_step(interaction_id: UUID | str, step: str, **kwargs) -> None:
     logger.info("LLM trigger pipeline step: %s", step, extra=extra)
 
 
-def _services_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "services"
+def _candidate_rag_roots() -> list[Path]:
+    """
+    Return possible parents that contain the ``rag`` package, ordered by preference.
+
+    1) ``/app`` in the Docker container (services/rag is bind-mounted at /app/rag).
+    2) Repo-relative ``services/`` from this source file (local dev / pytest).
+    """
+    here = Path(__file__).resolve()
+    return [
+        Path("/app"),
+        here.parents[3] / "services",
+    ]
+
+
+def _ensure_rag_on_path() -> None:
+    """Append the first parent that actually contains ``rag/evaluator.py`` to sys.path."""
+    for root in _candidate_rag_roots():
+        if (root / "rag" / "evaluator.py").exists():
+            root_str = str(root)
+            if root_str not in sys.path:
+                sys.path.append(root_str)
+            return
 
 
 def _get_policy_compliance_evaluator():
@@ -113,9 +133,7 @@ def _get_policy_compliance_evaluator():
         if _policy_compliance_evaluator is not None:
             return _policy_compliance_evaluator
         try:
-            services_path = str(_services_path())
-            if services_path not in sys.path:
-                sys.path.append(services_path)
+            _ensure_rag_on_path()
             from rag.evaluator import PolicyComplianceEvaluator
             _policy_compliance_evaluator = PolicyComplianceEvaluator()
         except Exception as exc:

@@ -15,7 +15,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_services_path = str(Path(__file__).resolve().parents[4] / "services")
+def _candidate_rag_roots() -> list[Path]:
+    """
+    Return possible parents that contain the ``rag`` package, ordered by preference.
+
+    1) ``/app`` in the Docker container (services/rag is bind-mounted at /app/rag).
+    2) Repo-relative ``services/`` from this source file (local dev / pytest).
+    """
+    here = Path(__file__).resolve()
+    return [Path("/app"), here.parents[4] / "services"]
+
+
+def _ensure_rag_on_path() -> None:
+    import sys
+    for root in _candidate_rag_roots():
+        if (root / "rag" / "query_engine.py").exists():
+            root_str = str(root)
+            if root_str not in sys.path:
+                sys.path.append(root_str)
+            return
 
 
 class RAGQueryRequest(BaseModel):
@@ -124,9 +142,7 @@ def _get_engine():
         if _engine is not None:
             return _engine
         try:
-            import sys
-            if _services_path not in sys.path:
-                sys.path.append(_services_path)
+            _ensure_rag_on_path()
             from rag.query_engine import RAGQueryEngine
             _engine = RAGQueryEngine()
         except Exception as exc:
