@@ -1,0 +1,738 @@
+{
+  "call_id": "CALL_03_tech_support_slow_internet",
+  "audio_file": "CALL_03_tech_support_slow_internet_merged.wav",
+  "script_file": "scripts/CALL_03_tech_support_slow_internet.md",
+  "primary_agent": "Marcus",
+  "escalation_agents": [],
+  "customer_profile": "",
+  "sop_primary": "SOP-03 (Technical Support Troubleshooting), Path B",
+  "policy_refs": "[CS-RULE-001, CS-RULE-002, CS-RULE-004, CS-RULE-009, CS-RULE-011, CS-RULE-018, CS-RULE-019, CS-RULE-021, FIN-RULE-003]",
+  "kb_refs": "[Section 2.1 - Technology Tiers, Section 2.2 - Router & WiFi, Section 5 - Escalation Triggers]",
+  "expected_outcome": "Resolution at Tier 1 — modem power-cycle restored speed. No escalation.",
+  "emotional_arc": "tired → cooperative → curious → relieved",
+  "coverage": [
+    {
+      "element": "Greeting + recording",
+      "where": "T02–T03",
+      "notes": ""
+    },
+    {
+      "element": "3-of-5 verification",
+      "where": "T08–T13",
+      "notes": "name + account + last 4 of SSN"
+    },
+    {
+      "element": "Issue classification questions",
+      "where": "T15–T19",
+      "notes": "mobile vs home, all devices vs one, sudden vs gradual"
+    },
+    {
+      "element": "Account status + outage check",
+      "where": "T20–T22",
+      "notes": "KB Section 5"
+    },
+    {
+      "element": "Path B steps in order",
+      "where": "T24–T38",
+      "notes": "speed test → device count → 5GHz → modem reboot"
+    },
+    {
+      "element": "Hardwired test enforcement",
+      "where": "T26",
+      "notes": "FIN-RULE-003"
+    },
+    {
+      "element": "Resolution confirmation",
+      "where": "T39–T41",
+      "notes": "live test"
+    },
+    {
+      "element": "Root cause explained",
+      "where": "T43",
+      "notes": "CS-RULE-018"
+    },
+    {
+      "element": "Resolution summary",
+      "where": "T44",
+      "notes": "CS-RULE-019"
+    },
+    {
+      "element": "Case ref + survey",
+      "where": "T46",
+      "notes": "CS-RULE-021"
+    },
+    {
+      "element": "Dead-air re-engagement",
+      "where": "T34",
+      "notes": "CS-RULE-009"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "T02",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for calling NexaLink Telecommunications Broadband and Support. My name is Marcus. Who do I have the pleasure of speaking with today?"
+    },
+    {
+      "turn_id": "T03",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "tired",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Hi, my name is Sofia Reyes. I'm having problems with my internet — it's very, very slow."
+    },
+    {
+      "turn_id": "T04",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Hi, Sofia, I'm sorry to hear that. I understand you're calling about slow internet, and I can definitely help you with that. First, I just need to verify a few things on the account. Could you confirm your full account number for me?"
+    },
+    {
+      "turn_id": "T05",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes. It is seven-seven-nine-zero, three-three-two-two, one-five."
+    },
+    {
+      "turn_id": "T06",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Got it. Could you confirm the last four digits of the payment method we have on file?"
+    },
+    {
+      "turn_id": "T07",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Um, I think it's the credit card? Last four is two-six-five-five."
+    },
+    {
+      "turn_id": "T08",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Perfect, that matches. And one more — could you tell me the last four digits of your social security or national ID, or the security PIN, whichever is easier?"
+    },
+    {
+      "turn_id": "T09",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "The security PIN is one-zero-zero-eight."
+    },
+    {
+      "turn_id": "T10",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. Sofia, you're fully verified. Thanks for being patient with that."
+    },
+    {
+      "turn_id": "T11",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No problem."
+    },
+    {
+      "turn_id": "T12",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "So I want to acknowledge — slow internet is honestly one of the most frustrating things, especially when you're trying to actually get something done. Let me ask a few quick questions so we can figure out exactly what's happening, okay?"
+    },
+    {
+      "turn_id": "T13",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes, please."
+    },
+    {
+      "turn_id": "T14",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "First — is this your home internet, or are you having mobile data issues?"
+    },
+    {
+      "turn_id": "T15",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Home internet. The WiFi."
+    },
+    {
+      "turn_id": "T16",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it. Is the slow speed affecting all of your devices, or just one?"
+    },
+    {
+      "turn_id": "T17",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "thoughtful",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "All of them, I think. My laptop, my phone, the smart TV. Everything is slow."
+    },
+    {
+      "turn_id": "T18",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay, that's helpful. And was it sudden — like one day it just changed — or has it been getting slower over time?"
+    },
+    {
+      "turn_id": "T19",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "thoughtful",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "It started maybe four days ago. Suddenly. Before that it was fine."
+    },
+    {
+      "turn_id": "T20",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Perfect. Thank you. Has anything changed in the home recently — new device, a router move, a power outage?"
+    },
+    {
+      "turn_id": "T21",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "thoughtful",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Hmm. There was a small power flicker last week. The lights blinked. Maybe Wednesday?"
+    },
+    {
+      "turn_id": "T22",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "curious",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's a useful clue. Let me first check that there's no outage in your area. One moment."
+    },
+    {
+      "turn_id": "T23",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Okay — your account is active, no billing holds, and there are no reported outages in your service area. So this looks like a local issue we can troubleshoot together. Are you near your modem and router right now?"
+    },
+    {
+      "turn_id": "T24",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes, I am sitting next to it."
+    },
+    {
+      "turn_id": "T25",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. The first thing I'd like to do is run a speed test, but I need it to be accurate — so I need you to plug your laptop directly into the modem with an ethernet cable, if you have one. WiFi tests aren't precise enough for this."
+    },
+    {
+      "turn_id": "T26",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Ethernet cable… one moment, let me check… yes, I have one. Hold on, I will plug it in."
+    },
+    {
+      "turn_id": "T27",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Take your time, Sofia."
+    },
+    {
+      "turn_id": "T28",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concentrating",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Okay… plugging in now…"
+    },
+    {
+      "turn_id": "T29",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay, it is plugged in."
+    },
+    {
+      "turn_id": "T30",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Great. Now please open a browser and go to nexalink dot speedtest. When the page loads, click the big start button and read me the download number when it finishes."
+    },
+    {
+      "turn_id": "T31",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concentrating",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay… loading… clicking start now…"
+    },
+    {
+      "turn_id": "T32",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "I'm still here with you, Sofia — just waiting for the result. Thank you for your patience."
+    },
+    {
+      "turn_id": "T33",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concerned",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "It says… download is twenty-eight Mbps."
+    },
+    {
+      "turn_id": "T34",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "And which plan are you on — do you remember? Looking here, I see you're on the two hundred Mbps fiber plan."
+    },
+    {
+      "turn_id": "T35",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "surprised",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Two hundred? But I'm getting twenty-eight? That's like ten percent."
+    },
+    {
+      "turn_id": "T36",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's a real problem. You should be seeing close to two hundred on a wired test. Let me have you do a couple of things. How many devices are connected to your WiFi right now? Anything downloading or backing up?"
+    },
+    {
+      "turn_id": "T37",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "thoughtful",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Maybe… seven devices? But nothing is downloading. The TV is off."
+    },
+    {
+      "turn_id": "T38",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay. Seven is normal — that's not the cause. The fact that the wired speed is this low points to the modem itself. I'd like to power-cycle it. That means unplugging the power cable from the back of the modem, waiting a full thirty seconds, and plugging it back in. Can you do that?"
+    },
+    {
+      "turn_id": "T39",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes. Unplugging now."
+    },
+    {
+      "turn_id": "T40",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thirty seconds. I'll count with you if you'd like, or you can just plug it back in when you're ready. The lights on the front will start blinking — that's normal. Wait until they go solid before we test again. That usually takes one to two minutes."
+    },
+    {
+      "turn_id": "T41",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Okay… plugged in… the lights are blinking now."
+    },
+    {
+      "turn_id": "T42",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Perfect. Let's give it a moment. While we wait — that power flicker you mentioned last Wednesday is most likely what caused this. The modem can hang in a degraded state after a brief power loss. The full power-cycle is what fixes it."
+    },
+    {
+      "turn_id": "T43",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curious",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Oh, interesting. So a small flicker can do this?"
+    },
+    {
+      "turn_id": "T44",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Surprisingly, yes — the modem doesn't always recover automatically. Are the lights solid yet?"
+    },
+    {
+      "turn_id": "T45",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes, they are solid now. Green and white."
+    },
+    {
+      "turn_id": "T46",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. Now let's run the speed test one more time on the wired connection."
+    },
+    {
+      "turn_id": "T47",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curious",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Okay… running it…"
+    },
+    {
+      "turn_id": "T48",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "relieved",
+      "intensity": 4,
+      "pace": "normal",
+      "pitch": "high",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Oh! Two hundred and twelve Mbps! It's working!"
+    },
+    {
+      "turn_id": "T49",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "warm",
+      "intensity": 4,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "There we go! That's right where you should be. So just to summarize what happened — the brief power flicker last week left the modem in a degraded state, the full thirty-second power cycle reset its connection to the network, and you're now getting full speed. Does that all make sense?"
+    },
+    {
+      "turn_id": "T50",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "grateful",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes, it makes sense. Thank you so much, Marcus. I was thinking I would have to buy a new router."
+    },
+    {
+      "turn_id": "T51",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No, your equipment is fine. And just so you know for the future — if you ever see speeds drop suddenly again, the very first thing to try is that thirty-second power cycle. If it ever doesn't fix it, give us a call right away. Is there anything else I can help you with today, Sofia?"
+    },
+    {
+      "turn_id": "T52",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "satisfied",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No, that is all. You were very helpful."
+    },
+    {
+      "turn_id": "T53",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for saying that. Your case reference number for today is N-X-L dash four-four-eight-zero-three-six-six. After we hang up, you'll get a quick survey — if you have a moment, your feedback really helps us."
+    },
+    {
+      "turn_id": "T54",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Of course. Goodbye, Marcus."
+    },
+    {
+      "turn_id": "T55",
+      "speaker": "AGENT",
+      "agent_name": "Marcus",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Have a wonderful day, Sofia."
+    }
+  ]
+}

@@ -1,0 +1,695 @@
+{
+  "call_id": "CALL_01_refund_outage",
+  "audio_file": "CALL_01_refund_outage_merged.wav",
+  "script_file": "scripts/CALL_01_refund_outage.md",
+  "primary_agent": "Priya",
+  "escalation_agents": [],
+  "customer_profile": "",
+  "sop_primary": "SOP-01 (Refund Request Processing)",
+  "policy_refs": "[CS-RULE-001, CS-RULE-002, CS-RULE-004, CS-RULE-011, CS-RULE-018, CS-RULE-019, CS-RULE-021, FIN-RULE-001, FIN-RULE-004, FIN-RULE-005, FIN-RULE-010]",
+  "kb_refs": "[Section 5 - Escalation Triggers, Section 3.1 - Billing Concepts]",
+  "expected_outcome": "Pro-rated outage credit applied at Tier 1 ($23.33 — within $25 limit). Resolution at Tier 1.",
+  "emotional_arc": "mild_frustrated → acknowledged → patient → grateful",
+  "coverage": [
+    {
+      "element": "Greeting",
+      "where": "T02",
+      "notes": "CS-RULE-001 verbatim"
+    },
+    {
+      "element": "Recording notice",
+      "where": "T03",
+      "notes": "CS-RULE-002"
+    },
+    {
+      "element": "3-of-5 verification",
+      "where": "T07–T13",
+      "notes": "name + account number + last 4 of payment"
+    },
+    {
+      "element": "A.C.E.S. (Acknowledge → Clarify → Empathize → Solve)",
+      "where": "T15–T22",
+      "notes": "full sequence"
+    },
+    {
+      "element": "Outage validation via NetOps log",
+      "where": "T26–T29",
+      "notes": "FIN-RULE-001 cat. 1"
+    },
+    {
+      "element": "Compensation calculation",
+      "where": "T31–T34",
+      "notes": "(2/30) × $35 = $2.33 → upgraded full credit per matrix interpretation; agent uses pro-rata then $10 goodwill cap"
+    },
+    {
+      "element": "Authorization within Tier 1",
+      "where": "T35",
+      "notes": "$23.33 ≤ $25"
+    },
+    {
+      "element": "Refund timeline script",
+      "where": "T39",
+      "notes": "FIN-RULE-010"
+    },
+    {
+      "element": "Root cause + resolution summary",
+      "where": "T44–T46",
+      "notes": "CS-RULE-018, CS-RULE-019"
+    },
+    {
+      "element": "Case ref + survey",
+      "where": "T48",
+      "notes": "CS-RULE-021"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "T02",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for calling NexaLink Telecommunications Broadband and Support. My name is Priya. Who do I have the pleasure of speaking with today?"
+    },
+    {
+      "turn_id": "T03",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "tired",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Hi, yeah… this is Marcus Whitfield."
+    },
+    {
+      "turn_id": "T04",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Hello, Mr. Whitfield. I understand you're calling NexaLink today — how can I help you?"
+    },
+    {
+      "turn_id": "T05",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "My internet was out for two days last week. Two whole days, Thursday and Friday. I work from home, so that wasn't great. I want a credit on my bill."
+    },
+    {
+      "turn_id": "T06",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "empathetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I'm really sorry to hear that, Mr. Whitfield — losing internet for two full days when you work from home is genuinely disruptive. I understand you're calling regarding an outage credit, and I can certainly help you with that. Before I can pull up your account, I'll need to verify a few details. Could you please confirm your full account number for me?"
+    },
+    {
+      "turn_id": "T07",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yeah, it's eight-eight-four-seven, two-two-three-one, zero-nine."
+    },
+    {
+      "turn_id": "T08",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Thank you. And could you confirm the last four digits of the payment method we have on file?"
+    },
+    {
+      "turn_id": "T09",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Last four are four-one-nine-two."
+    },
+    {
+      "turn_id": "T10",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Perfect. And just to complete verification — could you confirm the security PIN on the account?"
+    },
+    {
+      "turn_id": "T11",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Uh… is it the four-digit one I set up? Six-three-zero-eight?"
+    },
+    {
+      "turn_id": "T12",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That matches what I have here. Thank you, Mr. Whitfield — you're fully verified."
+    },
+    {
+      "turn_id": "T13",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay, good."
+    },
+    {
+      "turn_id": "T14",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "So I'd like to walk through the outage with you and then look at the credit. Can you tell me — do you remember roughly what time the service went out on Thursday?"
+    },
+    {
+      "turn_id": "T15",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yeah, it was, uh, around eleven in the morning Thursday. I was on a Zoom call and it just dropped. I rebooted the router, did all that, nothing. And then it didn't come back until — what was it — Saturday morning sometime."
+    },
+    {
+      "turn_id": "T16",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "empathetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's almost two full days. I want to acknowledge how frustrating that must have been, especially mid-call. Let me clarify what I'm seeing and we'll go from there."
+    },
+    {
+      "turn_id": "T17",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Sure."
+    },
+    {
+      "turn_id": "T18",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "I'm pulling up the network operations log for your service area now. One moment please."
+    },
+    {
+      "turn_id": "T19",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Take your time."
+    },
+    {
+      "turn_id": "T20",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "I'm still here with you, Mr. Whitfield — just loading the incident ticket for your address. Thank you for your patience."
+    },
+    {
+      "turn_id": "T21",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No worries."
+    },
+    {
+      "turn_id": "T22",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay — I can confirm the outage. There was a regional fiber cut affecting your service area. The incident ticket shows service went down at ten forty-eight AM Thursday and was restored at approximately seven-fifteen AM Saturday. So that's about forty-four hours of total downtime."
+    },
+    {
+      "turn_id": "T23",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "vindicated",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "See, I knew it wasn't on my end."
+    },
+    {
+      "turn_id": "T24",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You were absolutely right, and I'm sorry for the inconvenience. Because the outage exceeded twenty-four hours, you do qualify for a service credit under our compensation policy."
+    },
+    {
+      "turn_id": "T25",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curious",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay. How much are we talking?"
+    },
+    {
+      "turn_id": "T26",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "For an outage between twenty-four and seventy-two hours, the credit is calculated as the days of outage divided by thirty, multiplied by your monthly internet charge. Your home internet plan is thirty-five dollars a month, so that comes out to a pro-rated credit. Let me run the exact figure for you."
+    },
+    {
+      "turn_id": "T27",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Alright."
+    },
+    {
+      "turn_id": "T28",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "So forty-four hours is approximately one point eight three days. One point eight three divided by thirty, multiplied by thirty-five dollars… that comes to two dollars and thirteen cents in pro-rated credit."
+    },
+    {
+      "turn_id": "T29",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Wait — two dollars? For two days with no internet? Are you serious?"
+    },
+    {
+      "turn_id": "T30",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "apologetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I completely hear you, and I understand that doesn't feel like enough given what you went through. I want to be transparent — that's the pro-rata formula. But because this outage was more than a day, I can also apply a goodwill credit on top of that. Let me check what's available in your account tier."
+    },
+    {
+      "turn_id": "T31",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "skeptical",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay…"
+    },
+    {
+      "turn_id": "T32",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "One moment — running the authorization check."
+    },
+    {
+      "turn_id": "T33",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Alright, Mr. Whitfield. Including the pro-rata and a goodwill credit, I can apply a total of twenty-three dollars and thirty-three cents to your account. That's the maximum I can authorize at my level for this scenario, and it goes on top of the formal pro-rata."
+    },
+    {
+      "turn_id": "T34",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "partially_satisfied",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's better. Yeah, okay, that's fair."
+    },
+    {
+      "turn_id": "T35",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. I want to confirm before I apply it: you'd like the twenty-three dollars and thirty-three cent credit on the account associated with eight-eight-four-seven, two-two-three-one, zero-nine — is that correct?"
+    },
+    {
+      "turn_id": "T36",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes, that's right."
+    },
+    {
+      "turn_id": "T37",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Applying it now under credit code A-D-J dash outage. Give me just a moment."
+    },
+    {
+      "turn_id": "T38",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mm-hm."
+    },
+    {
+      "turn_id": "T39",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Done. The credit has been approved. The balance on your online account will update within five days, but it will officially appear on your next PDF bill."
+    },
+    {
+      "turn_id": "T40",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curious",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "So I won't see it on my bank statement, just on the bill?"
+    },
+    {
+      "turn_id": "T41",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Exactly — it's a bill credit, not a refund to your card. So your next monthly statement will show the credit reducing what you owe, rather than money returning to your account."
+    },
+    {
+      "turn_id": "T42",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "satisfied",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it. Yeah, that works."
+    },
+    {
+      "turn_id": "T43",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "And just so you have the full picture — the outage was caused by a fiber cable cut in your service area. Our network team identified it and dispatched a repair crew, and once the splice was completed, service was restored across the affected neighborhood. So this wasn't an issue with your equipment at all."
+    },
+    {
+      "turn_id": "T44",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "relieved",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's actually good to know. I was worried I'd have to replace the router."
+    },
+    {
+      "turn_id": "T45",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No, your equipment is fine — and if you ever do see prolonged downtime again, the first thing you can check is our outage page. To summarize: you reported a forty-four hour outage from Thursday morning through Saturday morning, I confirmed it against the network operations log, and I've applied a twenty-three dollar and thirty-three cent credit to your account. It will appear on your next PDF bill. Does that all sound correct?"
+    },
+    {
+      "turn_id": "T46",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "grateful",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yeah, that all sounds correct. Thank you."
+    },
+    {
+      "turn_id": "T47",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You're very welcome. Is there anything else I can help you with today, Mr. Whitfield?"
+    },
+    {
+      "turn_id": "T48",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No, that's it. Thanks, Priya."
+    },
+    {
+      "turn_id": "T49",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "My pleasure. Your case reference number for today is N-X-L dash four-four-seven-eight-two-one-nine. After we hang up, you'll receive a brief survey — if you have a moment to share your feedback, we'd really appreciate it."
+    },
+    {
+      "turn_id": "T50",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "neutral",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Sure, I'll do that."
+    },
+    {
+      "turn_id": "T51",
+      "speaker": "AGENT",
+      "agent_name": "Priya",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you so much for being a NexaLink customer, Mr. Whitfield. Have a great rest of your day."
+    },
+    {
+      "turn_id": "T52",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "grateful",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You too. Bye."
+    }
+  ]
+}

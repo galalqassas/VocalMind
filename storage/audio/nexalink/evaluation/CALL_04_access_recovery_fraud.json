@@ -1,0 +1,733 @@
+{
+  "call_id": "CALL_04_access_recovery_fraud",
+  "audio_file": "CALL_04_access_recovery_fraud_merged.wav",
+  "script_file": "scripts/CALL_04_access_recovery_fraud.md",
+  "primary_agent": "Aisha",
+  "escalation_agents": [
+    "James"
+  ],
+  "customer_profile": "",
+  "sop_primary": "SOP-04 (Account Access Recovery)",
+  "policy_refs": "[CS-RULE-001, CS-RULE-002, CS-RULE-004, CS-RULE-006, CS-RULE-011, CS-RULE-013, CS-RULE-014, SEC-RULE-001, SEC-RULE-006, SEC-RULE-007, SEC-RULE-008, FIN-RULE-008]",
+  "kb_refs": "[Section 4 - Account Management]",
+  "expected_outcome": "Standard 3-of-5 verification fails. Alternative verification via email OTP succeeds. Customer reports unrecognized email change → SEC-RULE-008 protocol → flagged + Tier 2 escalation.",
+  "emotional_arc": "worried → anxious → afraid → grateful_relieved",
+  "coverage": [
+    {
+      "element": "SEC-RULE-006 (no account-exists confirmation pre-verification)",
+      "where": "T05",
+      "notes": "agent does not confirm"
+    },
+    {
+      "element": "3-of-5 verification attempted",
+      "where": "T07–T18",
+      "notes": "fails — only 2 of 5"
+    },
+    {
+      "element": "Step 2 alternative verification (email OTP)",
+      "where": "T22–T31",
+      "notes": "SOP-04 Step 2"
+    },
+    {
+      "element": "Step 3 issue classification",
+      "where": "T33",
+      "notes": "reveals suspicious access"
+    },
+    {
+      "element": "Step 6 — SEC-RULE-008 protocol triggered",
+      "where": "T39–T44",
+      "notes": "freeze + flag + Tier 2"
+    },
+    {
+      "element": "Warm transfer to Tier 2",
+      "where": "T46–T55",
+      "notes": "senior takes over"
+    },
+    {
+      "element": "No credential reset over phone without verification",
+      "where": "enforced throughout",
+      "notes": "SEC-RULE-007"
+    },
+    {
+      "element": "Tier 1 elderly customer empathy + tone adaptation",
+      "where": "T20, T29, T39",
+      "notes": "CS-RULE-013"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "T02",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for calling NexaLink Telecommunications Broadband and Support. My name is Aisha. Who do I have the pleasure of speaking with today?"
+    },
+    {
+      "turn_id": "T03",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "worried",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Hello… my name is Margaret Holloway. I — I think someone may have done something to my account. I can't get in anymore."
+    },
+    {
+      "turn_id": "T04",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "empathetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, I'm so sorry — I can hear that you're worried, and I want you to know I'm going to take this very seriously. I'm going to help you. The very first thing we have to do is just verify your identity, so I can make sure I'm protecting your account and not anyone else's. Is that okay?"
+    },
+    {
+      "turn_id": "T05",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "anxious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes… yes, of course."
+    },
+    {
+      "turn_id": "T06",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you. Take your time with each question. There's no rush. Could you start by telling me your full account number?"
+    },
+    {
+      "turn_id": "T07",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "distressed",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Oh, I — I don't have it written down. I usually get the bills by email, but the email isn't… isn't coming anymore."
+    },
+    {
+      "turn_id": "T08",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's perfectly alright. We have other ways. Could you tell me the last four digits of the credit card or bank account on file with us?"
+    },
+    {
+      "turn_id": "T09",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Um… I think it's the Visa card ending in… one-five-nine-three?"
+    },
+    {
+      "turn_id": "T10",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Thank you, Mrs. Holloway. One moment, please."
+    },
+    {
+      "turn_id": "T11",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "cautious",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Could you also tell me the security PIN on the account?"
+    },
+    {
+      "turn_id": "T12",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "distressed",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Oh, I don't… I never remember the PIN. My husband used to handle these things. He passed two years ago."
+    },
+    {
+      "turn_id": "T13",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "empathetic",
+      "intensity": 5,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I'm so sorry for your loss, Mrs. Holloway. Please take your time. We don't have to rush. Could you tell me the last four digits of your social security number?"
+    },
+    {
+      "turn_id": "T14",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes… that one I know. Six-two-eight-eight."
+    },
+    {
+      "turn_id": "T15",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Thank you. I'm checking now."
+    },
+    {
+      "turn_id": "T16",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "cautious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Mrs. Holloway, I want to be transparent with you. Two of the items you've given me match our records, but I need three matches before I can discuss any details about an account. The card number and the social match. The PIN is the one we need."
+    },
+    {
+      "turn_id": "T17",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "afraid",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "high",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "I really don't know it. Does that mean you can't help me?"
+    },
+    {
+      "turn_id": "T18",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "No, no — it doesn't mean that at all. It just means I need to use a different way to verify you. I'm going to try sending a one-time code to the email address we have on file. If you can read that code back to me, that completes verification. Could we try that?"
+    },
+    {
+      "turn_id": "T19",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hopeful",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes, please. Yes, let's do that."
+    },
+    {
+      "turn_id": "T20",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "I'm sending the code now. Could you keep your phone close and check your email — it might take just a minute to arrive."
+    },
+    {
+      "turn_id": "T21",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concentrating",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Okay… I'm looking… I see a lot of emails I don't recognize…"
+    },
+    {
+      "turn_id": "T22",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "cautious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "What do you mean by that, Mrs. Holloway? What kind of emails?"
+    },
+    {
+      "turn_id": "T23",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "afraid",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "high",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "There are emails about — about an Amazon account, and a streaming service I don't have. And — oh — there's one from NexaLink, from yesterday. It says 'email address change confirmed'."
+    },
+    {
+      "turn_id": "T24",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "concerned",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, please don't panic — I'm going to help you. But I want to ask very carefully: did you change your email address with us yesterday?"
+    },
+    {
+      "turn_id": "T25",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "afraid",
+      "intensity": 5,
+      "pace": "slow",
+      "pitch": "high",
+      "volume": "quiet",
+      "paralinguistics": [
+        "trails-off"
+      ],
+      "text": "No. No, I didn't change anything…"
+    },
+    {
+      "turn_id": "T26",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay. Stay with me, Mrs. Holloway. I'm right here. Can you do me one favor — can you read me what email address that NexaLink message was sent to? Just the address it appears as 'to'."
+    },
+    {
+      "turn_id": "T27",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "distressed",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "It was sent to my email — m-holloway-fifty-one at gmail dot com. That's mine."
+    },
+    {
+      "turn_id": "T28",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "cautious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "And in the body of that email, does it say what the new email address is — the one your account was changed to?"
+    },
+    {
+      "turn_id": "T29",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concentrating",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Yes… it says 'your new email is now…' it's a long one with numbers… 'r-h-eight-eight-two-four-x at proton mail dot com'. That is not me. That is absolutely not me."
+    },
+    {
+      "turn_id": "T30",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, I believe you. I'm going to take a few protective actions on your account right now, and then I'm going to bring in a senior agent who specializes in this kind of situation. You are not alone here, alright?"
+    },
+    {
+      "turn_id": "T31",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "afraid",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "high",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "They got into my account. Did they get my money?"
+    },
+    {
+      "turn_id": "T32",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, listen to me. I am going to freeze any further changes on your account right now while we sort this out. And the senior agent is going to walk through every recent activity with you to confirm what was you and what wasn't. We have protocols for exactly this. You are protected."
+    },
+    {
+      "turn_id": "T33",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "tearful",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Oh, thank you. Thank you."
+    },
+    {
+      "turn_id": "T34",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You're very welcome. I want you to do two things while I get the senior agent on the line. First, please change your email password — your gmail one — as soon as we hang up. Even before the senior agent calls back, if it comes to that. Second, do not click any links in any emails claiming to be from us until you've spoken with the senior agent. Are you with me?"
+    },
+    {
+      "turn_id": "T35",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes. I'm writing it down. Change my Gmail password. Don't click any links."
+    },
+    {
+      "turn_id": "T36",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Perfect. I'm going to place you on a brief hold — no more than two minutes — to brief James, our senior agent. I will be right back. Okay?"
+    },
+    {
+      "turn_id": "T37",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "uncertain",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Okay… don't be too long, please."
+    },
+    {
+      "turn_id": "T38",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I won't. I promise."
+    },
+    {
+      "turn_id": "T39",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "off-line, briefing"
+      ],
+      "text": "James, I have Mrs. Margaret Holloway on the line. She called because she lost access to her account. Standard verification only got to two of five. I used email OTP for alternative verification, and that's where it got serious — she opened her inbox and saw an email from us confirming an email change to a Proton Mail address she does not recognize. She also sees confirmation emails for accounts she doesn't have. She's a widow, late sixties, very shaken. I've told her we're freezing the account and that you're going to walk her through recent activity. She's emotional but cooperative."
+    },
+    {
+      "turn_id": "T40",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it, Aisha. I'm flagging the account 'Security Review' on my side now. Bring her over."
+    },
+    {
+      "turn_id": "T41",
+      "speaker": "AGENT",
+      "agent_name": "Aisha",
+      "emotion": "warm",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, thank you so much for holding. I have James from our senior agent team here. He has everything we just discussed and he's going to take wonderful care of you. James, this is Margaret Holloway."
+    },
+    {
+      "turn_id": "T42",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "warm",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Hello, Mrs. Holloway. This is James. First, I want to thank Aisha for everything she's done so far, and I want to tell you directly: you did exactly the right thing by calling us. Are you alright to keep going?"
+    },
+    {
+      "turn_id": "T43",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "tearful",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes. Yes, I'm alright. Thank you."
+    },
+    {
+      "turn_id": "T44",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. I want to start by telling you what I've already done. Your account is now frozen — that means no changes, no payments, no plan modifications can happen until we lift the freeze together. Second, I'm going to look at the activity log and tell you exactly what's happened in the last seven days. We're going to compare every item to your memory, and anything you don't recognize, we mark as unauthorized. Sound good?"
+    },
+    {
+      "turn_id": "T45",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes. Let's do it."
+    },
+    {
+      "turn_id": "T46",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Okay. The first item — five days ago, login from an IP address in… let me see… that doesn't match your usual location. The second — three days ago, a PIN reset request was attempted but failed. The third — yesterday, the email address change we already discussed. The fourth — also yesterday, a request to add a second authorized user named 'David Holloway'. Does that name mean anything to you?"
+    },
+    {
+      "turn_id": "T47",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "shocked",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "high",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "David is my son's name. But David didn't call you. He lives in Oregon, he wouldn't have done that without telling me. And — and the spelling, you said David?"
+    },
+    {
+      "turn_id": "T48",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "cautious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes — D-A-V-I-D Holloway."
+    },
+    {
+      "turn_id": "T49",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "resolute_afraid",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "That isn't him. He would have called me. They used his name."
+    },
+    {
+      "turn_id": "T50",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "firm",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mrs. Holloway, I am marking that authorized user request as fraudulent and reversing it now. Whoever did this knew enough about you to use your son's name, which means we should treat this as a serious targeted incident. Please do not share any account information with anyone who calls or emails you claiming to be from NexaLink — including someone using your son's name — until we've spoken again. Real NexaLink staff will never ask for your full PIN or full card number over the phone."
+    },
+    {
+      "turn_id": "T51",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "grateful_afraid",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "I won't. I promise."
+    },
+    {
+      "turn_id": "T52",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you. Now — I'm filing this with our Data Compliance team right now, and they will reach out to you within seventy-two hours to walk you through the next steps and any monitoring we'll set up on the account. In the meantime I'd like to set a new security PIN with you, and a new email address on file — your real one. Are you ready?"
+    },
+    {
+      "turn_id": "T53",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "resolute",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [],
+      "text": "Yes. I'm ready."
+    },
+    {
+      "turn_id": "T54",
+      "speaker": "T2_AGENT",
+      "agent_name": "James",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Good. Take a breath, Mrs. Holloway. We're going to get this sorted."
+    },
+    {
+      "turn_id": "T55",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "relieved",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "quiet",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Thank you so much. Both of you. I was — I was so frightened."
+    }
+  ]
+}

@@ -1,15 +1,17 @@
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+import json
 import random
 import re
 
+from pypdf import PdfReader
 from sqlmodel import select
 
 from app.core.security import get_password_hash
 from app.models.organization import Organization
 from app.models.user import User as UserModel
-from app.models.enums import UserRole
+from app.models.enums import AgentType, UserRole
 from app.models.policy import CompanyPolicy, OrganizationPolicy, PolicyCompliance
 from app.models.faq import FAQArticle, OrganizationFAQArticle
 from app.models.interaction import Interaction
@@ -22,11 +24,36 @@ from app.core.database import engine
 from app.core.config import settings
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+KB_CATEGORY_PREFIX = "kb:"
+
+NEXALINK_AGENT_PROFILES = [
+    ("agent.priya@nexalink.com", "Priya"),
+    ("agent.daniel@nexalink.com", "Daniel"),
+    ("agent.sarah.chen@nexalink.com", "Sarah Chen"),
+    ("agent.marcus@nexalink.com", "Marcus"),
+    ("agent.aisha@nexalink.com", "Aisha"),
+    ("agent.james@nexalink.com", "James"),
+    ("agent.hannah@nexalink.com", "Hannah"),
+    ("agent.robert@nexalink.com", "Robert"),
+]
+
 
 def parse_nexalink_readme_mapping(readme_path: Path) -> dict[str, str]:
     """Return filename -> agent_name mapping parsed from storage/audio/nexalink README."""
     if not readme_path.exists():
         return {}
+
+    evaluation_manifest = readme_path.parent / "evaluation" / "manifest.json"
+    if evaluation_manifest.exists():
+        try:
+            manifest = json.loads(evaluation_manifest.read_text(encoding="utf-8"))
+            return {
+                item["audio_file"]: item["primary_agent"]
+                for item in manifest.get("calls", [])
+                if item.get("audio_file") and item.get("primary_agent")
+            }
+        except Exception as exc:
+            print(f"Could not parse evaluation manifest: {exc}")
 
     text = readme_path.read_text(encoding="utf-8", errors="ignore")
     sections = re.split(r"\n##\s+", text)
@@ -40,6 +67,17 @@ def parse_nexalink_readme_mapping(readme_path: Path) -> dict[str, str]:
         filename = file_match.group(1).strip()
         agent_name = agent_match.group(1).strip()
         if filename and agent_name:
+            mapping[filename] = agent_name
+
+    for line in text.splitlines():
+        if not line.strip().startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        filename = cells[0].strip("`")
+        agent_name = cells[2]
+        if filename and agent_name and agent_name != "-":
             mapping[filename] = agent_name
     return mapping
 
@@ -63,7 +101,14 @@ async def create_or_get_organization(session: AsyncSession, name: str, slug: str
     return org
 
 
-async def create_or_get_user(session: AsyncSession, org_id, email: str, name: str, role: UserRole) -> UserModel:
+async def create_or_get_user(
+    session: AsyncSession,
+    org_id,
+    email: str,
+    name: str,
+    role: UserRole,
+    agent_type: AgentType | None = None,
+) -> UserModel:
     result = await session.exec(select(UserModel).where(UserModel.email == email))
     user = result.first()
     if not user:
@@ -72,7 +117,8 @@ async def create_or_get_user(session: AsyncSession, org_id, email: str, name: st
             name=name,
             password_hash=get_password_hash("password123"),
             organization_id=org_id,
-            role=role
+            role=role,
+            agent_type=agent_type,
         )
         session.add(user)
         await session.commit()
@@ -80,48 +126,90 @@ async def create_or_get_user(session: AsyncSession, org_id, email: str, name: st
         print(f"Created user: {email} with role {role}")
     else:
         user.organization_id = org_id
+        user.name = name
+        user.role = role
+        user.agent_type = agent_type
         session.add(user)
         await session.commit()
-        print(f"User already exists: {email}, updated org_id")
+        print(f"User already exists: {email}, updated org/profile")
     return user
 
 
+async def deactivate_legacy_agents(session: AsyncSession, org_id, active_agent_emails: set[str]) -> None:
+    result = await session.exec(
+        select(UserModel).where(
+            UserModel.organization_id == org_id,
+            UserModel.role == UserRole.agent,
+        )
+    )
+    for user in result.all():
+        if user.email in active_agent_emails:
+            continue
+        if user.is_active:
+            user.is_active = False
+            session.add(user)
+            print(f"Deactivated legacy Nexalink agent: {user.email}")
+    await session.commit()
+
+
 async def seed_policies_and_faqs(session: AsyncSession, org_id):
-    """Ingest policy and SOP markdown documents into policy/FAQ tables."""
+    """Ingest policy, SOP, and KB documents into the tables used by the UI."""
     backend_dir = Path(__file__).resolve().parents[1]
-    docs_dir = backend_dir.parent / "storage" / "docs" / "nexalink" / "parsed-docs"
+    storage_docs_dir = backend_dir.parent / "storage" / "docs" / "nexalink"
+    parsed_docs_dir = storage_docs_dir / "parsed-docs"
     
-    if not docs_dir.exists():
-        print(f"Docs directory not found: {docs_dir}")
+    if not storage_docs_dir.exists():
+        print(f"Docs directory not found: {storage_docs_dir}")
         if settings.SEED_MOCK_INTERACTIONS:
             return await seed_dummy_policy(session, org_id)
         return None
 
-    policy_root = docs_dir / "policies"
-    sop_root = docs_dir / "sops"
+    def preferred_docs(folder: Path) -> list[Path]:
+        if not folder.exists():
+            return []
+        pdfs = sorted(folder.rglob("*.pdf"))
+        if pdfs:
+            return pdfs
+        return sorted(
+            f for f in folder.rglob("*.md")
+            if not any(x in f.name for x in ["_chunks", "_raw"])
+        )
 
-    policy_files = [
-        f for f in (policy_root.rglob("*.md") if policy_root.exists() else docs_dir.rglob("*.md"))
-        if not any(x in f.name for x in ["_chunks", "_raw"])
-        and (not sop_root.exists() or "parsed-docs\\sops" not in str(f))
-    ]
-    sop_files = [
-        f for f in (sop_root.rglob("*.md") if sop_root.exists() else [])
-        if not any(x in f.name for x in ["_chunks", "_raw"])
-    ]
+    policy_files = preferred_docs(storage_docs_dir / "policy-docs")
+    sop_files = preferred_docs(storage_docs_dir / "sop-procedures")
+    kb_files = preferred_docs(storage_docs_dir / "knowledge-base")
 
-    if not policy_files and not sop_files:
-        print("No markdown files found in parsed-docs directory.")
+    if parsed_docs_dir.exists():
+        policy_files.extend(preferred_docs(parsed_docs_dir / "policies"))
+        sop_files.extend(preferred_docs(parsed_docs_dir / "sops"))
+
+    if not policy_files and not sop_files and not kb_files:
+        print("No policy, SOP, or KB documents found in storage/docs/nexalink.")
         if settings.SEED_MOCK_INTERACTIONS:
             return await seed_dummy_policy(session, org_id)
         return None
 
     print(
-        f"Found {len(policy_files)} policy docs and {len(sop_files)} SOP docs in parsed-docs."
+        f"Found {len(policy_files)} policy docs, {len(sop_files)} SOP docs, "
+        f"and {len(kb_files)} KB docs."
     )
 
+    def read_document_text(file_path: Path) -> str:
+        if file_path.suffix.lower() == ".pdf":
+            try:
+                reader = PdfReader(str(file_path))
+                return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+            except Exception as exc:
+                print(f"Error extracting PDF text from {file_path.name}: {exc}")
+                return ""
+        try:
+            return file_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            print(f"Error reading {file_path.name}: {exc}")
+            return ""
+
     def extract_markdown_title(file_path: Path, text: str) -> str:
-        title = file_path.name.replace(".md", "").replace("_", " ").replace("-", " ").title()
+        title = file_path.stem.replace("_", " ").replace("-", " ").title()
         for line in text.splitlines():
             clean_line = line.strip()
             if clean_line.startswith("#"):
@@ -138,20 +226,23 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
 
     first_policy = None
     policy_count = 0
-    faq_count = 0
+    sop_count = 0
+    kb_count = 0
 
     for f in policy_files:
-        try:
-            content = f.read_text(encoding="utf-8")
-        except Exception as e:
-            print(f"Error reading {f.name}: {e}")
+        content = read_document_text(f)
+        if not content:
             continue
 
         title = extract_markdown_title(f, content)
+        legacy_title = f.name.replace(".md", "").replace("_", " ").replace("-", " ").title()
         category = "Guidelines"
 
         result = await session.exec(select(CompanyPolicy).where(CompanyPolicy.policy_title == title))
         policy = result.first()
+        if not policy and legacy_title != title:
+            result = await session.exec(select(CompanyPolicy).where(CompanyPolicy.policy_title == legacy_title))
+            policy = result.first()
 
         if not policy:
             policy = CompanyPolicy(
@@ -166,7 +257,8 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
             await session.refresh(policy)
             print(f"Created policy: {title}")
         else:
-            if policy.policy_text != content or policy.policy_category != category:
+            if policy.policy_title != title or policy.policy_text != content or policy.policy_category != category:
+                policy.policy_title = title
                 policy.policy_text = content
                 policy.policy_category = category
                 policy.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -189,17 +281,19 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
         policy_count += 1
 
     for f in sop_files:
-        try:
-            content = f.read_text(encoding="utf-8")
-        except Exception as e:
-            print(f"Error reading SOP {f.name}: {e}")
+        content = read_document_text(f)
+        if not content:
             continue
 
         question = extract_markdown_title(f, content)
+        legacy_question = f.name.replace(".md", "").replace("_", " ").replace("-", " ").title()
         category = "SOP"
 
         faq_result = await session.exec(select(FAQArticle).where(FAQArticle.question == question))
         faq = faq_result.first()
+        if not faq and legacy_question != question:
+            faq_result = await session.exec(select(FAQArticle).where(FAQArticle.question == legacy_question))
+            faq = faq_result.first()
         if not faq:
             faq = FAQArticle(question=question, answer=content, category=category)
             session.add(faq)
@@ -207,7 +301,8 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
             await session.refresh(faq)
             print(f"Created SOP article: {question}")
         else:
-            if faq.answer != content or faq.category != category:
+            if faq.question != question or faq.answer != content or faq.category != category:
+                faq.question = question
                 faq.answer = content
                 faq.category = category
                 faq.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -229,9 +324,58 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
                 )
             )
             await session.commit()
-        faq_count += 1
+        sop_count += 1
 
-    print(f"Organization {org_id} loaded {policy_count} policies and {faq_count} SOP/knowledge docs")
+    for f in kb_files:
+        content = read_document_text(f)
+        if not content:
+            continue
+
+        question = extract_markdown_title(f, content)
+        legacy_question = f.name.replace(".md", "").replace("_", " ").replace("-", " ").title()
+        category = f"{KB_CATEGORY_PREFIX}Product & Technical Reference"
+
+        faq_result = await session.exec(select(FAQArticle).where(FAQArticle.question == question))
+        faq = faq_result.first()
+        if not faq and legacy_question != question:
+            faq_result = await session.exec(select(FAQArticle).where(FAQArticle.question == legacy_question))
+            faq = faq_result.first()
+        if not faq:
+            faq = FAQArticle(question=question, answer=content, category=category)
+            session.add(faq)
+            await session.commit()
+            await session.refresh(faq)
+            print(f"Created KB article: {question}")
+        else:
+            if faq.question != question or faq.answer != content or faq.category != category:
+                faq.question = question
+                faq.answer = content
+                faq.category = category
+                faq.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                session.add(faq)
+                await session.commit()
+                print(f"Updated KB article: {question}")
+
+        org_faq_stmt = select(OrganizationFAQArticle).where(
+            OrganizationFAQArticle.organization_id == org_id,
+            OrganizationFAQArticle.article_id == faq.id,
+        )
+        org_faq_res = await session.exec(org_faq_stmt)
+        if not org_faq_res.first():
+            session.add(
+                OrganizationFAQArticle(
+                    organization_id=org_id,
+                    article_id=faq.id,
+                    is_active=True,
+                )
+            )
+            await session.commit()
+        kb_count += 1
+
+    print(
+        f"Organization {org_id} loaded {policy_count} policies, "
+        f"{sop_count} SOP docs, and {kb_count} KB docs"
+    )
 
     if not first_policy:
         if settings.SEED_MOCK_INTERACTIONS:
@@ -284,10 +428,12 @@ async def seed_interactions(
     mp3_files = list(audio_dir.glob("*.mp3")) + list(audio_dir.glob("*.wav"))
     readme_mapping = parse_nexalink_readme_mapping(audio_dir / "README.md")
 
-    unique_readme_agents = sorted({name for name in readme_mapping.values() if name})
-    readme_agent_to_user: dict[str, UserModel] = {}
-    for idx, agent_name in enumerate(unique_readme_agents):
-        readme_agent_to_user[agent_name] = agents[idx % len(agents)]
+    agent_by_name = {agent.name: agent for agent in agents}
+    readme_agent_to_user: dict[str, UserModel] = {
+        agent_name: agent_by_name[agent_name]
+        for agent_name in sorted({name for name in readme_mapping.values() if name})
+        if agent_name in agent_by_name
+    }
 
     assigned_counts = {agent.email: 0 for agent in agents}
 
@@ -329,8 +475,8 @@ async def seed_interactions(
             interaction_date=(datetime.now(timezone.utc) - timedelta(days=random.randint(0, 10))).replace(tzinfo=None),
             duration_seconds=random.randint(60, 300),
             language_detected="en",
-            file_size_bytes=random.randint(10000, 5000000),
-            file_format="mp3",
+            file_size_bytes=path.stat().st_size,
+            file_format=path.suffix.lstrip(".").lower() or "wav",
             has_overlap=False,
             processing_status=ProcessingStatus.completed,
             audio_file_path=filename
@@ -401,10 +547,10 @@ async def main():
         
         manager = await create_or_get_user(session, org.id, "manager@nexalink.com", "Nexalink Manager", UserRole.manager)
         agents = [
-            await create_or_get_user(session, org.id, "agent.sara@nexalink.com", "Sara", UserRole.agent),
-            await create_or_get_user(session, org.id, "agent.mike@nexalink.com", "Mike", UserRole.agent),
-            await create_or_get_user(session, org.id, "agent.rania@nexalink.com", "Rania", UserRole.agent),
+            await create_or_get_user(session, org.id, email, name, UserRole.agent, AgentType.human)
+            for email, name in NEXALINK_AGENT_PROFILES
         ]
+        await deactivate_legacy_agents(session, org.id, {email for email, _ in NEXALINK_AGENT_PROFILES})
 
         policy = await seed_policies_and_faqs(session, org.id)
 
@@ -415,9 +561,8 @@ async def main():
 
         print("Seeding complete! You can login with:")
         print("Manager: manager@nexalink.com / password123")
-        print("Agent: agent.sara@nexalink.com / password123")
-        print("Agent: agent.mike@nexalink.com / password123")
-        print("Agent: agent.rania@nexalink.com / password123")
+        for email, _ in NEXALINK_AGENT_PROFILES:
+            print(f"Agent: {email} / password123")
 
 if __name__ == "__main__":
     asyncio.run(main())

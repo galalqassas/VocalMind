@@ -1,0 +1,606 @@
+{
+  "call_id": "CALL_05_retention_abuse",
+  "audio_file": "CALL_05_retention_abuse_merged.wav",
+  "script_file": "scripts/CALL_05_retention_abuse.md",
+  "primary_agent": "Hannah",
+  "escalation_agents": [
+    "Robert"
+  ],
+  "customer_profile": "",
+  "sop_primary": "SOP-05 (Customer Retention & Cancellation)",
+  "policy_refs": "[CS-RULE-001, CS-RULE-002, CS-RULE-004, CS-RULE-011, CS-RULE-012, CS-RULE-013, CS-RULE-014, CS-RULE-016, CS-RULE-021]",
+  "kb_refs": "[Section 4.2 - Cancellations & ETF]",
+  "expected_outcome": "Customer issues personal attacks against agent. 3-Strike Protocol applied: Strike 1 warning, Strike 2 final warning, Strike 3 transfer to Tier 3. Customer does not abuse Tier 3 lead and cancellation is processed.",
+  "emotional_arc": "curt → hostile → abusive (Strike 1) → abusive (Strike 2) → abusive (Strike 3 → transfer)",
+  "coverage": [
+    {
+      "element": "Greeting + recording",
+      "where": "T02–T03",
+      "notes": ""
+    },
+    {
+      "element": "Verification under pressure",
+      "where": "T05–T11",
+      "notes": "customer rushes"
+    },
+    {
+      "element": "A.C.E.S. — acknowledge first, no fees opening",
+      "where": "T13",
+      "notes": "CS-RULE-011"
+    },
+    {
+      "element": "Forbidden phrases avoided",
+      "where": "throughout",
+      "notes": "agent never says \"calm down\", \"that's our policy\", etc."
+    },
+    {
+      "element": "Tone adaptation — agent does NOT match volume",
+      "where": "T18, T26, T34",
+      "notes": "CS-RULE-013"
+    },
+    {
+      "element": "Strike 1 (warning)",
+      "where": "T20",
+      "notes": "CS-RULE-016"
+    },
+    {
+      "element": "Strike 2 (final warning)",
+      "where": "T28",
+      "notes": ""
+    },
+    {
+      "element": "Strike 3 (transfer)",
+      "where": "T36",
+      "notes": "CS-RULE-016"
+    },
+    {
+      "element": "Warm transfer to Tier 3",
+      "where": "T37–T40",
+      "notes": "CS-RULE-014"
+    },
+    {
+      "element": "Cancellation processed at Tier 3",
+      "where": "T41–T44",
+      "notes": "SOP-05 Step 6"
+    },
+    {
+      "element": "No survey offered",
+      "where": "end",
+      "notes": "CS-RULE-021 exception (cancellation completed)"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "T02",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for calling NexaLink Telecommunications Broadband and Support. My name is Hannah. Who do I have the pleasure of speaking with today?"
+    },
+    {
+      "turn_id": "T03",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Yeah, Brett Donovan. I want to cancel. Today. Right now."
+    },
+    {
+      "turn_id": "T04",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mr. Donovan, I'm sorry to hear you're considering leaving. You've been a valued customer, and I'd like to understand what has brought you to this point. Before I can pull anything up, I just need to verify a few details."
+    },
+    {
+      "turn_id": "T05",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "impatient",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Skip the script. Account number is three-three-one-eight, nine-nine-eight-two, four-four. Last four is six-one-zero-zero. PIN is one-nine-nine-five. Move on."
+    },
+    {
+      "turn_id": "T06",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Thank you. You're verified."
+    },
+    {
+      "turn_id": "T07",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Good. Cancel everything. Internet, the cable, all of it. Today."
+    },
+    {
+      "turn_id": "T08",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I hear you, Mr. Donovan. Before we go to the cancellation team, I'd like to understand — has something specific happened that's bringing you to this decision today?"
+    },
+    {
+      "turn_id": "T09",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Yeah. Your service is garbage and your prices are highway robbery. That's what's happened."
+    },
+    {
+      "turn_id": "T10",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I'm sorry the service has been disappointing. Can I ask — is it the pricing, the service quality, or both?"
+    },
+    {
+      "turn_id": "T11",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Both! What is wrong with you people? Did you not hear what I just said?"
+    },
+    {
+      "turn_id": "T12",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I did hear you, and I'm noting both. May I have just two minutes? Before I transfer you to our specialist team — let me check whether there are any loyalty bundles available on your account that could bring your bill down."
+    },
+    {
+      "turn_id": "T13",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "I don't want a bundle. I don't want a discount. I want OUT. Are you stupid?"
+    },
+    {
+      "turn_id": "T14",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Mr. Donovan, I want to address what you just said. Frustration with the company is completely fair, and I'll keep listening. But I'm going to ask that personal comments toward me stop, so we can get you what you need today."
+    },
+    {
+      "turn_id": "T15",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 5,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Oh, what — you're going to lecture me? You? You can't even handle a simple cancellation request, and YOU'RE going to lecture ME about manners?"
+    },
+    {
+      "turn_id": "T16",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "firm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mr. Donovan, that was Strike One. Per our policy, personal comments toward me will be tracked. Three of them and the call ends or transfers. I want to help you cancel — let's stay focused on that."
+    },
+    {
+      "turn_id": "T17",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Strike One? Are you serious? This is a customer service line, not a baseball game. Just process my cancellation."
+    },
+    {
+      "turn_id": "T18",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Understood. I'm going to transfer you to our customer loyalty team — they handle cancellations and they have the full authorization to process this for you. Before I do that, I'm required to share two things. First, you have nine months remaining on your contract, so there will be an early termination fee. Second, you'll need to return any leased equipment within thirty days. The loyalty team will walk you through both."
+    },
+    {
+      "turn_id": "T19",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "An ETF? Of course there is. Of course you people would screw me one last time on the way out the door."
+    },
+    {
+      "turn_id": "T20",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "The loyalty team can review whether any waiver applies to your situation. I'm placing you on a brief hold — no more than two minutes — while I get them on the line."
+    },
+    {
+      "turn_id": "T21",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 5,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Don't you dare put me on hold. You think I haven't been on hold enough today? You think I have all day to sit here listening to your stupid hold music while you go talk to your stupid boss?"
+    },
+    {
+      "turn_id": "T22",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Mr. Donovan, that's Strike Two. This is your final warning. The hold will be brief. I am genuinely trying to help you complete this today."
+    },
+    {
+      "turn_id": "T23",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 5,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "You're useless. You're useless. They hired you because nobody else would take the job. You probably can't even —"
+    },
+    {
+      "turn_id": "T24",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "firm",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "interrupting"
+      ],
+      "text": "Mr. Donovan — that is Strike Three. Per our policy I am now transferring you to my team lead, who will complete your cancellation. Please hold."
+    },
+    {
+      "turn_id": "T25",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "hostile",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Finally! Someone with a brain!"
+    },
+    {
+      "turn_id": "T26",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "off-line, briefing"
+      ],
+      "text": "Robert, I have Brett Donovan on the line. Verified. Wants to cancel everything immediately. Nine months remaining on contract, ETF will apply. He's been verbally abusive — I've issued all three strikes per the protocol. He's all yours. Account ends three-three-one-eight."
+    },
+    {
+      "turn_id": "T27",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it, Hannah. I'll take it from here. Thanks for handling that with composure."
+    },
+    {
+      "turn_id": "T28",
+      "speaker": "AGENT",
+      "agent_name": "Hannah",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mr. Donovan, thank you for holding. I have Robert from our team on the line. He'll process your cancellation directly."
+    },
+    {
+      "turn_id": "T29",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "firm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mr. Donovan, this is Robert, team lead. I've been briefed on your account and on the call so far. I'm going to process your cancellation today. Before I do, I want to be clear about one thing: I will not tolerate personal attacks on my agents. If we go down that road, I will end this call. We'll do this respectfully, or we won't do it at all. Are we clear?"
+    },
+    {
+      "turn_id": "T30",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Yeah. Fine. Just process it."
+    },
+    {
+      "turn_id": "T31",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you. So I'm looking at your account. You have a twenty-four month contract that started fifteen months ago. Nine months remain. The early termination fee at twenty dollars per remaining month is one hundred and eighty dollars. Your final monthly bill will be pro-rated to the cancellation date — which I'll set to today, the third of May."
+    },
+    {
+      "turn_id": "T32",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "resigned",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Whatever. Fine."
+    },
+    {
+      "turn_id": "T33",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "For equipment — you have one modem and one set-top box on lease. We'll send you a prepaid return label by email today. You have thirty days to ship them back. If they're not returned, the non-return fee is one hundred and fifty dollars per device."
+    },
+    {
+      "turn_id": "T34",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it. Send the label."
+    },
+    {
+      "turn_id": "T35",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Confirming the email on file is brett-d at outlook dot com. Is that still correct?"
+    },
+    {
+      "turn_id": "T36",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes."
+    },
+    {
+      "turn_id": "T37",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Sending the label now. You should see it in your inbox in the next five minutes. Your service will remain active until midnight tonight, then it'll deactivate. The early termination fee of one hundred and eighty dollars will appear on your final bill, along with the pro-rated charge for the days you used this month. Anything beyond that will be zero."
+    },
+    {
+      "turn_id": "T38",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "resigned",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Fine."
+    },
+    {
+      "turn_id": "T39",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mr. Donovan, I want to ask one last time, on the record — are you sure you want to proceed with the cancellation as discussed?"
+    },
+    {
+      "turn_id": "T40",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "firm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes. I'm sure. Cancel it."
+    },
+    {
+      "turn_id": "T41",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Processing the cancellation now."
+    },
+    {
+      "turn_id": "T42",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "It's done. Your case reference number is N-X-L dash four-four-eight-one-zero-five-five. Your final bill will arrive in approximately fifteen days. The return label is now in your email."
+    },
+    {
+      "turn_id": "T43",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay."
+    },
+    {
+      "turn_id": "T44",
+      "speaker": "T3_AGENT",
+      "agent_name": "Robert",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for being a NexaLink customer. Goodbye, Mr. Donovan."
+    }
+  ]
+}

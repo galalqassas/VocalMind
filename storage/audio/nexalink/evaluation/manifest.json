@@ -1,0 +1,79 @@
+{
+  "organization": "nexalink",
+  "audio_format": "wav",
+  "source": "tts-pipeline Gemini TTS scripts",
+  "calls": [
+    {
+      "call_id": "CALL_01_refund_outage",
+      "audio_file": "CALL_01_refund_outage_merged.wav",
+      "script_file": "scripts/CALL_01_refund_outage.md",
+      "ground_truth_file": "evaluation/CALL_01_refund_outage.json",
+      "primary_agent": "Priya",
+      "turn_count": 51,
+      "expected_outcome": "Pro-rated outage credit applied at Tier 1 ($23.33 — within $25 limit). Resolution at Tier 1."
+    },
+    {
+      "call_id": "CALL_02_billing_dispute_escalation",
+      "audio_file": "CALL_02_billing_dispute_escalation_merged.wav",
+      "script_file": "scripts/CALL_02_billing_dispute_escalation.md",
+      "ground_truth_file": "evaluation/CALL_02_billing_dispute_escalation.json",
+      "primary_agent": "Daniel",
+      "turn_count": 57,
+      "expected_outcome": "Disputed charge of $247 exceeds Tier 1 threshold ($200 per CS-RULE escalation matrix). Warm transfer to Tier 2."
+    },
+    {
+      "call_id": "CALL_03_tech_support_slow_internet",
+      "audio_file": "CALL_03_tech_support_slow_internet_merged.wav",
+      "script_file": "scripts/CALL_03_tech_support_slow_internet.md",
+      "ground_truth_file": "evaluation/CALL_03_tech_support_slow_internet.json",
+      "primary_agent": "Marcus",
+      "turn_count": 54,
+      "expected_outcome": "Resolution at Tier 1 — modem power-cycle restored speed. No escalation."
+    },
+    {
+      "call_id": "CALL_04_access_recovery_fraud",
+      "audio_file": "CALL_04_access_recovery_fraud_merged.wav",
+      "script_file": "scripts/CALL_04_access_recovery_fraud.md",
+      "ground_truth_file": "evaluation/CALL_04_access_recovery_fraud.json",
+      "primary_agent": "Aisha",
+      "turn_count": 54,
+      "expected_outcome": "Standard 3-of-5 verification fails. Alternative verification via email OTP succeeds. Customer reports unrecognized email change → SEC-RULE-008 protocol → flagged + Tier 2 escalation."
+    },
+    {
+      "call_id": "CALL_05_retention_abuse",
+      "audio_file": "CALL_05_retention_abuse_merged.wav",
+      "script_file": "scripts/CALL_05_retention_abuse.md",
+      "ground_truth_file": "evaluation/CALL_05_retention_abuse.json",
+      "primary_agent": "Hannah",
+      "turn_count": 43,
+      "expected_outcome": "Customer issues personal attacks against agent. 3-Strike Protocol applied: Strike 1 warning, Strike 2 final warning, Strike 3 transfer to Tier 3. Customer does not abuse Tier 3 lead and cancellation is processed."
+    }
+  ],
+  "evaluation_targets": {
+    "stt": {
+      "metric": "word_error_rate",
+      "target_max": 0.15,
+      "uses": "turns[].text"
+    },
+    "speaker_diarization": {
+      "metric": "speaker_role_accuracy",
+      "target_min": 0.9,
+      "uses": "turns[].speaker"
+    },
+    "emotion": {
+      "metric": "utterance_emotion_accuracy",
+      "target_min": 0.7,
+      "uses": "turns[].emotion"
+    },
+    "rag_compliance": {
+      "metric": "required_trigger_recall",
+      "target_min": 0.8,
+      "uses": "coverage"
+    },
+    "agent_assignment": {
+      "metric": "interaction_agent_name_match",
+      "target_min": 1.0,
+      "uses": "primary_agent"
+    }
+  }
+}

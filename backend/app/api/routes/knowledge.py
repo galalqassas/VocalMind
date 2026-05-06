@@ -22,7 +22,8 @@ router = APIRouter()
 POLICY_DOCS_FOLDER = "policy-docs"
 SOP_DOCS_FOLDER = "sop-procedures"
 LEGACY_FAQ_DOCS_FOLDER = "faq-docs"
-KB_DOCS_FOLDER = "kb"
+KB_DOCS_FOLDER = "knowledge-base"
+LEGACY_KB_DOCS_FOLDER = "kb"
 
 # --- Schemas ---
 
@@ -333,6 +334,7 @@ async def create_faq(session: SessionDep, current_user: CurrentUser, data: FAQCr
     )
     session.add(org_link)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(faq.id)}
 
 
@@ -372,6 +374,7 @@ async def upload_faq(
     )
     session.add(org_link)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(faq.id)}
 
 
@@ -394,6 +397,7 @@ async def update_faq(session: SessionDep, current_user: CurrentUser, faq_id: str
 
     session.add(faq)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success"}
 
 
@@ -428,6 +432,7 @@ async def replace_faq_upload(
     faq.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(faq)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(faq.id)}
 
 
@@ -446,6 +451,7 @@ async def toggle_faq(session: SessionDep, current_user: CurrentUser, faq_id: str
     org_faq.is_active = not org_faq.is_active
     session.add(org_faq)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "isActive": org_faq.is_active}
 
 @router.delete("/policies/{policy_id}")
@@ -525,6 +531,7 @@ async def delete_faq(
             _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_FAQ_DOCS_FOLDER, faq_id)
             
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "message": "FAQ deleted"}
 
 
@@ -609,6 +616,7 @@ async def upload_kb_article(
     )
     session.add(org_link)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(faq.id)}
 
 
@@ -642,6 +650,7 @@ async def replace_kb_upload(
     faq.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(faq)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "id": str(faq.id)}
 
 
@@ -660,6 +669,7 @@ async def toggle_kb_article(session: SessionDep, current_user: CurrentUser, kb_i
     org_faq.is_active = not org_faq.is_active
     session.add(org_faq)
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "isActive": org_faq.is_active}
 
 
@@ -690,6 +700,8 @@ async def delete_kb_article(
             await session.delete(faq)
             org_slug = await _get_org_slug(session, current_user.organization_id)
             _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, kb_id)
+            _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_KB_DOCS_FOLDER, kb_id)
 
     await session.commit()
+    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "message": "KB article deleted"}

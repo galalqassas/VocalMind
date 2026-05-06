@@ -1,0 +1,766 @@
+{
+  "call_id": "CALL_02_billing_dispute_escalation",
+  "audio_file": "CALL_02_billing_dispute_escalation_merged.wav",
+  "script_file": "scripts/CALL_02_billing_dispute_escalation.md",
+  "primary_agent": "Daniel",
+  "escalation_agents": [
+    "Sarah Chen"
+  ],
+  "customer_profile": "",
+  "sop_primary": "SOP-02 (Billing Issue Resolution)",
+  "policy_refs": "[CS-RULE-001, CS-RULE-002, CS-RULE-004, CS-RULE-009, CS-RULE-011, CS-RULE-012, CS-RULE-013, CS-RULE-014, FIN-RULE-001, FIN-RULE-005]",
+  "kb_refs": "[Section 3.1 - Billing Concepts, Section 5 - Escalation Triggers]",
+  "expected_outcome": "Disputed charge of $247 exceeds Tier 1 threshold ($200 per CS-RULE escalation matrix). Warm transfer to Tier 2.",
+  "emotional_arc": "confused → frustrated → angry → resigned → cooperative (at T2)",
+  "coverage": [
+    {
+      "element": "Greeting + recording",
+      "where": "T02–T03",
+      "notes": ""
+    },
+    {
+      "element": "3-of-5 verification",
+      "where": "T08–T17",
+      "notes": "name + account # + last 4"
+    },
+    {
+      "element": "A.C.E.S. attempted",
+      "where": "T19–T22",
+      "notes": "Acknowledge first"
+    },
+    {
+      "element": "Bill comparison line-by-line",
+      "where": "T26–T34",
+      "notes": "proration + expired promo + data overage"
+    },
+    {
+      "element": "Forbidden phrase avoidance",
+      "where": "throughout",
+      "notes": "agent must NOT say \"that's our policy\""
+    },
+    {
+      "element": "Customer remains angry > 2 min",
+      "where": "T37–T44",
+      "notes": "escalation trigger"
+    },
+    {
+      "element": "Dispute > $200",
+      "where": "T35",
+      "notes": "Tier 2 trigger"
+    },
+    {
+      "element": "Warm transfer",
+      "where": "T48–T54",
+      "notes": "brief receiving agent + introduce"
+    },
+    {
+      "element": "Tier 2 takes over",
+      "where": "T55–T58",
+      "notes": "partial — full Tier 2 resolution out of scope"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": "T02",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you for calling NexaLink Telecommunications Broadband and Support. My name is Daniel. Who do I have the pleasure of speaking with today?"
+    },
+    {
+      "turn_id": "T03",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 3,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Linda Park. And before you say anything else — I need someone to explain why my bill this month is two hundred and forty-seven dollars more than it's supposed to be."
+    },
+    {
+      "turn_id": "T04",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "empathetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I hear you, Ms. Park, and I'm sorry about the surprise. I understand you're calling regarding an unexpected charge on your bill, and I can absolutely help you with that. Before I open the account, I'll need to verify a few details quickly."
+    },
+    {
+      "turn_id": "T05",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "impatient",
+      "intensity": 3,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Fine. Go ahead."
+    },
+    {
+      "turn_id": "T06",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Could you please confirm the account number for me?"
+    },
+    {
+      "turn_id": "T07",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Five-five-two-zero, one-one-four-seven, eight-three."
+    },
+    {
+      "turn_id": "T08",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Thank you. And the last four digits of the payment method on file?"
+    },
+    {
+      "turn_id": "T09",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Eight-zero-zero-six."
+    },
+    {
+      "turn_id": "T10",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "And the security PIN, please?"
+    },
+    {
+      "turn_id": "T11",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "irritated",
+      "intensity": 3,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "It's two-four-seven-one. Can we please get on with it?"
+    },
+    {
+      "turn_id": "T12",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "apologetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You're fully verified, Ms. Park. Thank you for your patience."
+    },
+    {
+      "turn_id": "T13",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Mm."
+    },
+    {
+      "turn_id": "T14",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "empathetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "So I want to acknowledge — getting a bill that's significantly higher than expected is alarming, and I completely understand the frustration. Let me clarify what we're going to do: I'm going to pull up this month's bill and last month's bill side by side, and we'll go through every line together until we find what changed. Does that sound okay?"
+    },
+    {
+      "turn_id": "T15",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "That's all I want. Yes."
+    },
+    {
+      "turn_id": "T16",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Pulling them up now. One moment."
+    },
+    {
+      "turn_id": "T17",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay — I have both statements open. Last month, your total was one hundred and twelve dollars and forty cents. This month it's three hundred and fifty-nine dollars and forty cents. So the difference is exactly two hundred and forty-seven dollars, which matches what you said."
+    },
+    {
+      "turn_id": "T18",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "vindicated_angry",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes! Two hundred and forty-seven dollars. Where did that come from?"
+    },
+    {
+      "turn_id": "T19",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Let me walk through it. There are three new line items I'm seeing. The first is a proration charge of forty-six dollars and eighty cents — that one is from a plan change."
+    },
+    {
+      "turn_id": "T20",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "confused",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I didn't change my plan."
+    },
+    {
+      "turn_id": "T21",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "cautious",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "The system shows a plan change was made on the seventh of last month — an upgrade from the standard internet tier to fiber. Does that ring any bell?"
+    },
+    {
+      "turn_id": "T22",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "angry",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "No! Absolutely not! I never authorized that. Who did that?"
+    },
+    {
+      "turn_id": "T23",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "apologetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I understand, and I want to look into this carefully with you. The change in the system shows it was processed online — not through an agent — but that doesn't tell us who actually did it. Let me keep going through the bill so we have the full picture, and then we'll address every piece. Is that okay?"
+    },
+    {
+      "turn_id": "T24",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "angry",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "Fine, but somebody is going to answer for this."
+    },
+    {
+      "turn_id": "T25",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Absolutely. So the second item is one hundred and twenty dollars labeled 'promotional discount expired'. That's a discount that had been on your account for the last twelve months — it was the new customer welcome discount."
+    },
+    {
+      "turn_id": "T26",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "confused",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wait, what? Nobody told me that was going to expire."
+    },
+    {
+      "turn_id": "T27",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "apologetic",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I understand it can feel like that, and I can see how this would be a shock. The promotional period was outlined in the original contract terms, but I completely understand the bill is the first time you're feeling the impact of it ending."
+    },
+    {
+      "turn_id": "T28",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "frustrated",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "This is unbelievable. So you're telling me you can quietly add a hundred and twenty dollars to my bill because some twelve-month thing ran out?"
+    },
+    {
+      "turn_id": "T29",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "empathetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I hear you. The third item is eighty dollars and twenty cents in data overage charges — that's data used beyond the plan's monthly cap."
+    },
+    {
+      "turn_id": "T30",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "angry",
+      "intensity": 5,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "DATA OVERAGE? On a fiber plan I never asked for? You see what's happening here, right? You see how absurd this is?"
+    },
+    {
+      "turn_id": "T31",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "apologetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I do see it, Ms. Park. I genuinely do. Let me try to break this apart so we can resolve each piece —"
+    },
+    {
+      "turn_id": "T32",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "angry",
+      "intensity": 5,
+      "pace": "fast",
+      "pitch": "high",
+      "volume": "loud",
+      "paralinguistics": [
+        "overlap"
+      ],
+      "text": "No no no — don't tell me you're going to break it apart. I want all two hundred and forty-seven dollars off this bill. All of it. Today."
+    },
+    {
+      "turn_id": "T33",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "calm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I want to help you, and I'm not going to argue with you about that. Here's where I am — at my level, I can investigate and apply credits up to a certain dollar threshold. The total amount in dispute today is over that threshold, which means I need to bring in a senior agent who has the authorization to handle this case fully."
+    },
+    {
+      "turn_id": "T34",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "suspicious",
+      "intensity": 4,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "You're transferring me? After I just spent fifteen minutes explaining all this?"
+    },
+    {
+      "turn_id": "T35",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "apologetic",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I am, and I want to be honest with you about why. The plan change you didn't authorize is the most important piece of this — it touches on possible unauthorized activity on your account, and that's something a senior agent has to review directly. I'm going to give them everything we've talked about so you don't have to repeat any of it."
+    },
+    {
+      "turn_id": "T36",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "angry",
+      "intensity": 4,
+      "pace": "fast",
+      "pitch": "mid",
+      "volume": "loud",
+      "paralinguistics": [],
+      "text": "You'd better. Because I'm not going through this whole story again."
+    },
+    {
+      "turn_id": "T37",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You won't have to. I'm placing you on a brief hold — no more than two minutes — while I get the senior agent on the line and brief them. I'll be right back with you."
+    },
+    {
+      "turn_id": "T38",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "curt",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Two minutes."
+    },
+    {
+      "turn_id": "T39",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "pause"
+      ],
+      "text": "Thank you."
+    },
+    {
+      "turn_id": "T40",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "off-line, briefing"
+      ],
+      "text": "Sarah, hi — it's Daniel. I have Linda Park on the line, account ending five-five-two-zero. Verified. She's calling about a two hundred and forty-seven dollar increase on this month's bill. Three components: forty-six eighty proration from a plan upgrade she says she did not authorize, one hundred and twenty for an expired twelve-month promo, and eighty twenty in overage from the new fiber plan. The unauthorized plan change is the biggest concern. She's been on the call about fifteen minutes, very frustrated, but engaged and reasonable when she's heard. I told her you'd take it from here."
+    },
+    {
+      "turn_id": "T41",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Got it, Daniel — thank you for the brief. Bring her over."
+    },
+    {
+      "turn_id": "T42",
+      "speaker": "AGENT",
+      "agent_name": "Daniel",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Ms. Park, thank you for holding. I have Sarah from our senior agent team on the line. She has the full picture of everything we discussed and she'll take great care of you. Sarah, this is Linda Park."
+    },
+    {
+      "turn_id": "T43",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Hi Ms. Park, this is Sarah. I'm a senior agent here at NexaLink. Daniel has briefed me on everything — the plan change you didn't authorize, the promotion that expired, and the data overage. I want to start with the plan change because that's the most concerning piece. Are you with me?"
+    },
+    {
+      "turn_id": "T44",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "tired",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "sigh"
+      ],
+      "text": "Yes. I'm with you."
+    },
+    {
+      "turn_id": "T45",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "reassuring",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay. First — I'm pulling up the audit log for the plan change right now to see exactly when, where, and from what device that change was made. While I do that, I want you to know two things: number one, you will not be on the hook for charges from a plan change you did not make. Number two, if there's any indication someone else accessed your account, we have a security protocol that protects you. Does that help a little?"
+    },
+    {
+      "turn_id": "T46",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "resigned",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes. Thank you. That's the first thing anyone has said today that actually helps."
+    },
+    {
+      "turn_id": "T47",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "I'm sorry it took this long to get here. Now — let me look at this audit log."
+    },
+    {
+      "turn_id": "T48",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Take your time."
+    },
+    {
+      "turn_id": "T49",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [
+        "typing"
+      ],
+      "text": "Okay. The plan change was submitted from a desktop browser at two-fourteen AM on the seventh. I'd like to check whether that matches any device or location you'd recognize. Did you, or anyone in your household, access the account around that time?"
+    },
+    {
+      "turn_id": "T50",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "concerned",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Two AM? Absolutely not. I was asleep. Nobody in this house would do that."
+    },
+    {
+      "turn_id": "T51",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "cautious",
+      "intensity": 4,
+      "pace": "slow",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay. Based on what you're telling me, I'm going to flag this account for a security review and freeze any further changes while we investigate. I'll also reverse the proration and overage charges that resulted from this unauthorized change — that's one hundred and twenty-seven dollars right there. The expired promotion is a separate matter that I'll come back to."
+    },
+    {
+      "turn_id": "T52",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "relieved",
+      "intensity": 3,
+      "pace": "slow",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Thank you. Really."
+    },
+    {
+      "turn_id": "T53",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "reassuring",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "You're welcome. I'm going to stay on the line with you while I process all of this. The security review will be picked up by our compliance team within seventy-two hours, and they'll reach out directly. In the meantime, I'd like you to change your account password and your security PIN today, before we hang up. Can we do that together?"
+    },
+    {
+      "turn_id": "T54",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "cooperative",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Yes. Let's do it."
+    },
+    {
+      "turn_id": "T55",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "warm",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Wonderful. Let me walk you through the password reset first. Open your browser and go to the customer portal — when you're there, let me know."
+    },
+    {
+      "turn_id": "T56",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Okay, opening it now."
+    },
+    {
+      "turn_id": "T57",
+      "speaker": "T2_AGENT",
+      "agent_name": "Sarah Chen",
+      "emotion": "professional",
+      "intensity": 3,
+      "pace": "normal",
+      "pitch": "low",
+      "volume": "normal",
+      "paralinguistics": [],
+      "text": "Take your time, I'm right here with you."
+    },
+    {
+      "turn_id": "T58",
+      "speaker": "CUSTOMER",
+      "agent_name": null,
+      "emotion": "calm",
+      "intensity": 2,
+      "pace": "normal",
+      "pitch": "mid",
+      "volume": "normal",
+      "paralinguistics": [
+        "trails-off"
+      ],
+      "text": "Alright, I'm at the page…"
+    }
+  ]
+}
