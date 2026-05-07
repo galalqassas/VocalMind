@@ -1,18 +1,24 @@
-.PHONY: help up down build build-retry logs support-up support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio seed migrate prepare-speaker-model clean test-all
+.PHONY: help up up-gpu down build build-retry logs support-up support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio seed migrate prepare-speaker-model clean test-all
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # ── Docker ────────────────────────────────────────────────────────────────
 
-up: ## Start all services
+up: ## Start all services (CPU)
 	docker compose up -d
+
+up-gpu: ## Start all services with NVIDIA GPU acceleration (whisperx/emotion/ollama)
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 down: ## Stop all services
 	docker compose down
 
-support-up: ## Start only supporting services for local backend/frontend development
+support-up: ## Start only supporting services for local backend/frontend development (CPU)
 	docker compose up -d db ollama qdrant vad emotion whisperx
+
+support-up-gpu: ## Start supporting services with GPU acceleration enabled
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d db ollama qdrant vad emotion whisperx
 
 support-down: ## Stop supporting services used by local backend/frontend development
 	docker compose stop db ollama qdrant vad emotion whisperx

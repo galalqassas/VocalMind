@@ -1,0 +1,50 @@
+# GPU acceleration override for docker-compose.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#   (or: `make up-gpu` / `make support-up-gpu`)
+#
+# Requirements on the host:
+#   1. NVIDIA GPU + recent driver
+#   2. NVIDIA Container Toolkit installed (Linux)
+#      or Docker Desktop with WSL2 + GPU passthrough enabled (Windows/macOS)
+#
+# Verify before starting:
+#   docker info --format "{{.Runtimes}}"        # should list "nvidia"
+#   nvidia-smi                                   # should show your GPU
+#
+# Containers without this override fall back to CPU automatically — no edits
+# needed to the base docker-compose.yml.
+
+services:
+
+  whisperx:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # Bump the ASR model now that GPU acceleration is available. The app
+      # auto-selects float16 compute when CUDA is detected.
+      - WHISPER_MODEL_SIZE=large-v3
+
+  emotion:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
