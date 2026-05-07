@@ -1,6 +1,6 @@
 {
   "call_id": "CALL_03_tech_support_slow_internet",
-  "audio_file": "CALL_03_tech_support_slow_internet_merged.wav",
+  "audio_file": "CALL_03_marcus_tech_support.wav",
   "script_file": "scripts/CALL_03_tech_support_slow_internet.md",
   "primary_agent": "Marcus",
   "escalation_agents": [],

@@ -93,8 +93,11 @@ VocalMind/
 │   └── fixtures/     # Test audio files & external API fixtures
 ├── storage/          # Unified local storage (docs, audio, uploads)
 │   ├── docs/         #   Organization documents (policy, SOP, KB)
-│   ├── audio/        #   Sample audio inputs for testing
-│   └── uploads/      #   Runtime audio uploads (gitignored)
+│   ├── audio/        #   Per-org audio drop folders (e.g. nexalink/), auto-ingested
+│   │                 #   on backend startup. Audio files (.wav/.mp3) are gitignored —
+│   │                 #   filename pattern CALL_<NN>_<agent>_<scenario>.<ext> assigns
+│   │                 #   the call to the correct seeded agent.
+│   └── uploads/      #   Runtime upload buffer (gitignored)
 ├── research/         # Jupyter notebooks & prototype scripts
 ├── docs/             # Documentation (explainability, LLM trigger, RAG, design, frontend)
 ├── tools/            # Local CLI tools (Supabase CLI)
@@ -144,7 +147,7 @@ make prepare-speaker-model  # Extract speaker-role classifier for WhisperX
 ### Utility Scripts
 ```bash
 python infra/scripts/measure_dashboard_baseline.py --api-base http://localhost:8000/api/v1
-python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file storage/audio/nexalink/sample.wav
+python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file storage/audio/nexalink/CALL_01_priya_refund_outage.wav
 ```
 
 ### Speaker Classifier Artifact
@@ -152,6 +155,30 @@ python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file stora
 `speaker_classifier_export.zip` is treated as a one-time import artifact.  
 Run `make prepare-speaker-model` to extract only the `distilbert/` model into
 `services/whisperx/models/speaker_role/distilbert`, then remove the zip.
+
+### Audio Auto-Ingest
+
+The backend ships an audio folder watcher
+([`backend/app/core/audio_folder_watcher.py`](backend/app/core/audio_folder_watcher.py))
+that runs on startup and every 15 seconds while the server is up. It scans
+`storage/audio/<org_slug>/` for any `.wav` or `.mp3` file that is not yet
+recorded as an interaction, and:
+
+1. Reads the agent token from the filename
+   (`CALL_<NN>_<agent>_<scenario>.<ext>`).
+2. Creates an `Interaction` row owned by that agent with status `pending`.
+3. Seeds the `processing_jobs` records for the full pipeline.
+4. Enqueues the interaction onto the in-memory worker queue.
+
+Drop a properly-named audio file into the folder — the manager dashboard will
+pick it up without any manual upload step. If the filename does not match the
+pattern, the file is still ingested but assigned to a deterministic fallback
+agent and a warning is logged. Set `AUDIO_FOLDER_WATCHER_ENABLED=false` in
+`.env` to disable.
+
+The seeded NexaLink organization comes with one manager
+(`manager@nexalink.com`) and exactly five agents — Priya, Daniel, Marcus,
+Aisha, Hannah — one per scripted call in `storage/audio/nexalink/`.
 
 ## Key Docs
 

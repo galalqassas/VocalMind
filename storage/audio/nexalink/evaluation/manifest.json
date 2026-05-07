@@ -2,10 +2,11 @@
   "organization": "nexalink",
   "audio_format": "wav",
   "source": "tts-pipeline Gemini TTS scripts",
+  "filename_pattern": "CALL_<NN>_<agent>_<scenario>.wav",
   "calls": [
     {
       "call_id": "CALL_01_refund_outage",
-      "audio_file": "CALL_01_refund_outage_merged.wav",
+      "audio_file": "CALL_01_priya_refund_outage.wav",
       "script_file": "scripts/CALL_01_refund_outage.md",
       "ground_truth_file": "evaluation/CALL_01_refund_outage.json",
       "primary_agent": "Priya",
@@ -14,7 +15,7 @@
     },
     {
       "call_id": "CALL_02_billing_dispute_escalation",
-      "audio_file": "CALL_02_billing_dispute_escalation_merged.wav",
+      "audio_file": "CALL_02_daniel_billing_dispute.wav",
       "script_file": "scripts/CALL_02_billing_dispute_escalation.md",
       "ground_truth_file": "evaluation/CALL_02_billing_dispute_escalation.json",
       "primary_agent": "Daniel",
@@ -23,7 +24,7 @@
     },
     {
       "call_id": "CALL_03_tech_support_slow_internet",
-      "audio_file": "CALL_03_tech_support_slow_internet_merged.wav",
+      "audio_file": "CALL_03_marcus_tech_support.wav",
       "script_file": "scripts/CALL_03_tech_support_slow_internet.md",
       "ground_truth_file": "evaluation/CALL_03_tech_support_slow_internet.json",
       "primary_agent": "Marcus",
@@ -32,7 +33,7 @@
     },
     {
       "call_id": "CALL_04_access_recovery_fraud",
-      "audio_file": "CALL_04_access_recovery_fraud_merged.wav",
+      "audio_file": "CALL_04_aisha_access_recovery.wav",
       "script_file": "scripts/CALL_04_access_recovery_fraud.md",
       "ground_truth_file": "evaluation/CALL_04_access_recovery_fraud.json",
       "primary_agent": "Aisha",
@@ -41,7 +42,7 @@
     },
     {
       "call_id": "CALL_05_retention_abuse",
-      "audio_file": "CALL_05_retention_abuse_merged.wav",
+      "audio_file": "CALL_05_hannah_retention.wav",
       "script_file": "scripts/CALL_05_retention_abuse.md",
       "ground_truth_file": "evaluation/CALL_05_retention_abuse.json",
       "primary_agent": "Hannah",

@@ -1,6 +1,6 @@
 {
   "call_id": "CALL_04_access_recovery_fraud",
-  "audio_file": "CALL_04_access_recovery_fraud_merged.wav",
+  "audio_file": "CALL_04_aisha_access_recovery.wav",
   "script_file": "scripts/CALL_04_access_recovery_fraud.md",
   "primary_agent": "Aisha",
   "escalation_agents": [

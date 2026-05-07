@@ -3,17 +3,14 @@ import { Link } from "react-router";
 import { parse, isValid } from "date-fns";
 import {
   Search, ArrowDown, ArrowUp, Loader2, AlertTriangle,
-  RefreshCw, Upload, MoreHorizontal, Eye, RotateCcw, Trash2,
+  RefreshCw, MoreHorizontal, Eye, RotateCcw, Trash2,
 } from "lucide-react";
 import {
   getInteractionDetail,
   getInteractions,
-  getAgents,
-  createInteraction,
   reprocessInteraction,
   deleteInteraction,
   type InteractionSummary,
-  type AgentSummary,
 } from "../../services/api";
 
 function scoreColor(score: number): string {
@@ -108,13 +105,6 @@ export function SessionInspector() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // Upload state
-  const [showUpload, setShowUpload] = useState(false);
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   // Action menu
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -150,12 +140,6 @@ export function SessionInspector() {
     }, POLL_INTERVAL);
     return () => clearInterval(timer);
   }, [hasProcessing]);
-
-  // Fetch agents when upload dialog opens
-  useEffect(() => {
-    if (!showUpload) return;
-    getAgents().then(setAgents).catch(() => {});
-  }, [showUpload]);
 
   const handleSort = (field: "score" | "date" | "duration") => {
     if (sortField === field) {
@@ -212,22 +196,6 @@ export function SessionInspector() {
       });
     }
   };
-
-  const handleUpload = useCallback(async (file: File) => {
-    setUploading(true);
-    setActionError(null);
-    try {
-      await createInteraction(file, selectedAgent || undefined);
-      setShowUpload(false);
-      setSelectedAgent("");
-      const refreshed = await getInteractions();
-      setInteractions(refreshed);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploading(false);
-    }
-  }, [selectedAgent]);
 
   const filteredInteractions = interactions.filter((interaction) => {
     const searchLower = searchQuery.toLowerCase();
@@ -338,55 +306,8 @@ export function SessionInspector() {
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowUpload(true)}
-            className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-primary px-4 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            Upload call
-          </button>
         </div>
       </div>
-
-      {/* Upload Dialog */}
-      {showUpload && (
-        <div className="mb-5 bg-card rounded-xl border border-border p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[14px] font-bold text-foreground">Upload Call Recording</h3>
-            <button type="button" onClick={() => setShowUpload(false)}
-              className="text-muted-foreground hover:text-foreground text-[18px] leading-none">&times;</button>
-          </div>
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[200px]">
-              <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">Agent (optional)</label>
-              <select
-                value={selectedAgent}
-                onChange={(e) => setSelectedAgent(e.target.value)}
-                className="w-full h-10 rounded-lg border border-border bg-background px-3 text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-              >
-                <option value="">Auto-detect</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <input ref={fileInputRef} type="file" accept="audio/*" className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void handleUpload(file);
-                }} />
-              <button type="button" disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                {uploading ? "Uploading..." : "Choose file"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Table */}
       <div className="bg-card rounded-[14px] border border-border">

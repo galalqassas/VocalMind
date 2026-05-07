@@ -1,6 +1,6 @@
 {
   "call_id": "CALL_01_refund_outage",
-  "audio_file": "CALL_01_refund_outage_merged.wav",
+  "audio_file": "CALL_01_priya_refund_outage.wav",
   "script_file": "scripts/CALL_01_refund_outage.md",
   "primary_agent": "Priya",
   "escalation_agents": [],

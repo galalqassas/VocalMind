@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     SEED_MOCK_INTERACTIONS: bool = False
 
+    # Auto-ingest watcher: scans storage/audio/<org_slug>/ and enqueues new
+    # audio files for processing via the existing in-memory worker.
+    AUDIO_FOLDER_WATCHER_ENABLED: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
 
 

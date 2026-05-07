@@ -10,7 +10,7 @@ All .mp3 in a folder:
 
 Explicit paths (anywhere on disk):
   cd backend && uv run python ../infra/scripts/supabase_seed_audio.py \\
-    --file ../storage/audio/nexalink/01a-refund-request-good.mp3 --file D:/calls/bar.wav
+    --file ../storage/audio/nexalink/CALL_01_priya_refund_outage.wav --file D:/calls/bar.wav
 
 Add uploads without wiping org DB / storage prefix (append-only):
   ... supabase_seed_audio.py --no-reset --glob "*.mp3" --storage-subdir my-batch-2026-04

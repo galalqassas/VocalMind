@@ -284,11 +284,11 @@ Title: "Agent Performance Breakdown"
 Subtitle: "interaction_scores: empathy_score · policy_score · resolution_score per agent (aggregated from agent_performance_snapshots)"
 
 Grouped bar chart (height: 210px):
-  5 agent groups: Neha, Rajesh, Priya, Vikram, Amit
+  5 agent groups (matches seeded NexaLink agents): Priya, Daniel, Marcus, Aisha, Hannah
   3 bars per agent:
-    Empathy:    #3B82F6  (Neha:92, Rajesh:85, Priya:82, Vikram:75, Amit:71)
-    Policy:     #10B981  (Neha:90, Rajesh:91, Priya:88, Vikram:78, Amit:74)
-    Resolution: #8B5CF6  (Neha:94, Rajesh:88, Priya:90, Vikram:75, Amit:81)
+    Empathy:    #3B82F6  (Priya:92, Daniel:85, Marcus:82, Aisha:75, Hannah:71)
+    Policy:     #10B981  (Priya:90, Daniel:91, Marcus:88, Aisha:78, Hannah:74)
+    Resolution: #8B5CF6  (Priya:94, Daniel:88, Marcus:90, Aisha:75, Hannah:81)
 
   Bars: 4px top radius, no bottom radius, Y-axis: 60–100
   Grid lines: #F3F4F6
@@ -314,12 +314,12 @@ Left card — "Agent Leaderboard"
       Score: 14px Black, colored same as bar
       Trend: TrendingUp (#10B981) or TrendingDown (#F59E0B)
 
-    Data:
-      1. Neha    91%  ↑
-      2. Priya   87%  ↑
-      3. Rajesh  88%  ↑
-      4. Vikram  74%  ↓
-      5. Amit    72%  ↓
+    Data (mockup data — uses the 5 seeded NexaLink agents):
+      1. Priya    91%  ↑
+      2. Daniel   88%  ↑
+      3. Marcus   87%  ↑
+      4. Aisha    74%  ↓
+      5. Hannah   72%  ↓
 
 Right card — "Recent Interactions"
   Subtitle: "interactions JOIN users JOIN interaction_scores — all agents, sorted by overall_score asc (lowest first for review)"
@@ -342,11 +342,11 @@ Right card — "Recent Interactions"
     Bottom chips (always visible):
       Empathy · Policy · Resolution in #F3F4F6, 11px #6B7280
 
-    Sample data:
-      Rajesh Kumar   09:14  5:42  ar-EG  88%  ✓ Resolved   [1 violation]
-      Neha Sharma    10:02  6:58  ar-EG  91%  ✓ Resolved
-      Priya Patel    11:30  4:49  ar-EG  87%  ✓ Resolved   [has_overlap badge]
-      Vikram Singh   12:45  8:30  ar-EG  74%  ✗ Unresolved [violation]
+    Sample data (mockup — uses the 5 seeded NexaLink agents):
+      Daniel        09:14  5:42  en-US  88%  ✓ Resolved   [1 violation]
+      Priya         10:02  6:58  en-US  91%  ✓ Resolved
+      Marcus        11:30  4:49  en-US  87%  ✓ Resolved   [has_overlap badge]
+      Aisha         12:45  8:30  en-US  74%  ✗ Unresolved [violation]
 
 ──────────────────────────────────────────────────────────────────
 SCREEN M-2: SESSION INSPECTOR — RECORDS LIST

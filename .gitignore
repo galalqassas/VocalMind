@@ -142,8 +142,8 @@ services/whisperx/models/speaker_role/distilbert/
 # ── Audio & Media Files ─────────────────────────────────────────────────
 *.flac
 *.ogg
-# *.mp3
-# *.wav
+*.wav
+*.mp3
 backend/storage/uploads/
 
 # ── Research & Experiments ──────────────────────────────────────────────

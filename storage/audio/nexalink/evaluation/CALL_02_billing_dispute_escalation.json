@@ -1,6 +1,6 @@
 {
   "call_id": "CALL_02_billing_dispute_escalation",
-  "audio_file": "CALL_02_billing_dispute_escalation_merged.wav",
+  "audio_file": "CALL_02_daniel_billing_dispute.wav",
   "script_file": "scripts/CALL_02_billing_dispute_escalation.md",
   "primary_agent": "Daniel",
   "escalation_agents": [

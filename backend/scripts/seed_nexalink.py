@@ -29,56 +29,70 @@ KB_CATEGORY_PREFIX = "kb:"
 NEXALINK_AGENT_PROFILES = [
     ("agent.priya@nexalink.com", "Priya"),
     ("agent.daniel@nexalink.com", "Daniel"),
-    ("agent.sarah.chen@nexalink.com", "Sarah Chen"),
     ("agent.marcus@nexalink.com", "Marcus"),
     ("agent.aisha@nexalink.com", "Aisha"),
-    ("agent.james@nexalink.com", "James"),
     ("agent.hannah@nexalink.com", "Hannah"),
-    ("agent.robert@nexalink.com", "Robert"),
 ]
 
 
+# CALL_<NN>_<agent>_<scenario>.<ext>
+AUDIO_FILENAME_AGENT_PATTERN = re.compile(
+    r"^CALL_\d{2}_(?P<agent>[a-zA-Z]+)_",
+)
+
+
+def extract_agent_token_from_filename(filename: str) -> str | None:
+    """Return the lowercase agent token encoded in a CALL_<NN>_<agent>_... filename."""
+    match = AUDIO_FILENAME_AGENT_PATTERN.match(Path(filename).name)
+    if not match:
+        return None
+    return match.group("agent").lower()
+
+
 def parse_nexalink_readme_mapping(readme_path: Path) -> dict[str, str]:
-    """Return filename -> agent_name mapping parsed from storage/audio/nexalink README."""
-    if not readme_path.exists():
-        return {}
+    """Return filename -> agent_name mapping for nexalink fixtures.
+
+    Order of precedence:
+      1) evaluation/manifest.json (canonical source of truth)
+      2) Filename pattern CALL_<NN>_<agent>_<scenario>.<ext>
+      3) Legacy README parsing (kept as last-resort fallback)
+    """
+    mapping: dict[str, str] = {}
 
     evaluation_manifest = readme_path.parent / "evaluation" / "manifest.json"
     if evaluation_manifest.exists():
         try:
             manifest = json.loads(evaluation_manifest.read_text(encoding="utf-8"))
-            return {
-                item["audio_file"]: item["primary_agent"]
-                for item in manifest.get("calls", [])
-                if item.get("audio_file") and item.get("primary_agent")
-            }
+            mapping.update(
+                {
+                    item["audio_file"]: item["primary_agent"]
+                    for item in manifest.get("calls", [])
+                    if item.get("audio_file") and item.get("primary_agent")
+                }
+            )
         except Exception as exc:
             print(f"Could not parse evaluation manifest: {exc}")
 
-    text = readme_path.read_text(encoding="utf-8", errors="ignore")
-    sections = re.split(r"\n##\s+", text)
-    mapping: dict[str, str] = {}
-    for section in sections:
-        file_match = re.search(r"\*\*File:\*\*\s*`([^`]+)`", section)
-        agent_match = re.search(r"\*\*Agent:\*\*\s*([^|\n]+)", section)
-        if not file_match or not agent_match:
-            continue
+    if mapping:
+        return mapping
 
-        filename = file_match.group(1).strip()
-        agent_name = agent_match.group(1).strip()
-        if filename and agent_name:
-            mapping[filename] = agent_name
-
-    for line in text.splitlines():
-        if not line.strip().startswith("| `"):
-            continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 3:
-            continue
-        filename = cells[0].strip("`")
-        agent_name = cells[2]
-        if filename and agent_name and agent_name != "-":
-            mapping[filename] = agent_name
+    if readme_path.exists():
+        text = readme_path.read_text(encoding="utf-8", errors="ignore")
+        sections = re.split(r"\n##\s+", text)
+        for section in sections:
+            file_match = re.search(r"\*\*File:\*\*\s*`([^`]+)`", section)
+            agent_match = re.search(r"\*\*Agent:\*\*\s*([^|\n]+)", section)
+            if file_match and agent_match:
+                mapping[file_match.group(1).strip()] = agent_match.group(1).strip()
+        for line in text.splitlines():
+            if not line.strip().startswith("| `"):
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) >= 3:
+                filename = cells[0].strip("`")
+                agent_name = cells[2]
+                if filename and agent_name and agent_name != "-":
+                    mapping.setdefault(filename, agent_name)
     return mapping
 
 
@@ -427,10 +441,11 @@ async def seed_interactions(
         print(f"Audio directory not found: {audio_dir}")
         return
 
-    mp3_files = list(audio_dir.glob("*.mp3")) + list(audio_dir.glob("*.wav"))
+    audio_files = list(audio_dir.glob("*.mp3")) + list(audio_dir.glob("*.wav"))
     readme_mapping = parse_nexalink_readme_mapping(audio_dir / "README.md")
 
     agent_by_name = {agent.name: agent for agent in agents}
+    agent_by_token = {agent.name.lower(): agent for agent in agents}
     readme_agent_to_user: dict[str, UserModel] = {
         agent_name: agent_by_name[agent_name]
         for agent_name in sorted({name for name in readme_mapping.values() if name})
@@ -439,13 +454,13 @@ async def seed_interactions(
 
     assigned_counts = {agent.email: 0 for agent in agents}
 
-    if not mp3_files:
+    if not audio_files:
         print("No audio files found in storage/audio/nexalink")
         return
 
-    print(f"Found {len(mp3_files)} audio files. Creating interactions...")
+    print(f"Found {len(audio_files)} audio files. Creating interactions...")
 
-    for path in mp3_files:
+    for path in audio_files:
         filename = str(Path("..") / "storage" / "audio" / "nexalink" / path.name)
         # Check if already exists
         result = await session.exec(
@@ -456,11 +471,15 @@ async def seed_interactions(
         )
         existing_interaction = result.first()
 
+        # 1) Prefer agent token in filename: CALL_<NN>_<agent>_<scenario>.<ext>
+        # 2) Fall back to manifest/README mapping if filename lacks the token
+        # 3) Last resort: deterministic hash assignment so seeding is stable
+        filename_token = extract_agent_token_from_filename(path.name)
         readme_agent_name = readme_mapping.get(path.name)
         assigned_agent = (
-            readme_agent_to_user.get(readme_agent_name)
-            if readme_agent_name
-            else agents[hash(path.name) % len(agents)]
+            agent_by_token.get(filename_token)
+            or readme_agent_to_user.get(readme_agent_name)
+            or agents[hash(path.name) % len(agents)]
         )
 
         if existing_interaction:
