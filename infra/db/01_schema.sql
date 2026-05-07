@@ -85,6 +85,7 @@ CREATE TABLE users (
 -- 3. company_policies
 CREATE TABLE company_policies (
     id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID         NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     policy_title    VARCHAR(255) NOT NULL,
     policy_category VARCHAR(100) NOT NULL,
     policy_text     TEXT         NOT NULL,
@@ -95,13 +96,14 @@ CREATE TABLE company_policies (
 
 -- 4. faq_articles
 CREATE TABLE faq_articles (
-    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    question    TEXT         NOT NULL,
-    answer      TEXT         NOT NULL,
-    category    VARCHAR(100) NOT NULL,
-    is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
-    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID         NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    question        TEXT         NOT NULL,
+    answer          TEXT         NOT NULL,
+    category        VARCHAR(100) NOT NULL,
+    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 -- 5. interactions
@@ -311,6 +313,8 @@ CREATE INDEX idx_policy_compliance_interaction_id  ON policy_compliance(interact
 CREATE INDEX idx_agent_snapshots_agent_id          ON agent_performance_snapshots(agent_id);
 CREATE INDEX idx_assistant_queries_user_id         ON assistant_queries(user_id);
 CREATE INDEX idx_interaction_llm_trigger_cache_interaction_id ON interaction_llm_trigger_cache(interaction_id);
+CREATE INDEX idx_company_policies_organization_id ON company_policies(organization_id);
+CREATE INDEX idx_faq_articles_organization_id     ON faq_articles(organization_id);
 
 -- ============================================================
 -- 4. AUTO-UPDATE TRIGGER

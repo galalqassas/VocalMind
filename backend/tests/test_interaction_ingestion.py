@@ -197,6 +197,7 @@ def test_reprocess_resets_artifacts_and_jobs(client, seed_org_and_auth):
     session.flush()
 
     policy = CompanyPolicy(
+        organization_id=TEST_ORG_ID,
         policy_category="Guidelines",
         policy_title="Test Policy",
         policy_text="Test policy text",

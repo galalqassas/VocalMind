@@ -4,10 +4,11 @@ from datetime import datetime, timezone
 
 
 class FAQArticle(SQLModel, table=True):
-    """Q&A pairs for the agent FAQ RAG system."""
+    """Q&A pairs scoped to an organization."""
     __tablename__ = "faq_articles"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    organization_id: UUID = Field(foreign_key="organizations.id")
     question: str
     answer: str
     category: str = Field(max_length=100)

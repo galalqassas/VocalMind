@@ -5,10 +5,11 @@ from uuid import UUID, uuid4
 
 
 class CompanyPolicy(SQLModel, table=True):
-    """Global policy definitions. Text is chunked and embedded into Pinecone."""
+    """Policy definitions scoped to an organization."""
     __tablename__ = "company_policies"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    organization_id: UUID = Field(foreign_key="organizations.id")
     policy_category: str = Field(max_length=100)
     policy_title: str = Field(max_length=255)
     policy_text: str

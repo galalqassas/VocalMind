@@ -155,6 +155,7 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
 
         if not policy:
             policy = CompanyPolicy(
+                organization_id=org_id,
                 policy_category=category,
                 policy_title=title,
                 policy_text=content,
@@ -201,7 +202,7 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
         faq_result = await session.exec(select(FAQArticle).where(FAQArticle.question == question))
         faq = faq_result.first()
         if not faq:
-            faq = FAQArticle(question=question, answer=content, category=category)
+            faq = FAQArticle(organization_id=org_id, question=question, answer=content, category=category)
             session.add(faq)
             await session.commit()
             await session.refresh(faq)
@@ -246,6 +247,7 @@ async def seed_dummy_policy(session: AsyncSession, org_id):
     policy = result.first()
     if not policy:
         policy = CompanyPolicy(
+            organization_id=org_id,
             policy_category="Guidelines",
             policy_title="Nexalink Refund Policy",
             policy_text="Dummy policy text for testing.",

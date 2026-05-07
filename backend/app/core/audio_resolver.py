@@ -26,10 +26,21 @@ def audio_filename_from_path(audio_path: str) -> str:
 
 
 def resolve_local_audio_path(audio_path: str) -> Path | None:
+    if "\x00" in audio_path:
+        return None
+    if Path(audio_path).is_absolute():
+        return None
     backend_dir = Path(__file__).resolve().parents[2]
+    storage_root = Path(settings.LOCAL_AUDIO_STORAGE_DIR).resolve()
     candidates = [Path(audio_path), backend_dir / audio_path]
+    allowed_roots = [storage_root, (backend_dir / settings.LOCAL_AUDIO_STORAGE_DIR).resolve()]
     for candidate in candidates:
-        resolved = candidate.resolve(strict=False)
+        try:
+            resolved = candidate.resolve(strict=False)
+        except (ValueError, OSError):
+            return None
+        if not any(resolved.is_relative_to(root) for root in allowed_roots):
+            continue
         if resolved.exists() and resolved.is_file():
             return resolved
     return None
@@ -85,6 +96,8 @@ async def supabase_object_exists(audio_path: str, timeout_seconds: float = 10.0)
 
 
 async def fetch_audio_bytes(audio_path: str, timeout_seconds: float = 60.0) -> tuple[bytes, str]:
+    if "\x00" in audio_path:
+        raise FileNotFoundError(f"Invalid audio path: {audio_path!r}")
     local_path = resolve_local_audio_path(audio_path)
     if local_path:
         return local_path.read_bytes(), local_path.name

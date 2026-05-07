@@ -18,6 +18,7 @@ from app.api.routes.rag import router as rag_router
 from app.api.routes.transcription import router as transcription_router
 from app.api.routes.users import router as users_router
 from app.api.routes.vad import router as vad_router
+from app.api.routes.internal import router as internal_router
 
 api_router = APIRouter()
 
@@ -36,3 +37,4 @@ api_router.include_router(diarization_router.router, prefix="/diarization", tags
 api_router.include_router(transcription_router.router, prefix="/transcription", tags=["transcription"])
 api_router.include_router(vad_router.router, prefix="/vad", tags=["vad"])
 api_router.include_router(full_router.router, prefix="/full", tags=["full"])
+api_router.include_router(internal_router, prefix="/internal", tags=["internal"])
