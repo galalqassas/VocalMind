@@ -18,7 +18,6 @@ import {
   type LLMEvidenceCitation, type ProcessingStatusResult,
 } from "../../services/api";
 import { EvidenceAnchoredExplainabilityPanel } from "./EvidenceAnchoredExplainabilityPanel";
-import { AnalysisTabs } from "./AnalysisTabs";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -307,7 +306,7 @@ export function SessionDetail() {
   // ── Data fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!id) return;
-    getInteractionDetail(id, { includeLLMTriggers: true })
+    getInteractionDetail(id)
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -326,7 +325,7 @@ export function SessionDetail() {
           setProcessingStatus(s);
           const done = !["processing", "pending"].includes(s.status.toLowerCase());
           if (done) {
-            void getInteractionDetail(id, { skipCache: true, includeLLMTriggers: true }).then((d) => { if (!cancelled) setData(d); });
+            void getInteractionDetail(id, { skipCache: true }).then((d) => { if (!cancelled) setData(d); });
           }
         })
         .catch(() => {});
@@ -423,7 +422,7 @@ export function SessionDetail() {
     setReprocessing(true);
     try {
       await reprocessInteraction(id);
-      const refreshed = await getInteractionDetail(id, { skipCache: true, includeLLMTriggers: true });
+      const refreshed = await getInteractionDetail(id, { skipCache: true });
       setData(refreshed);
       setAudioEpoch((n) => n + 1);
     } catch (err) {
@@ -431,7 +430,7 @@ export function SessionDetail() {
       if (msg.includes("409")) {
         try {
           await reprocessInteraction(id, { force: true });
-          const refreshed = await getInteractionDetail(id, { skipCache: true, includeLLMTriggers: true });
+          const refreshed = await getInteractionDetail(id, { skipCache: true });
           setData(refreshed);
           setAudioEpoch((n) => n + 1);
           return;
@@ -774,8 +773,9 @@ export function SessionDetail() {
         </div>
 
         {/* ── Analysis Sidebar (right) ─────────────────────────────────── */}
-        <div className="lg:col-span-5 space-y-3 lg:sticky lg:top-6 self-start">
-          {!hasAnalysisData ? (
+        <div className="lg:col-span-5 space-y-4 lg:sticky lg:top-6 self-start">
+
+          {!hasAnalysisData && (
             <div className="bg-card rounded-xl border border-border p-6 text-center space-y-3">
               <Brain className="w-8 h-8 text-muted-foreground/40 mx-auto" />
               <div>
@@ -798,21 +798,268 @@ export function SessionDetail() {
                 {reprocessing ? "Processing..." : "Run Pipeline"}
               </button>
             </div>
-          ) : (
-            <AnalysisTabs
-              emotionTrigger={emotionTrigger}
-              ragProcess={ragProcess}
-              ragNli={ragNli}
-              policyViolations={policyViolations}
-              emotionComparison={data?.emotionComparison ?? null}
-              utterances={utterances}
-              onJumpTo={handleJumpTo}
-              variant="manager"
-              flaggedItems={flaggedItems}
-              feedbackDone={feedbackDone}
-              onToggleFlag={toggleFlag}
-              onSubmitFeedback={submitFeedback}
-            />
+          )}
+
+          {/* Emotion Analysis (LLM Trigger) */}
+          {emotionTrigger?.emotionShift && (
+            <CollapsibleCard title="Emotion Analysis" icon={<Brain className="w-4 h-4 text-purple-400" />}
+              badge={
+                <div className="flex items-center gap-2">
+                  <ConfidenceBadge score={emotionTrigger.emotionShift.confidenceScore} />
+                  <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${
+                    emotionTrigger.emotionShift.isDissonanceDetected
+                      ? "bg-amber-500/10 text-amber-500" : "bg-emerald-500/10 text-emerald-500"
+                  }`}>
+                    {emotionTrigger.emotionShift.isDissonanceDetected ? "Dissonance" : "Aligned"}
+                  </span>
+                </div>
+              }>
+              <div className="space-y-2.5">
+                <InsufficientEvidenceWarning flag={emotionTrigger.emotionShift.insufficientEvidence} />
+
+                {emotionTrigger.emotionShift.currentCustomerEmotion && (
+                  <div className="rounded-lg bg-primary/5 border border-primary/10 p-2.5">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Info className="w-3 h-3 text-primary" />
+                      <span className="text-[10px] font-semibold text-primary uppercase tracking-wider">Current Customer Emotion</span>
+                    </div>
+                    <p className="text-[13px] font-semibold text-foreground capitalize">{emotionTrigger.emotionShift.currentCustomerEmotion}</p>
+                    {emotionTrigger.emotionShift.currentEmotionReasoning && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{emotionTrigger.emotionShift.currentEmotionReasoning}</p>
+                    )}
+                  </div>
+                )}
+
+                {emotionTrigger.emotionShift.dissonanceType && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">Type:</span>
+                    <span className="text-[11px] font-semibold text-foreground">{emotionTrigger.emotionShift.dissonanceType}</span>
+                  </div>
+                )}
+                <p className="text-[12px] text-muted-foreground leading-relaxed">{emotionTrigger.emotionShift.rootCause}</p>
+
+                {emotionTrigger.emotionShift.counterfactualCorrection && (
+                  <div className="rounded-lg bg-muted/40 border border-border/50 p-2.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Counterfactual</p>
+                    <p className="text-[12px] text-foreground italic leading-relaxed">{emotionTrigger.emotionShift.counterfactualCorrection}</p>
+                  </div>
+                )}
+
+                <EvidenceQuotes quotes={emotionTrigger.emotionShift.evidenceQuotes} />
+                <CitationsList citations={emotionTrigger.emotionShift.citations} onJumpTo={handleJumpTo} utterances={utterances} />
+
+                {emotionTrigger.derived && (
+                  <div className="rounded-lg bg-muted/20 border border-border/40 p-2.5 space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Derived Signals</p>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground">Acoustic:</span>
+                        <span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.acousticEmotion}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Fused:</span>
+                        <span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.fusedEmotion}</span>
+                      </div>
+                    </div>
+                    {emotionTrigger.derived.agentStatement && (
+                      <p className="text-[11px] text-foreground/70 italic border-l-2 border-border pl-2">
+                        &ldquo;{emotionTrigger.derived.agentStatement}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CollapsibleCard>
+          )}
+
+          {/* RAG Compliance - Process Adherence */}
+          {ragProcess && (
+            <CollapsibleCard title="Process Adherence" icon={<Shield className="w-4 h-4 text-blue-400" />}
+              badge={
+                <div className="flex items-center gap-2">
+                  <ConfidenceBadge score={ragProcess.confidenceScore} />
+                  <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${
+                    ragProcess.isResolved ? "bg-emerald-500/10 text-emerald-500" : "bg-red-500/10 text-red-500"
+                  }`}>
+                    {ragProcess.isResolved ? "Resolved" : "Needs follow-up"}
+                  </span>
+                </div>
+              }>
+              <div className="space-y-2.5">
+                <InsufficientEvidenceWarning flag={ragProcess.insufficientEvidence} />
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">Topic:</span>
+                  <span className="text-[11px] font-semibold text-foreground">{ragProcess.detectedTopic}</span>
+                </div>
+
+                <EfficiencyGauge score={ragProcess.efficiencyScore} />
+
+                <p className="text-[12px] text-muted-foreground leading-relaxed">{ragProcess.justification}</p>
+
+                {ragProcess.missingSopSteps.length > 0 && (
+                  <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-2.5">
+                    <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1">Missing SOP Steps</p>
+                    <ul className="space-y-1">
+                      {ragProcess.missingSopSteps.map((step, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-[12px] text-muted-foreground">
+                          <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                          {step}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <EvidenceQuotes quotes={ragProcess.evidenceQuotes} />
+                <CitationsList citations={ragProcess.citations} onJumpTo={handleJumpTo} utterances={utterances} />
+              </div>
+            </CollapsibleCard>
+          )}
+
+          {/* RAG Compliance - NLI Policy */}
+          {ragNli && (
+            <CollapsibleCard title="Policy Inference (NLI)" icon={<FileWarning className="w-4 h-4 text-teal-400" />}
+              badge={
+                <div className="flex items-center gap-2">
+                  <ConfidenceBadge score={ragNli.confidenceScore} />
+                  <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${
+                    ragNli.nliCategory === "Entailment"
+                      ? "bg-emerald-500/10 text-emerald-500"
+                      : ragNli.nliCategory === "Contradiction"
+                        ? "bg-red-500/10 text-red-500"
+                        : "bg-amber-500/10 text-amber-500"
+                  }`}>
+                    {ragNli.nliCategory}
+                  </span>
+                </div>
+              }>
+              <div className="space-y-2.5">
+                <InsufficientEvidenceWarning flag={ragNli.insufficientEvidence} />
+
+                {(ragNli.policyVersion || ragNli.policyCategory || ragNli.policyEffectiveAt) && (
+                  <div className="rounded-lg bg-muted/30 border border-border/50 p-2.5 space-y-1">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <BookOpen className="w-3 h-3 text-teal-400" />
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Policy Metadata</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                      {ragNli.policyVersion && (
+                        <>
+                          <span className="text-muted-foreground">Version:</span>
+                          <span className="font-semibold text-foreground">{ragNli.policyVersion}</span>
+                        </>
+                      )}
+                      {ragNli.policyCategory && (
+                        <>
+                          <span className="text-muted-foreground">Category:</span>
+                          <span className="font-semibold text-foreground">{ragNli.policyCategory}</span>
+                        </>
+                      )}
+                      {ragNli.policyEffectiveAt && (
+                        <>
+                          <span className="text-muted-foreground">Effective:</span>
+                          <span className="font-semibold text-foreground">{ragNli.policyEffectiveAt}</span>
+                        </>
+                      )}
+                    </div>
+                    {ragNli.conflictResolutionApplied && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <AlertCircle className="w-3 h-3 text-amber-500" />
+                        <span className="text-[10px] text-amber-500 font-medium">Conflict resolution applied</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <p className="text-[12px] text-muted-foreground leading-relaxed">{ragNli.justification}</p>
+
+                {ragNli.policyAlignmentScore != null && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground">Alignment:</span>
+                    <span className="text-[12px] font-bold" style={{ color: getScoreColor(ragNli.policyAlignmentScore) }}>
+                      {ragNli.policyAlignmentScore}%
+                    </span>
+                  </div>
+                )}
+
+                <EvidenceQuotes quotes={ragNli.evidenceQuotes} />
+                <CitationsList citations={ragNli.citations} onJumpTo={handleJumpTo} utterances={utterances} />
+              </div>
+            </CollapsibleCard>
+          )}
+
+          {/* Emotion Fusion Quality */}
+          {data.emotionComparison && (
+            <CollapsibleCard title="Emotion Fusion Quality" icon={<Activity className="w-4 h-4 text-cyan-400" />}
+              defaultOpen={false}
+              badge={
+                <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${
+                  data.emotionComparison.quality.acousticTextAgreementRate >= 70
+                    ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"
+                }`}>
+                  {data.emotionComparison.quality.acousticTextAgreementRate.toFixed(0)}% agree
+                </span>
+              }>
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Audio ↔ Text", value: data.emotionComparison.quality.acousticTextAgreementRate },
+                    { label: "Fused → Audio", value: data.emotionComparison.quality.fusedMatchesAcousticRate },
+                    { label: "Fused → Text", value: data.emotionComparison.quality.fusedMatchesTextRate },
+                  ].map((m) => (
+                    <div key={m.label} className="text-center">
+                      <div className="text-[15px] font-bold" style={{ color: getScoreColor(m.value) }}>{m.value.toFixed(0)}%</div>
+                      <div className="text-[9px] text-muted-foreground font-medium">{m.label}</div>
+                    </div>
+                  ))}
+                </div>
+                {data.emotionComparison.quality.disagreementCount > 0 && (
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
+                    <span className="text-muted-foreground">
+                      {data.emotionComparison.quality.disagreementCount} utterance{data.emotionComparison.quality.disagreementCount !== 1 ? "s" : ""} with cross-modal mismatch
+                    </span>
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground">{data.emotionComparison.totalUtterances} utterances analyzed</p>
+              </div>
+            </CollapsibleCard>
+          )}
+
+          {/* Policy Violations */}
+          {policyViolations.length > 0 && (
+            <CollapsibleCard title={`Policy Violations (${policyViolations.length})`}
+              icon={<AlertTriangleIcon className="w-4 h-4 text-red-400" />}>
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                {policyViolations.map((v) => (
+                  <div key={v.id} className="rounded-lg bg-red-500/5 border border-red-500/10 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-bold text-foreground">{v.policyTitle}</span>
+                      <span className="text-[11px] font-bold text-red-400">{v.score}%</span>
+                    </div>
+                    <p className="text-[12px] text-muted-foreground leading-relaxed">{v.reasoning}</p>
+
+                    {feedbackDone.has(v.id) ? (
+                      <p className="text-[11px] text-emerald-500 font-semibold pt-2 border-t border-border/50">Feedback recorded</p>
+                    ) : flaggedItems.has(v.id) ? (
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/50">
+                        <span className="text-[11px] text-muted-foreground">Accurate finding?</span>
+                        <button type="button" onClick={() => submitFeedback(v.id)} className="text-[11px] font-bold text-emerald-500 hover:underline">Yes</button>
+                        <button type="button" onClick={() => submitFeedback(v.id)} className="text-[11px] font-bold text-red-400 hover:underline">No</button>
+                      </div>
+                    ) : (
+                      <div className="flex justify-end pt-2 border-t border-border/50">
+                        <button type="button" onClick={() => toggleFlag(v.id)}
+                          className="text-[11px] font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1">
+                          <Flag className="w-3 h-3" /> Dispute
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleCard>
           )}
         </div>
       </div>

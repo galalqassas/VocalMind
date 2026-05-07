@@ -26,13 +26,15 @@ def mock_db_session(client: TestClient):
     # Default: select().where() returns empty result
     session.exec.return_value.first.return_value = None
     
-    from app.api.deps import get_db
+    from app.api.deps import get_db, get_session
     async def _override_get_db():
         yield session
 
     client.app.dependency_overrides[get_db] = _override_get_db
+    client.app.dependency_overrides[get_session] = _override_get_db
     yield session
     client.app.dependency_overrides.pop(get_db, None)
+    client.app.dependency_overrides.pop(get_session, None)
 
 
 def _fake_user(email="agent@test.com", password="correct", is_active=True) -> UserModel:

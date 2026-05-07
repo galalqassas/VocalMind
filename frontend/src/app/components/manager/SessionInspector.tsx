@@ -3,34 +3,17 @@ import { Link } from "react-router";
 import { parse, isValid } from "date-fns";
 import {
   Search, ArrowDown, ArrowUp, Loader2, AlertTriangle,
-  RefreshCw, MoreHorizontal, Eye, RotateCcw, Trash2,
+  RefreshCw, Upload, MoreHorizontal, Eye, RotateCcw,
 } from "lucide-react";
 import {
   getInteractionDetail,
   getInteractions,
+  getAgents,
+  createInteraction,
   reprocessInteraction,
-  deleteInteraction,
   type InteractionSummary,
+  type AgentSummary,
 } from "../../services/api";
-
-function scoreColor(score: number): string {
-  if (score >= 85) return "#10B981";
-  if (score >= 70) return "var(--primary)";
-  if (score >= 50) return "#F59E0B";
-  return "#EF4444";
-}
-
-function ScoreChip({ score }: { score: number }) {
-  const color = scoreColor(score);
-  return (
-    <span
-      className="inline-flex items-center justify-center min-w-[2.5rem] rounded-md px-1.5 py-0.5 text-[12px] font-bold tabular-nums"
-      style={{ color, backgroundColor: `${color}18`, border: `1px solid ${color}30` }}
-    >
-      {score}
-    </span>
-  );
-}
 
 function getFailurePreview(row: InteractionSummary): string {
   const failures = row.processingFailures || [];
@@ -96,14 +79,19 @@ export function SessionInspector() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<"score" | "date" | "duration">("score");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  // Upload state
+  const [showUpload, setShowUpload] = useState(false);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Action menu
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -141,6 +129,12 @@ export function SessionInspector() {
     return () => clearInterval(timer);
   }, [hasProcessing]);
 
+  // Fetch agents when upload dialog opens
+  useEffect(() => {
+    if (!showUpload) return;
+    getAgents().then(setAgents).catch(() => {});
+  }, [showUpload]);
+
   const handleSort = (field: "score" | "date" | "duration") => {
     if (sortField === field) {
       setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -149,21 +143,6 @@ export function SessionInspector() {
       setSortOrder("asc");
     }
     setCurrentPage(1);
-  };
-
-  const handleDelete = async (interactionId: string) => {
-    setConfirmDeleteId(null);
-    setOpenMenuId(null);
-    setActionError(null);
-    setDeletingIds((prev) => new Set(prev).add(interactionId));
-    try {
-      await deleteInteraction(interactionId);
-      setInteractions((prev) => prev.filter((i) => i.id !== interactionId));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to delete interaction");
-    } finally {
-      setDeletingIds((prev) => { const n = new Set(prev); n.delete(interactionId); return n; });
-    }
   };
 
   const handleReprocess = async (interactionId: string) => {
@@ -196,6 +175,22 @@ export function SessionInspector() {
       });
     }
   };
+
+  const handleUpload = useCallback(async (file: File) => {
+    setUploading(true);
+    setActionError(null);
+    try {
+      await createInteraction(file, selectedAgent || undefined);
+      setShowUpload(false);
+      setSelectedAgent("");
+      const refreshed = await getInteractions();
+      setInteractions(refreshed);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }, [selectedAgent]);
 
   const filteredInteractions = interactions.filter((interaction) => {
     const searchLower = searchQuery.toLowerCase();
@@ -306,8 +301,55 @@ export function SessionInspector() {
             ))}
           </div>
 
+          <button
+            type="button"
+            onClick={() => setShowUpload(true)}
+            className="inline-flex h-10 items-center gap-2 rounded-[10px] bg-primary px-4 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Upload call
+          </button>
         </div>
       </div>
+
+      {/* Upload Dialog */}
+      {showUpload && (
+        <div className="mb-5 bg-card rounded-xl border border-border p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[14px] font-bold text-foreground">Upload Call Recording</h3>
+            <button type="button" onClick={() => setShowUpload(false)}
+              className="text-muted-foreground hover:text-foreground text-[18px] leading-none">&times;</button>
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-[200px]">
+              <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">Agent (optional)</label>
+              <select
+                value={selectedAgent}
+                onChange={(e) => setSelectedAgent(e.target.value)}
+                className="w-full h-10 rounded-lg border border-border bg-background px-3 text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+              >
+                <option value="">Auto-detect</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <input ref={fileInputRef} type="file" accept="audio/*" className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleUpload(file);
+                }} />
+              <button type="button" disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {uploading ? "Uploading..." : "Choose file"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-card rounded-[14px] border border-border">
@@ -329,11 +371,10 @@ export function SessionInspector() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {paginatedInteractions.map((row, index) => {
+              {paginatedInteractions.map((row) => {
                 const failed = isFailedStatus(row);
                 const processing = isProcessingStatus(row);
                 const isReprocessing = reprocessingIds.has(row.id);
-                const openUpward = index >= Math.max(1, paginatedInteractions.length - 2);
 
                 return (
                   <tr
@@ -367,14 +408,16 @@ export function SessionInspector() {
                     <td className="px-4 py-4 whitespace-nowrap">
                       <span
                         className="text-[18px] font-bold"
-                        style={{ color: scoreColor(row.overallScore) }}
+                        style={{
+                          color: row.overallScore >= 85 ? "var(--success)" : row.overallScore >= 75 ? "var(--primary)" : "var(--destructive)",
+                        }}
                       >
                         {row.overallScore}<span className="text-[12px] font-semibold text-muted-foreground">%</span>
                       </span>
                     </td>
-                    <td className="px-4 py-4 whitespace-nowrap"><ScoreChip score={row.empathyScore} /></td>
-                    <td className="px-4 py-4 whitespace-nowrap"><ScoreChip score={row.policyScore} /></td>
-                    <td className="px-4 py-4 whitespace-nowrap"><ScoreChip score={row.resolutionScore} /></td>
+                    <td className="px-4 py-4 whitespace-nowrap text-[13px] text-foreground">{row.empathyScore}</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-[13px] text-foreground">{row.policyScore}</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-[13px] text-foreground">{row.resolutionScore}</td>
                     <td className="px-4 py-4 whitespace-nowrap text-center align-middle">
                       <div className="flex justify-center">
                         {processing || isReprocessing ? (
@@ -400,9 +443,7 @@ export function SessionInspector() {
 
                     {/* Actions — sticky */}
                     <td
-                      className={`sticky right-0 whitespace-nowrap border-l border-border/80 px-3 py-4 text-center align-middle shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.1)] ${
-                        openMenuId === row.id ? "z-30" : "z-20"
-                      } ${
+                      className={`sticky right-0 z-20 whitespace-nowrap border-l border-border/80 px-3 py-4 text-center align-middle shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.1)] ${
                         failed ? "bg-destructive/[0.04] group-hover:bg-muted/5" : "bg-card group-hover:bg-muted/5"
                       }`}
                     >
@@ -422,66 +463,30 @@ export function SessionInspector() {
                         <div className="relative" ref={openMenuId === row.id ? menuRef : undefined}>
                           <button
                             type="button"
-                            onClick={() => { setOpenMenuId(openMenuId === row.id ? null : row.id); setConfirmDeleteId(null); }}
-                            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
-                              openMenuId === row.id
-                                ? "border-primary bg-primary/10 text-primary"
-                                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-                            }`}
+                            onClick={() => setOpenMenuId(openMenuId === row.id ? null : row.id)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                           >
                             <MoreHorizontal className="w-4 h-4" />
                           </button>
                           {openMenuId === row.id && (
-                            <div className={`absolute right-0 w-48 rounded-xl border border-border bg-popover shadow-xl z-[99] py-1.5 overflow-hidden ${
-                              openUpward ? "bottom-full mb-1.5" : "top-full mt-1.5"
-                            }`}>
+                            <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-border bg-card shadow-lg z-50 py-1">
                               <Link
                                 to={`/manager/inspector/${row.id}`}
-                                className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-foreground hover:bg-muted/60 transition-colors"
+                                className="flex items-center gap-2 px-3 py-2 text-[12px] text-foreground hover:bg-muted transition-colors"
                                 onClick={() => setOpenMenuId(null)}
                               >
-                                <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                                <Eye className="w-3.5 h-3.5" />
                                 View details
                               </Link>
                               <button
                                 type="button"
                                 onClick={() => void handleReprocess(row.id)}
                                 disabled={isReprocessing || processing}
-                                className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] font-medium text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 w-full px-3 py-2 text-[12px] text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                               >
-                                <RotateCcw className={`w-3.5 h-3.5 text-muted-foreground ${isReprocessing ? "animate-spin" : ""}`} />
+                                <RotateCcw className={`w-3.5 h-3.5 ${isReprocessing ? "animate-spin" : ""}`} />
                                 {isReprocessing ? "Reprocessing..." : "Reprocess"}
                               </button>
-                              <div className="my-1 h-px bg-border/60 mx-2" />
-                              {confirmDeleteId === row.id ? (
-                                <div className="px-3 py-2 space-y-1.5">
-                                  <p className="text-[11px] font-semibold text-destructive">Delete this session?</p>
-                                  <div className="flex gap-1.5">
-                                    <button type="button"
-                                      onClick={() => void handleDelete(row.id)}
-                                      disabled={deletingIds.has(row.id)}
-                                      className="flex-1 h-7 rounded-md bg-destructive text-[11px] font-bold text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-colors"
-                                    >
-                                      {deletingIds.has(row.id) ? "Deleting…" : "Confirm"}
-                                    </button>
-                                    <button type="button"
-                                      onClick={() => setConfirmDeleteId(null)}
-                                      className="flex-1 h-7 rounded-md border border-border text-[11px] font-semibold text-muted-foreground hover:bg-muted/60 transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(row.id)}
-                                  className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] font-medium text-destructive hover:bg-destructive/8 transition-colors"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  Delete session
-                                </button>
-                              )}
                             </div>
                           )}
                         </div>
