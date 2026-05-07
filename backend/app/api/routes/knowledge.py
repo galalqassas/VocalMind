@@ -167,7 +167,8 @@ async def create_policy(session: SessionDep, current_user: CurrentUser, data: Po
     )
     session.add(org_link)
     await session.commit()
-    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
+    org_slug = await _get_org_slug(session, current_user.organization_id)
+    await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -207,7 +208,8 @@ async def upload_policy(
     )
     session.add(org_link)
     await session.commit()
-    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
+    org_slug = await _get_org_slug(session, current_user.organization_id)
+    await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -264,7 +266,8 @@ async def replace_policy_upload(
     policy.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(policy)
     await session.commit()
-    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
+    org_slug = await _get_org_slug(session, current_user.organization_id)
+    await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "id": str(policy.id)}
 
 
@@ -283,7 +286,8 @@ async def toggle_policy(session: SessionDep, current_user: CurrentUser, policy_i
     org_policy.is_active = not org_policy.is_active
     session.add(org_policy)
     await session.commit()
-    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
+    org_slug = await _get_org_slug(session, current_user.organization_id)
+    await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "isActive": org_policy.is_active}
 
 
@@ -474,6 +478,7 @@ async def delete_policy(
     
     # Check if any other organization uses this policy
     # If not, we can delete the global policy record too
+    org_slug = await _get_org_slug(session, current_user.organization_id)
     other_stmt = select(OrganizationPolicy).where(OrganizationPolicy.policy_id == policy_id)
     other_res = await session.exec(other_stmt)
     if not other_res.first():
@@ -482,11 +487,10 @@ async def delete_policy(
         policy = policy_res.first()
         if policy:
             await session.delete(policy)
-            org_slug = await _get_org_slug(session, current_user.organization_id)
             _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, policy_id)
-            
+
     await session.commit()
-    await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
+    await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "message": "Policy deleted"}
 
 

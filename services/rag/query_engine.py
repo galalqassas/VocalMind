@@ -17,6 +17,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 from groq import Groq
@@ -53,7 +54,11 @@ class RAGQueryEngine:
         self.qdrant = QdrantClient(url=settings.qdrant.url)
         self._setup_llm()
         self.logs_dir = settings.BASE_DIR / "logs"
-        self.logs_dir.mkdir(exist_ok=True)
+        try:
+            self.logs_dir.mkdir(exist_ok=True)
+        except OSError:
+            self.logs_dir = Path("/tmp/rag_logs")
+            self.logs_dir.mkdir(exist_ok=True)
 
     def _setup_llm(self) -> None:
         """Configure Groq LLM for response synthesis via LlamaIndex."""
