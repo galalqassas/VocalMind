@@ -22,7 +22,9 @@ RUN ln -s /usr/bin/python3 /usr/bin/python || true
 
 # Install python dependencies using pip for maximum compatibility
 COPY requirements.txt .
-RUN pip install --no-cache-dir --timeout 600 --retries 5 -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu118
+RUN pip install --no-cache-dir --timeout 600 --retries 5 \
+    torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip install --no-cache-dir --timeout 600 --retries 5 -r requirements.txt
 
 # Download model inside Docker image to cache weights
 COPY download_model.py .

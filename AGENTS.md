@@ -4,6 +4,12 @@
 
 ---
 
+## Code Quality Rules
+
+1. Ensure the code you write is concise and clear.
+2. Ensure your changes are minimal and don't miss any component inside the codebase.
+3. After finishing a task, verify the changes are correct and the task is completed successfully (e.g., run relevant tests, lint, or type checks).
+
 ## What VocalMind Does
 
 Call-center AI platform: **upload audio → transcribe → diarize → emotion-analyze → LLM-reason → score → dashboard**. Multi-tenant — every `Organization` has manager and agent `User`s; all data is org-scoped.
@@ -256,13 +262,17 @@ All prompts include `_INJECTION_GUARD` — treats every piece of user data as un
 ## Setup
 
 ```bash
-cp .env.example .env && cp backend/.env.example backend/.env   # fill GROQ_API_KEY, HF_TOKEN
-make up                    # Full Docker stack (db+backend+frontend+ollama+qdrant+vad+emotion+whisperx+ingestion)
+cp .env.example .env && cp backend/.env.example backend/.env   # fill GROQ_API_KEY, HF_TOKEN, SECRET_KEY
+make build                  # Build all Docker images (use make build-retry on Windows)
+make up                     # Full Docker stack (db+backend+frontend+ollama+qdrant+vad+emotion+whisperx+ingestion)
+docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2  # Embedding model for RAG
+make seed                   # Seed SQL demo data
 # OR local dev:
-make support-up            # db, ollama, qdrant, vad, emotion, whisperx
+make support-up             # db, ollama, qdrant, vad, emotion, whisperx
+docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2  # Embedding model for RAG
 make be-install && make be-dev   # Backend :8000 (set IS_LOCAL=true in backend/.env)
 make fe-install && make fe-dev   # Frontend :3000
-make prepare-speaker-model       # One-time: extract DistilBERT for WhisperX speaker-role
+make prepare-speaker-model       # One-time: extract DistilBERT for WhisperX speaker-role (needs speaker_classifier_export.zip)
 make seed                        # Seed SQL demo data
 ```
 
@@ -357,9 +367,3 @@ Full templates: `.env.example` (root, 80 lines), `backend/.env.example` (49 line
 | `infra/db/01_schema.sql` | v5.2 PostgreSQL DDL |
 
 ---
-
-## Code Quality Rules
-
-1. Ensure the code you write is concise and clear.
-2. Ensure your changes are minimal and don't miss any component inside the codebase.
-3. After finishing a task, verify the changes are correct and the task is completed successfully (e.g., run relevant tests, lint, or type checks).

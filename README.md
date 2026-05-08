@@ -24,40 +24,113 @@ VocalMind is a modular AI ecosystem integrating speech processing (ASR, Diarizat
 
 ### Prerequisites
 
-- **Python 3.12+** (via [uv](https://github.com/astral-sh/uv))
-- **Node.js 20+** (via [pnpm v10+](https://pnpm.io/))
-- **Docker & Docker Compose**
+- **Docker Desktop** (includes Docker Compose v2+)
+- **Python 3.12+** (via [uv](https://github.com/astral-sh/uv)) — only needed for local development
+- **Node.js 20+** (via [pnpm v10+](https://pnpm.io/)) — only needed for local frontend development
+- **Git LFS** — if your fork includes large test fixtures
+- **Hugging Face token** (`HF_TOKEN`) — required for WhisperX diarization (pyannote)
+- **Groq API key** (`GROQ_API_KEY`) — required for LLM chains and trigger evaluation
 
-### Configuration
-For local API development, copy `backend/.env.example` to `backend/.env`.
-If you run services that load config from the repository root, also copy `.env.example` to `.env`.
+### 1. Configure Environment Variables
 
 ```bash
-cp backend/.env.example backend/.env
 cp .env.example .env
+cp backend/.env.example backend/.env
 ```
 
-### Option A. Run The Full Stack In Docker
+Edit `backend/.env` and fill in the required secrets:
 
-Start the full stack in containers (Database, Backend, Frontend, Ollama, Qdrant, Ingestion, VAD, Emotion, WhisperX):
+| Variable | Required | Notes |
+|:---------|:--------|:------|
+| `GROQ_API_KEY` | **Yes** | Get from <https://console.groq.com> — LLM chains and trigger evaluation |
+| `HF_TOKEN` | **Yes** | Get from <https://huggingface.co/settings/tokens> — pyannote diarization |
+| `SECRET_KEY` | **Yes** | Generate with `openssl rand -hex 32` |
+| `IS_LOCAL` | No | `true` = Docker containers (default in docker-compose.yml); `false` = Kaggle remote |
+
+For Option A (full Docker), the root `.env` provides `GROQ_API_KEY` and `HF_TOKEN` which docker-compose.yml passes through. For Option B (local dev), set these in `backend/.env` and change the service URLs to `localhost`.
+
+### 2. Prepare Speaker-Role Model (WhisperX)
+
+WhisperX and the backend both mount the DistilBERT speaker-role classifier. Place the export archive at the repo root and run:
+
+```bash
+make prepare-speaker-model
+```
+
+This extracts `services/whisperx/models/speaker_role/distilbert/` from `speaker_classifier_export.zip` (which is gitignored). Without this step, WhisperX will fail at startup. Use `--delete-zip` to remove the archive after extraction:
+
+```bash
+python infra/scripts/prepare_speaker_role_model.py --delete-zip
+```
+
+### 3. Build Docker Images
+
+```bash
+make build
+```
+
+This builds all custom images: backend, frontend, ingestion (RAG), VAD, emotion, and WhisperX.
+
+> **Windows tip:** If you encounter transient Docker daemon errors (EOF, 500 Internal Server Error, rpc Unavailable), use the built-in retry script instead:
+>
+> ```bash
+> make build-retry
+> ```
+>
+> This retries up to 4 times with 12-second delays for known transient Docker Desktop issues on Windows.
+
+> **First build:** The emotion and WhisperX images use CUDA base images and download several GB of PyTorch/NVIDIA libraries. Expect 20–40 minutes on a fast connection depending on hardware.
+
+### Option A. Run the Full Stack in Docker
+
+Start all services (Database, Backend, Frontend, Ollama, Qdrant, Ingestion, VAD, Emotion, WhisperX):
 
 ```bash
 make up
 ```
 
-This serves the app at:
-- Frontend: `http://localhost:3000`
-- Backend: `http://localhost:8000`
+First-time startup also requires pulling the Ollama embedding model:
 
-### Option B. Run Backend And Frontend Locally
+```bash
+docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2
+```
 
-Start only the supporting services needed by the local apps:
+Then seed the database with demo data:
+
+```bash
+make seed
+```
+
+The app is now available at:
+- **Frontend:** `http://localhost:3000`
+- **Backend API:** `http://localhost:8000`
+- **API docs:** `http://localhost:8000/docs`
+
+Audio files placed in `storage/audio/nexalink/` are auto-ingested on startup (see Audio Auto-Ingest below).
+
+To stop:
+
+```bash
+make down
+```
+
+### Option B. Run Backend and Frontend Locally
+
+Start only the supporting infrastructure (Database, Ollama, Qdrant, VAD, Emotion, WhisperX):
 
 ```bash
 make support-up
+make prepare-speaker-model   # if not done already
 ```
 
-If you want the local backend to use the local Dockerized inference services, set `IS_LOCAL=true` in `backend/.env`.
+Set `IS_LOCAL=true` and point service URLs at `localhost` in `backend/.env`:
+
+```
+IS_LOCAL=true
+EMOTION_API_URL=http://localhost:8001
+VAD_API_URL=http://localhost:8002
+WHISPERX_API_URL=http://localhost:8003
+```
 
 **Backend:**
 ```bash
@@ -71,11 +144,34 @@ make fe-install
 make fe-dev          # -> http://localhost:3000
 ```
 
-Stop only the supporting containers when you are done with local development:
+Pull the Ollama embedding model if using RAG:
+
+```bash
+docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2
+```
+
+Seed demo data:
+
+```bash
+make seed
+```
+
+Stop supporting containers:
 
 ```bash
 make support-down
 ```
+
+#### GPU Acceleration (Optional)
+
+For inference workloads that benefit from an NVIDIA GPU, use the GPU-enabled compose overlay:
+
+```bash
+make up-gpu            # full stack with GPU
+make support-up-gpu    # supporting services only with GPU
+```
+
+This requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and a compatible GPU driver.
 
 ---
 
@@ -130,12 +226,16 @@ make fe-build         # Build production bundle
 
 ### Docker
 ```bash
+make build            # Build all Docker images
+make build-retry      # Build + start with retry for transient Docker daemon errors (Windows)
 make up               # Start all services
-make support-up       # Start only supporting services for local app development
-make logs             # Tail container logs
-make build            # Rebuild images
+make up-gpu           # Start all services with NVIDIA GPU acceleration
+make support-up       # Start supporting services only (DB, Ollama, Qdrant, inference)
+make support-up-gpu   # Same, with GPU acceleration
 make down             # Stop all services
 make support-down     # Stop supporting services only
+make logs             # Tail container logs
+make seed             # Seed database with demo data
 ```
 
 ### General
@@ -152,9 +252,13 @@ python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file stora
 
 ### Speaker Classifier Artifact
 
-`speaker_classifier_export.zip` is treated as a one-time import artifact.  
-Run `make prepare-speaker-model` to extract only the `distilbert/` model into
-`services/whisperx/models/speaker_role/distilbert`, then remove the zip.
+Place `speaker_classifier_export.zip` at the repo root and run:
+
+```bash
+make prepare-speaker-model
+```
+
+This extracts the DistilBERT model into `services/whisperx/models/speaker_role/distilbert/`. The zip is gitignored — it must be provided separately. WhisperX will fail to start without these model files.
 
 ### Audio Auto-Ingest
 
