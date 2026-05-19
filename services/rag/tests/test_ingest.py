@@ -153,10 +153,23 @@ class TestValidateChunks:
         assert chunks[0].metadata["policy_ref"] == ["CS-RULE-003", "CS-RULE-007"]
 
     def test_policy_rule_metadata_validation_warns_without_failing(self):
+        # PARENT chunks are never validated for atomic rule metadata —
+        # parents are context containers, not rule definitions.
         chunks = [_make_fake_chunk("Refunds must be approved by a manager.")]
 
-        warnings = DocumentIngestionPipeline._validate_policy_chunk_schema(chunks, "PARENT")
+        parent_warnings = DocumentIngestionPipeline._validate_policy_chunk_schema(
+            chunks, "PARENT"
+        )
+        assert parent_warnings == []
 
+        # A CHILD tagged as a policy_rule_atomic but missing metadata SHOULD warn.
+        atomic_child = _make_fake_chunk(
+            "Loose text",
+            metadata={"chunk_type": "policy_rule_atomic"},
+        )
+        warnings = DocumentIngestionPipeline._validate_policy_chunk_schema(
+            [atomic_child], "CHILD"
+        )
         assert warnings
         assert "rule_id" in warnings[0]
         assert "rule_statement" in warnings[0]
@@ -172,6 +185,8 @@ class TestValidateChunks:
         ]
 
         DocumentIngestionPipeline._annotate_document_metadata(chunks, "policy")
+        # Even with extracted metadata, PARENT validation never warns
+        # (parents are context, not rule lookups).
         warnings = DocumentIngestionPipeline._validate_policy_chunk_schema(chunks, "PARENT")
 
         assert chunks[0].metadata["doc_type"] == "policy"
@@ -185,6 +200,240 @@ class TestValidateChunks:
         report = DocumentIngestionPipeline._validate_chunks(chunks, "TEST")
         assert report["duplicates"] == 1
         assert len(report["warnings"]) == 1
+
+
+# ── New Format Parsers (table-based metadata, rule expansion) ────────────────
+
+
+class TestExtractMetadataTableFormat:
+    """Fix A — pandoc-rendered docs encode metadata as | Field | Value |."""
+
+    def test_extracts_all_fields_from_pandoc_table(self):
+        md = (
+            "## NEXALINK TELECOMMUNICATIONS POLICY: CALL CONDUCT\n"
+            "\n"
+            "| Field          | Value                  |\n"
+            "|----------------|------------------------|\n"
+            "| Document ID    | CS-POL-01              |\n"
+            "| Version        | 3.0                    |\n"
+            "| Effective Date | 18/5/2026              |\n"
+            "| Department     | Call Center Operations |\n"
+        )
+        meta = DocumentIngestionPipeline._extract_metadata(md, "POLICY_01.pdf", "nexalink")
+        assert meta["org"] == "nexalink"
+        assert meta["doc_id"] == "CS-POL-01"
+        assert meta["version"] == "3.0"
+        assert meta["effective_date"] == "18/5/2026"
+        assert meta["department"] == "Call Center Operations"
+
+    def test_legacy_format_still_works(self):
+        # Regression: the legacy `**Label**: Value` format must keep working.
+        md = "**Document ID**: DOC-001\n**Version**: 2.0\n"
+        meta = DocumentIngestionPipeline._extract_metadata(md, "f.pdf", "acme")
+        assert meta["doc_id"] == "DOC-001"
+        assert meta["version"] == "2.0"
+
+    def test_mixed_format_fallback(self):
+        md = (
+            "| Field       | Value     |\n"
+            "|-------------|-----------|\n"
+            "| Document ID | TABLE-001 |\n"
+            "\n"
+            "**Department**: Inline-Department\n"
+        )
+        meta = DocumentIngestionPipeline._extract_metadata(md, "f.pdf", "acme")
+        assert meta["doc_id"] == "TABLE-001"
+        assert meta["department"] == "Inline-Department"
+
+
+class TestExtractLabeledValueTableCell:
+    """Fix C — `policy_ref` and other labelled values must also work in
+    table-cell form: | Label | Value |."""
+
+    def test_table_cell_form(self):
+        text = (
+            "| Field      | Value                       |\n"
+            "|------------|-----------------------------|\n"
+            "| Policy Ref | CS-RULE-001, CS-RULE-002    |\n"
+        )
+        v = DocumentIngestionPipeline._extract_labeled_value(text, ("policy_ref", "policy ref"))
+        assert v == "CS-RULE-001, CS-RULE-002"
+
+    def test_inline_form_takes_precedence(self):
+        # If both forms appear, the inline labelled form should win.
+        text = (
+            "policy_ref: INLINE-001\n"
+            "| Policy Ref | TABLE-001 |\n"
+        )
+        v = DocumentIngestionPipeline._extract_labeled_value(text, ("policy_ref", "policy ref"))
+        assert v == "INLINE-001"
+
+
+class TestSopPolicyRefFromTable:
+    """Fix C — SOP step tables expose policy_ref via | Policy Ref | ... | cells."""
+
+    def test_sop_policy_ref_extracted_from_table(self):
+        text = (
+            "## Step 1: Verify Identity\n"
+            "\n"
+            "| Field        | Value                                   |\n"
+            "|--------------|-----------------------------------------|\n"
+            "| Precondition | Call connected.                         |\n"
+            "| Action       | Deliver greeting and recording notice.  |\n"
+            "| Policy Ref   | CS-RULE-001, CS-RULE-002, CS-RULE-004   |\n"
+        )
+        chunks = [_make_fake_chunk(text, metadata={"doc_type": "sop"})]
+        DocumentIngestionPipeline._annotate_document_metadata(chunks, "sop")
+        refs = chunks[0].metadata["policy_ref"]
+        assert "CS-RULE-001" in refs
+        assert "CS-RULE-002" in refs
+        assert "CS-RULE-004" in refs
+
+
+class TestExtractRulesFromTables:
+    """Fix B — rule tables expose one (rule_id, statement, severity) per row."""
+
+    def test_three_rules_from_one_table(self):
+        text = (
+            "## 2.1 Call Opening\n"
+            "\n"
+            "| ID          | Rule                          | Severity |\n"
+            "|-------------|-------------------------------|----------|\n"
+            "| CS-RULE-001 | Agent must greet with...      | MAJOR    |\n"
+            "| CS-RULE-002 | Agent must state recording... | CRITICAL |\n"
+            "| CS-RULE-003 | Agent must acknowledge...     | MAJOR    |\n"
+        )
+        rules = DocumentIngestionPipeline._extract_rules_from_tables(text)
+        assert len(rules) == 3
+        assert rules[0] == {
+            "rule_id": "CS-RULE-001",
+            "rule_statement": "Agent must greet with...",
+            "severity": "major",
+        }
+        assert rules[1]["rule_id"] == "CS-RULE-002"
+        assert rules[1]["severity"] == "critical"
+
+    def test_no_rules_in_non_rule_table(self):
+        text = (
+            "| Field      | Value     |\n"
+            "|------------|-----------|\n"
+            "| Department | Support   |\n"
+        )
+        assert DocumentIngestionPipeline._extract_rules_from_tables(text) == []
+
+    def test_rule_id_format_variants(self):
+        text = (
+            "| ID           | Rule              | Severity |\n"
+            "|--------------|-------------------|----------|\n"
+            "| FIN-RULE-001 | Refund rule one   | MAJOR    |\n"
+            "| SEC-RULE-008 | Security rule     | CRITICAL |\n"
+        )
+        rules = DocumentIngestionPipeline._extract_rules_from_tables(text)
+        assert {r["rule_id"] for r in rules} == {"FIN-RULE-001", "SEC-RULE-008"}
+
+    def test_invalid_severity_dropped(self):
+        text = (
+            "| ID          | Rule        | Severity |\n"
+            "|-------------|-------------|----------|\n"
+            "| CS-RULE-099 | Bad row     | URGENT   |\n"
+        )
+        rules = DocumentIngestionPipeline._extract_rules_from_tables(text)
+        assert rules[0]["severity"] == ""  # URGENT is not a recognised severity
+
+    def test_handles_docling_duplicate_id_column(self):
+        """Regression: Docling sometimes emits a 4-column table where the
+        second column duplicates the rule ID.  Our parser must still
+        extract the right severity from the rightmost canonical cell."""
+        text = (
+            "| ID           |              | Rule           | Severity |\n"
+            "| SEC-RULE-009 | SEC-RULE-009 | Some statement | MAJOR    |\n"
+        )
+        rules = DocumentIngestionPipeline._extract_rules_from_tables(text)
+        assert len(rules) == 1
+        assert rules[0]["rule_id"] == "SEC-RULE-009"
+        assert rules[0]["severity"] == "major"
+        assert "Some statement" in rules[0]["rule_statement"]
+
+    def test_continuation_row_merges_into_previous_rule(self):
+        # Docling occasionally fractures long cells across rows.  The
+        # continuation cell (no rule_id) should append to the previous rule.
+        text = (
+            "| ID          | Rule                                  | Severity |\n"
+            "|-------------|---------------------------------------|----------|\n"
+            "| CS-RULE-009 | During any silent task, agent must... | MINOR    |\n"
+            "|             | re-engage within 10 seconds.          |          |\n"
+        )
+        rules = DocumentIngestionPipeline._extract_rules_from_tables(text)
+        assert len(rules) == 1
+        assert "re-engage within 10 seconds" in rules[0]["rule_statement"]
+
+
+class TestNormalizeGlyphSpacing:
+    """Fix E — arrows occasionally lose their padding in Docling output."""
+
+    def test_inserts_spaces_around_arrow(self):
+        text = "Acknowledge →Clarify→ Empathize →Solve"
+        result = DocumentIngestionPipeline._normalize_glyph_spacing(text)
+        assert " → " in result
+        # No back-to-back arrow-without-space anywhere
+        assert "→C" not in result
+        assert "e→" not in result
+
+    def test_idempotent(self):
+        text = "A → B → C"
+        first = DocumentIngestionPipeline._normalize_glyph_spacing(text)
+        second = DocumentIngestionPipeline._normalize_glyph_spacing(first)
+        assert first == second
+
+
+class TestPolicyValidatorScope:
+    """Fix B — only policy_rule_atomic children participate in validation."""
+
+    def test_parents_are_never_validated(self):
+        # No matter what the parent contains, validation returns [].
+        text = "## 1. Scope\nApplies to all agents."
+        chunks = [_make_fake_chunk(text)]
+        assert DocumentIngestionPipeline._validate_policy_chunk_schema(
+            chunks, "PARENT"
+        ) == []
+
+    def test_non_atomic_children_are_ignored(self):
+        chunks = [
+            _make_fake_chunk("Some context", metadata={"chunk_type": "text"}),
+            _make_fake_chunk("Table cell content", metadata={"chunk_type": "table_atomic"}),
+        ]
+        assert DocumentIngestionPipeline._validate_policy_chunk_schema(
+            chunks, "CHILD"
+        ) == []
+
+    def test_atomic_child_missing_metadata_warns(self):
+        chunks = [
+            _make_fake_chunk(
+                "CS-RULE-XXX: Some rule [Severity: ???]",
+                metadata={"chunk_type": "policy_rule_atomic"},
+            ),
+        ]
+        warnings = DocumentIngestionPipeline._validate_policy_chunk_schema(
+            chunks, "CHILD"
+        )
+        assert warnings
+        assert "rule_id" in warnings[0]
+
+    def test_atomic_child_with_full_metadata_passes(self):
+        chunks = [
+            _make_fake_chunk(
+                "CS-RULE-001: Agent must greet... [Severity: MAJOR]",
+                metadata={
+                    "chunk_type": "policy_rule_atomic",
+                    "rule_id": "CS-RULE-001",
+                    "rule_statement": "Agent must greet...",
+                    "severity": "major",
+                },
+            ),
+        ]
+        assert DocumentIngestionPipeline._validate_policy_chunk_schema(
+            chunks, "CHILD"
+        ) == []
 
 
 class TestRunDiscovery:

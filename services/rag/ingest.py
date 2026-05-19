@@ -221,35 +221,114 @@ class DocumentIngestionPipeline:
             i += 1
         return "\n".join(output)
 
+    # FIX E — normalise typographic glyphs that Docling occasionally collapses
+    # spacing around (arrows, em/en-dashes).  Keeps the original glyph,
+    # only ensures a single space on each side.
+    _GLYPH_SPACING_PATTERN = re.compile(r"\s*([→←↔⇒⇐⇔])\s*")
+
+    @classmethod
+    def _normalize_glyph_spacing(cls, text: str) -> str:
+        """Ensure single spaces around arrow glyphs (Docling occasionally drops them)."""
+        return cls._GLYPH_SPACING_PATTERN.sub(r" \1 ", text)
+
     def _clean_markdown(self, text: str) -> str:
-        """Full cleaning pipeline: encoding fix + table repair."""
+        """Full cleaning pipeline: encoding fix + table repair + glyph spacing."""
         text = self._fix_encoding(text)
         text = self._repair_orphaned_table_rows(text)
+        text = self._normalize_glyph_spacing(text)
         return text
 
     # ── Metadata Extraction ───────────────────────────────────────────────
 
-    @staticmethod
-    def _extract_metadata(markdown_text: str, source_file: str, org_name: str) -> dict:
-        """Extract structured metadata from Markdown policy header fields."""
+    # ── Label → metadata-key map for both extraction styles ──────────────
+    _METADATA_FIELD_LABELS: dict[str, tuple[str, ...]] = {
+        "org":            ("organization",),
+        "department":     ("department",),
+        "doc_id":         ("document id", "doc id", "document"),
+        "version":        ("version",),
+        "effective_date": ("effective date", "effective"),
+    }
 
+    @classmethod
+    def _extract_metadata_from_table(cls, markdown_text: str) -> dict[str, str]:
+        """Extract metadata from a Markdown `| Field | Value |` table.
+
+        Recognises the format used by pandoc-rendered NexaLink policies:
+
+            | Field          | Value     |
+            |----------------|-----------|
+            | Document ID    | CS-POL-01 |
+            | Version        | 3.0       |
+            | Effective Date | 18/5/2026 |
+            | Department     | ...       |
+
+        Returns {} if no recognised metadata table is found.  Only scans
+        the first 60 lines so a rule-table later in the document can't
+        accidentally match.
+        """
+        found: dict[str, str] = {}
+        lines = markdown_text.splitlines()[:60]
+        in_table = False
+        for raw in lines:
+            line = raw.strip()
+            if not line.startswith("|"):
+                in_table = False
+                continue
+            # Skip header separator rows ("|---|---|")
+            if re.fullmatch(r"\|[\s\-:|]+\|", line):
+                in_table = True
+                continue
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            label_norm = cells[0].lower().strip("* ").strip()
+            value = cells[1].strip("* ").strip()
+            if not value or value.lower() in {"value", ""}:
+                continue
+            for key, label_variants in cls._METADATA_FIELD_LABELS.items():
+                if label_norm in label_variants and key not in found:
+                    found[key] = value
+                    break
+        return found if in_table or found else {}
+
+    @classmethod
+    def _extract_metadata(cls, markdown_text: str, source_file: str, org_name: str) -> dict:
+        """Extract structured metadata from a policy header.
+
+        Supports two header styles:
+          1. Markdown `| Field | Value |` table (pandoc-rendered docs).
+          2. Legacy `**Label**: Value` lines.
+
+        Table format is tried first; any unfilled fields fall back to the
+        legacy regex.  Missing fields default to 'Unknown'.
+        """
+        # Style 1 — table
+        extracted: dict[str, str] = cls._extract_metadata_from_table(markdown_text)
+
+        # Style 2 — legacy labelled lines (fills remaining fields)
         def _pat(label: str) -> str:
             return (
                 r"^\*{0,2}" + re.escape(label) + r"\*{0,2}"
                 + r"\s*:\s*\*{0,2}(.+?)\*{0,2}\s*$"
             )
 
-        fields = {
-            "org": _pat("Organization"),
-            "department": _pat("Department"),
-            "doc_id": _pat("Document ID"),
-            "version": _pat("Version"),
+        legacy_patterns = {
+            "org":            _pat("Organization"),
+            "department":     _pat("Department"),
+            "doc_id":         _pat("Document ID"),
+            "version":        _pat("Version"),
             "effective_date": _pat("Effective Date"),
         }
-        extracted: dict[str, str] = {}
-        for key, pattern in fields.items():
+        for key, pattern in legacy_patterns.items():
+            if extracted.get(key):
+                continue
             m = re.search(pattern, markdown_text, re.IGNORECASE | re.MULTILINE)
-            extracted[key] = m.group(1).strip() if m else "Unknown"
+            if m:
+                extracted[key] = m.group(1).strip()
+
+        # Backfill defaults
+        for key in legacy_patterns:
+            extracted.setdefault(key, "Unknown")
 
         # Override org with folder name if available
         if org_name and org_name != "Unknown":
@@ -261,6 +340,13 @@ class DocumentIngestionPipeline:
 
     @staticmethod
     def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
+        """Extract a labelled value from either:
+
+        1. Inline `**Label**: Value` lines.
+        2. Markdown table cells `| Label | Value |`.
+
+        Returns the first match (preferring inline form), or "" if none.
+        """
         for label in labels:
             pattern = (
                 r"^\s*(?:[-*]\s*)?\*{0,2}"
@@ -270,6 +356,24 @@ class DocumentIngestionPipeline:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 return match.group(1).strip().strip('"')
+
+        # Fall back to table-cell form: `| Label | Value |`
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            if re.fullmatch(r"\|[\s\-:|]+\|", stripped):
+                continue
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            label_norm = cells[0].lower().strip("* ").strip()
+            value = cells[1].strip("* ").strip().strip('"')
+            if not value:
+                continue
+            for label in labels:
+                if label_norm == label.lower():
+                    return value
         return ""
 
     @classmethod
@@ -277,7 +381,7 @@ class DocumentIngestionPipeline:
         """Extract optional SOP policy_ref values from common inline metadata forms."""
         raw_value = cls._extract_labeled_value(
             text,
-            ("policy_ref", "policy refs", "policy references"),
+            ("policy_ref", "policy ref", "policy refs", "policy references"),
         )
         if not raw_value:
             return []
@@ -295,13 +399,42 @@ class DocumentIngestionPipeline:
 
     @classmethod
     def _extract_policy_rule_metadata(cls, text: str) -> dict[str, str]:
-        """Extract atomic policy-rule metadata when present in the source text."""
+        """Extract atomic policy-rule metadata when present in the source text.
+
+        Handles three encodings (in priority order):
+
+        1. Inline labelled lines:
+             rule_id: CS-RULE-003
+             rule_statement: Agents must verify identity before refunds.
+             severity: critical
+
+        2. A single-row markdown rule table (3 columns: ID, Rule, Severity).
+
+        Returns {} when the chunk holds multiple rules — those should be
+        expanded into atomic child chunks via _extract_rules_from_table().
+        """
+        # Style 1 — inline labelled values
         rule_id = cls._extract_labeled_value(text, ("rule_id", "rule id", "rule"))
         rule_statement = cls._extract_labeled_value(
             text,
             ("rule_statement", "rule statement", "statement"),
         )
-        severity = cls._extract_labeled_value(text, ("severity",)).lower()
+        severity_raw = cls._extract_labeled_value(text, ("severity",)).lower()
+        # Discard anything that isn't one of the canonical severities — the
+        # word "Severity:" appears in policy preambles like
+        # "Severity: CRITICAL = immediate violation..." and would otherwise
+        # leak into the metadata.
+        first_word = severity_raw.split()[0] if severity_raw else ""
+        severity = first_word if first_word in VALID_POLICY_SEVERITIES else ""
+
+        # Style 2 — single-row rule table
+        if not (rule_id and rule_statement and severity):
+            rules = cls._extract_rules_from_tables(text)
+            if len(rules) == 1:
+                rule_id = rule_id or rules[0]["rule_id"]
+                rule_statement = rule_statement or rules[0]["rule_statement"]
+                severity = severity or rules[0]["severity"]
+
         metadata: dict[str, str] = {}
         if rule_id:
             metadata["rule_id"] = rule_id
@@ -310,6 +443,110 @@ class DocumentIngestionPipeline:
         if severity:
             metadata["severity"] = severity
         return metadata
+
+    # FIX B — atomic-rule extraction from `| ID | Rule | Severity |` tables.
+    #
+    # The new policy docs (NexaLink v3) encode each rule as one row in a
+    # 3-column table.  We parse those rows here so a single section-level
+    # parent chunk can be expanded into N rule-level child chunks, each
+    # carrying rule_id / rule_statement / severity metadata.
+
+    _RULE_ID_PATTERN = re.compile(r"^[A-Z]{2,5}-RULE-\d+$")
+
+    @classmethod
+    def _extract_rules_from_tables(cls, text: str) -> list[dict[str, str]]:
+        """Find every row that looks like an atomic rule definition.
+
+        Returns a list of dicts with keys (rule_id, rule_statement,
+        severity).  Each entry comes from a single row in a markdown
+        pipe-table whose header columns roughly mean ID / Rule / Severity.
+
+        Severity is normalised to lowercase ('critical' | 'major' | 'minor').
+        Rows whose first cell does NOT match the rule-ID pattern
+        ([A-Z]+-RULE-\\d+) are skipped, which lets us safely scan tables
+        that mix rule rows with continuation rows.
+        """
+        rules: list[dict[str, str]] = []
+        lines = text.splitlines()
+
+        # Scan all tables.  Group by contiguous pipe-table runs so a
+        # multi-row rule that wraps across columns still gets captured.
+        current_block: list[str] = []
+        for line in lines + [""]:  # sentinel
+            if line.strip().startswith("|"):
+                current_block.append(line)
+                continue
+            if current_block:
+                cls._scan_table_block_for_rules(current_block, rules)
+                current_block = []
+        return rules
+
+    @classmethod
+    def _scan_table_block_for_rules(
+        cls, block: list[str], out: list[dict[str, str]]
+    ) -> None:
+        """Append rule dicts found in one contiguous markdown table block."""
+        last_rule: dict[str, str] | None = None
+        for raw in block:
+            stripped = raw.strip()
+            # Skip header separators
+            if re.fullmatch(r"\|[\s\-:|]+\|", stripped):
+                continue
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            first = cells[0].strip("* ").strip()
+            # Header row like "ID | Rule | Severity"
+            if first.lower() in {"id", "rule id", "ruleid"}:
+                continue
+
+            if cls._RULE_ID_PATTERN.fullmatch(first):
+                # New atomic rule row.  Docling occasionally emits a 4-column
+                # table where the second column duplicates the rule ID — in
+                # that case skip the dupe and read from cells[2:].  We also
+                # find the severity by scanning right-to-left for any cell
+                # whose first token is a canonical severity.
+                statement_cells = cells[1:]
+                if statement_cells and statement_cells[0].strip("* ").strip() == first:
+                    statement_cells = statement_cells[1:]
+
+                # Locate severity: rightmost cell whose first word is canonical.
+                severity = ""
+                severity_idx: int | None = None
+                for i in range(len(statement_cells) - 1, -1, -1):
+                    token = statement_cells[i].strip("* ").strip().lower()
+                    first_word = token.split()[0] if token else ""
+                    if first_word in VALID_POLICY_SEVERITIES:
+                        severity = first_word
+                        severity_idx = i
+                        break
+
+                # Statement is everything before the severity column
+                if severity_idx is not None:
+                    statement_cells = statement_cells[:severity_idx]
+                rule_statement = " ".join(
+                    c.strip("* ").strip() for c in statement_cells if c.strip()
+                ).strip()
+
+                last_rule = {
+                    "rule_id": first,
+                    "rule_statement": rule_statement,
+                    "severity": severity,
+                }
+                out.append(last_rule)
+            elif last_rule is not None and not first:
+                # Continuation row — the rule statement wrapped across rows
+                # because Docling fractured a long cell.  Append to the
+                # statement and (if missing) pick up severity.
+                cont_text = cells[1].strip("* ").strip() if len(cells) > 1 else ""
+                if cont_text:
+                    last_rule["rule_statement"] = (
+                        (last_rule["rule_statement"] + " " + cont_text).strip()
+                    )
+                if len(cells) > 2 and not last_rule["severity"]:
+                    sev = cells[2].strip("* ").strip().lower()
+                    if sev in VALID_POLICY_SEVERITIES:
+                        last_rule["severity"] = sev
 
     @classmethod
     def _annotate_document_metadata(cls, chunks: list, doc_type: str) -> None:
@@ -340,10 +577,28 @@ class DocumentIngestionPipeline:
 
     @classmethod
     def _validate_policy_chunk_schema(cls, chunks: list, label: str) -> list[str]:
-        """Warn when policy chunks do not expose atomic rule metadata."""
+        """Validate that atomic policy-rule chunks expose required metadata.
+
+        Validation scope:
+          * PARENT — section-level containers; metadata is for context-
+            retrieval, not rule lookup.  Not validated for atomic fields.
+          * CHILD with chunk_type=='policy_rule_atomic' — these MUST
+            carry rule_id, rule_statement, and a canonical severity,
+            or the policy compliance evaluator cannot look them up.
+          * Other children (table_atomic, text, untagged) — context-only;
+            atomic fields not required.
+        """
         warnings: list[str] = []
+        # PARENTS never participate in atomic-rule validation
+        if label == "PARENT":
+            return warnings
+
         for index, chunk in enumerate(chunks, start=1):
             metadata = chunk.metadata
+            chunk_type = str(metadata.get("chunk_type") or "")
+            if chunk_type != "policy_rule_atomic":
+                continue
+
             rule_id = str(metadata.get("rule_id") or "").strip()
             rule_statement = str(metadata.get("rule_statement") or "").strip()
             severity = str(metadata.get("severity") or "").strip().lower()
@@ -355,9 +610,10 @@ class DocumentIngestionPipeline:
             if severity not in VALID_POLICY_SEVERITIES:
                 missing.append("severity")
             if missing:
+                rule_label = rule_id or f"chunk {index}"
                 warning = (
-                    f"[{label}] Policy chunk {index} missing/invalid atomic rule metadata: "
-                    f"{', '.join(missing)}"
+                    f"[{label}] Policy rule '{rule_label}' missing/invalid "
+                    f"metadata: {', '.join(missing)}"
                 )
                 warnings.append(warning)
                 logger.warning(warning)
@@ -402,26 +658,75 @@ class DocumentIngestionPipeline:
 
         return parent_chunks
 
-    def _split_children(self, parent_chunks: list) -> list:
-        """Split parent chunks into smaller children; keep tables atomic."""
+    def _split_children(self, parent_chunks: list, doc_type: str | None = None) -> list:
+        """Split parent chunks into smaller children.
+
+        Policy rule-tables are EXPANDED into one child per rule (each
+        carrying rule_id / rule_statement / severity metadata).  Other
+        tables are kept atomic.  Free text uses the recursive splitter.
+        """
         child_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.child_chunking.chunk_size,
             chunk_overlap=settings.child_chunking.chunk_overlap,
         )
         child_chunks: list = []
         atomic_count = 0
+        rule_count = 0
 
         for chunk in parent_chunks:
-            if self._is_table_chunk(chunk.page_content):
+            content = chunk.page_content
+            # Path 1 — policy rule table: expand to one child per rule
+            if doc_type == "policy":
+                rules = self._extract_rules_from_tables(content)
+                if rules:
+                    for rule in rules:
+                        child = self._make_atomic_rule_chunk(chunk, rule)
+                        child_chunks.append(child)
+                        rule_count += 1
+                    continue
+            # Path 2 — any other table: keep atomic
+            if self._is_table_chunk(content):
                 chunk.metadata["chunk_type"] = "table_atomic"
                 child_chunks.append(chunk)
                 atomic_count += 1
-            else:
-                chunk.metadata["chunk_type"] = "text"
-                child_chunks.extend(child_splitter.split_documents([chunk]))
+                continue
+            # Path 3 — free text: recursive split
+            chunk.metadata["chunk_type"] = "text"
+            child_chunks.extend(child_splitter.split_documents([chunk]))
 
+        if rule_count:
+            print(f"  → {rule_count} atomic policy-rule chunk(s) generated.")
         print(f"  → {atomic_count} table chunk(s) kept atomic.")
         return child_chunks
+
+    @staticmethod
+    def _make_atomic_rule_chunk(parent_chunk, rule: dict[str, str]):
+        """Create a child chunk representing a single atomic policy rule.
+
+        Copies parent metadata, then overlays rule-specific metadata so
+        downstream filters can look up a rule by ID directly.
+        """
+        # Lazy import: langchain.Document so we don't force a dependency on
+        # call sites that pass SimpleNamespace fakes (used in tests).
+        try:
+            from langchain_core.documents import Document
+        except ImportError:  # pragma: no cover
+            from langchain.schema import Document
+
+        # Render the rule in a stable, retrieval-friendly form
+        severity_label = rule["severity"].upper() if rule["severity"] else "UNSPECIFIED"
+        content = (
+            f"{rule['rule_id']}: {rule['rule_statement']} "
+            f"[Severity: {severity_label}]"
+        )
+        metadata = dict(parent_chunk.metadata)
+        metadata.update({
+            "chunk_type":     "policy_rule_atomic",
+            "rule_id":        rule["rule_id"],
+            "rule_statement": rule["rule_statement"],
+            "severity":       rule["severity"],
+        })
+        return Document(page_content=content, metadata=metadata)
 
     # ── Validation ────────────────────────────────────────────────────────
 
@@ -571,9 +876,9 @@ class DocumentIngestionPipeline:
         self._annotate_document_metadata(parent_chunks, doc_type)
         print(f"  Parent chunks: {len(parent_chunks)}")
 
-        # Step 5 — Child splitting
+        # Step 5 — Child splitting (policy docs expand rule tables to atomic children)
         print("\n[Step 5] Splitting into Child Chunks...")
-        child_chunks = self._split_children(parent_chunks)
+        child_chunks = self._split_children(parent_chunks, doc_type=doc_type)
         self._annotate_document_metadata(child_chunks, doc_type)
         print(f"  Child chunks: {len(child_chunks)}")
 
@@ -589,7 +894,24 @@ class DocumentIngestionPipeline:
             for idx, chunk in enumerate(parent_chunks, 1):
                 if not chunk.metadata.get("section"):
                     all_warnings.append(f"[PARENT] KB chunk {idx} has no section header")
-        if c_report["total"] == p_report["total"] and len(parent_chunks) > 0:
+        # Suppress the false-positive when the recursive splitter had no
+        # work to do — every parent either WAS an atomic table OR was so
+        # short the recursive splitter (chunk_size=400) would emit a
+        # single fragment anyway.  Either way child==parent is correct.
+        atomic_types = {"table_atomic", "policy_rule_atomic"}
+        non_atomic_children = [
+            c for c in child_chunks
+            if c.metadata.get("chunk_type") not in atomic_types
+        ]
+        long_non_atomic = [
+            c for c in non_atomic_children
+            if len(c.page_content) > settings.child_chunking.chunk_size
+        ]
+        if (
+            c_report["total"] == p_report["total"]
+            and len(parent_chunks) > 0
+            and long_non_atomic  # only warn if a real text chunk failed to split
+        ):
             all_warnings.append(
                 "[PIPELINE] Parent == Child count — child splitting may not be working."
             )

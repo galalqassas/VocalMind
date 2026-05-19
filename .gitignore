@@ -155,6 +155,7 @@ Experiments/
 services/rag/parsed_docs/
 services/rag/logs/
 storage/docs/**/parsed-docs/
+storage/docs/_pipeline_report.json
 
 # ── Storage runtime dirs ─────────────────────────────────────────────────
 storage/uploads/
