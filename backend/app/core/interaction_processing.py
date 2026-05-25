@@ -75,10 +75,11 @@ def apply_emotion_min_duration_gate(
     the prior segment keeps the per-utterance emotion sticky across short
     interjections while preserving real transitions on substantive turns.
 
-    How to apply: only mutates segments whose duration < threshold AND for
-    which a prior segment exists. Stores the original value under
-    `_emotion_original` for telemetry; resets `emotion_confidence` to the
-    inherited segment's confidence.
+    How to apply: mutates segments **in place** whose duration < threshold AND
+    for which a prior segment exists. Stores the pre-gate value under
+    `_emotion_original` and sets `_emotion_inherited=True` for telemetry. The
+    inherited `emotion_scores` are shallow-copied to keep segments independent.
+    Returns the same list for caller convenience.
     """
     threshold = _emotion_min_segment_secs() if min_secs is None else max(0.0, min_secs)
     if threshold <= 0.0 or not segments:
@@ -99,11 +100,16 @@ def apply_emotion_min_duration_gate(
                 seg["_emotion_inherited"] = True
             seg["emotion"] = prev_emotion
             if prev_scores is not None:
-                seg["emotion_scores"] = prev_scores
+                # Shallow-copy to keep segments independent — preserves the
+                # invariant that mutating one segment's emotion_scores does
+                # not affect others.
+                seg["emotion_scores"] = list(prev_scores)
         else:
             if current:
                 prev_emotion = current
-                prev_scores = seg.get("emotion_scores") or prev_scores
+                raw_scores = seg.get("emotion_scores")
+                if raw_scores:
+                    prev_scores = list(raw_scores)
     return segments
 
 

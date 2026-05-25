@@ -221,6 +221,9 @@ services:
       # Mono and mono-duplicated audio fall through to the standard cluster path.
       - CHANNEL_DIARIZATION_ENABLED=${CHANNEL_DIARIZATION_ENABLED:-true}
       - CHANNEL_DIARIZATION_MAX_CORR=${CHANNEL_DIARIZATION_MAX_CORR:-0.92}
+      # Optional: pin agent channel ("0" or "1"). Unset = pick by first-window
+      # energy. Set explicitly for fixed-convention PBX/SBC deployments.
+      - AGENT_CHANNEL=${AGENT_CHANNEL:-}
       - PYTHONUNBUFFERED=1
     volumes:
       - ./services/whisperx/app.py:/app/app.py

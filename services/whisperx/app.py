@@ -189,10 +189,25 @@ def merge_short_same_speaker_segments(
 # ──────────────────────────────────────────────────────────────────────────────
 
 CHANNEL_DIARIZATION_ENABLED = os.getenv("CHANNEL_DIARIZATION_ENABLED", "true").lower() == "true"
-CHANNEL_DIARIZATION_MAX_CORR = float(os.getenv("CHANNEL_DIARIZATION_MAX_CORR", "0.92"))
+
+try:
+    CHANNEL_DIARIZATION_MAX_CORR = float(os.getenv("CHANNEL_DIARIZATION_MAX_CORR", "0.92"))
+except (TypeError, ValueError):
+    CHANNEL_DIARIZATION_MAX_CORR = 0.92
+
+# Optional override: force a specific channel as agent (0 or 1). When unset,
+# detect_stereo_layout picks the louder channel in the first 8s. Real PBX/SBC
+# deployments often have a fixed convention (e.g. left=agent) and energy is
+# not a reliable discriminator there.
+_FORCED_AGENT_CHANNEL_RAW = os.getenv("AGENT_CHANNEL", "").strip()
+FORCED_AGENT_CHANNEL: Optional[int] = (
+    int(_FORCED_AGENT_CHANNEL_RAW)
+    if _FORCED_AGENT_CHANNEL_RAW in ("0", "1")
+    else None
+)
 
 
-def detect_stereo_layout(path: str) -> Optional[Dict]:
+def detect_stereo_layout(path: str) -> Optional[dict]:
     """Detect if audio is genuinely stereo-separated (e.g. agent on L, customer on R).
 
     Real call-center recordings from a PBX/SBC keep the two parties on separate
@@ -228,16 +243,20 @@ def detect_stereo_layout(path: str) -> Optional[Dict]:
         first_window = data[: int(sr * 8.0)]
         e0 = float(np.sqrt(np.mean(first_window[:, 0] ** 2) + 1e-12))
         e1 = float(np.sqrt(np.mean(first_window[:, 1] ** 2) + 1e-12))
-        agent_channel = 0 if e0 >= e1 else 1
+        if FORCED_AGENT_CHANNEL is not None:
+            agent_channel = FORCED_AGENT_CHANNEL
+            agent_source = "forced"
+        else:
+            agent_channel = 0 if e0 >= e1 else 1
+            agent_source = "energy"
         return {
             "is_stereo_separated": True,
             "agent_channel": agent_channel,
+            "agent_source": agent_source,
             "channels": 2,
-            "sample_rate": int(sr),
-            "cross_corr": round(corr, 3),
-            "first_window_energy": [round(e0, 5), round(e1, 5)],
         }
-    except Exception:
+    except Exception as exc:
+        print(f"⚠ detect_stereo_layout failed: {exc.__class__.__name__}: {exc}")
         return None
 
 
@@ -255,17 +274,20 @@ def assign_speakers_by_channel(
     try:
         import soundfile as sf
     except ImportError:
+        print("⚠ assign_speakers_by_channel: soundfile not available, falling back")
         return segments
     customer_channel = 1 - agent_channel
     try:
         info = sf.info(path)
-    except Exception:
+    except Exception as exc:
+        print(f"⚠ assign_speakers_by_channel: sf.info failed ({exc.__class__.__name__}: {exc})")
         return segments
     if info.channels != 2:
         return segments
     sr = info.samplerate
     total_frames = info.frames
-    for seg in segments:
+    relabel_failures = 0
+    for idx, seg in enumerate(segments):
         try:
             start_frame = max(0, int(float(seg.get("start", 0.0)) * sr))
             end_frame = min(total_frames, int(float(seg.get("end", 0.0)) * sr))
@@ -286,8 +308,19 @@ def assign_speakers_by_channel(
             meta["confidence"] = round(
                 max(e_agent, e_customer) / (e_agent + e_customer + 1e-12), 3
             )
-        except Exception:
+        except Exception as exc:
+            relabel_failures += 1
+            if relabel_failures <= 3:  # log up to 3, then suppress to avoid spam
+                print(
+                    f"⚠ assign_speakers_by_channel: segment {idx} relabel failed "
+                    f"({exc.__class__.__name__}: {exc})"
+                )
             continue
+    if relabel_failures:
+        print(
+            f"⚠ assign_speakers_by_channel: {relabel_failures}/{len(segments)} "
+            f"segments failed channel relabel — those keep their pre-channel labels"
+        )
     return segments
 
 
@@ -469,7 +502,8 @@ async def transcribe(
 
         # Step 3 — Diarize. Channel-aware path bypasses PyAnnote when the
         # source is split-channel telephony (agent on L, customer on R).
-        if diarization_strategy == "channel" and stereo_layout:
+        if diarization_strategy == "channel":
+            assert stereo_layout is not None  # set in lockstep above
             result["segments"] = assign_speakers_by_channel(
                 tmp_path,
                 result["segments"],
