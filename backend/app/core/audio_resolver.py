@@ -26,20 +26,49 @@ def audio_filename_from_path(audio_path: str) -> str:
 
 
 def resolve_local_audio_path(audio_path: str) -> Path | None:
+    import os as _os
+
     if not audio_path or "\0" in audio_path or "\x00" in audio_path or Path(audio_path).is_absolute():
         return None
+    # Normalize forward/backslash mix so Windows-built records still match.
+    audio_path_norm = audio_path.replace("\\", "/")
     backend_dir = Path(__file__).resolve().parents[2]
     storage_root = Path(settings.LOCAL_AUDIO_STORAGE_DIR).resolve()
     audio_root = (storage_root.parent / "audio").resolve()
-    candidates = [Path(audio_path), backend_dir / audio_path]
-    if audio_path.startswith("../storage/"):
-        candidates.append(storage_root.parent / audio_path[len("../storage/"):])
+    candidates = [Path(audio_path_norm), backend_dir / audio_path_norm]
+    if audio_path_norm.startswith("../storage/"):
+        candidates.append(storage_root.parent / audio_path_norm[len("../storage/"):])
     allowed_roots = [
         storage_root,
         audio_root,
         (backend_dir / settings.LOCAL_AUDIO_STORAGE_DIR).resolve(),
         (backend_dir / ".." / "storage" / "audio").resolve(),
     ]
+    # EXTRA_AUDIO_ROOTS: ';' or os.pathsep separated absolute paths that should
+    # also be treated as trusted audio roots (e.g. when running natively against
+    # a worktree but with audio mounted from another checkout). Each extra root
+    # is also tried as a candidate base by stripping the leading "../storage/audio/"
+    # so a relative path like "../storage/audio/nexalink/X.wav" can resolve under
+    # a different concrete storage tree.
+    extras_env = _os.getenv("EXTRA_AUDIO_ROOTS", "").strip()
+    if extras_env:
+        for raw in extras_env.replace(";", _os.pathsep).split(_os.pathsep):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                extra_root = Path(raw).resolve()
+            except (ValueError, OSError):
+                continue
+            allowed_roots.append(extra_root)
+            for prefix in ("../storage/audio/", "../storage/"):
+                if audio_path_norm.startswith(prefix):
+                    suffix = audio_path_norm[len(prefix):]
+                    # strip a leading "audio/" so "extra_root/audio/<org>/file" doesn't double up
+                    if prefix == "../storage/" and suffix.startswith("audio/"):
+                        suffix = suffix[len("audio/"):]
+                    candidates.append(extra_root / suffix)
+                    break
     for candidate in candidates:
         try:
             resolved = candidate.resolve(strict=False)

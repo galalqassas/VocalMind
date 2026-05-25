@@ -189,15 +189,24 @@ def test_cross_org_policy_patch_shared_policy_returns_403(cross_org_client):
 # ── Audio resolver path traversal ───────────────────────────
 
 @pytest.mark.asyncio
-async def test_fetch_audio_bytes_rejects_relative_traversal():
-    """Relative path traversal via ../../ must not escape storage root."""
+async def test_fetch_audio_bytes_rejects_relative_traversal(monkeypatch):
+    """Relative path traversal via ../../ must not escape storage root.
+
+    Clear Supabase config so the test runs offline-stable: with no Supabase
+    credentials the fallback returns FileNotFoundError instead of attempting a
+    network call against a configured URL.
+    """
+    monkeypatch.setattr(settings, "SUPABASE_URL", "")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_KEY", "")
     with pytest.raises(FileNotFoundError):
         await fetch_audio_bytes("../../etc/passwd")
 
 
 @pytest.mark.asyncio
-async def test_fetch_audio_bytes_rejects_absolute_path():
+async def test_fetch_audio_bytes_rejects_absolute_path(monkeypatch):
     """Absolute paths outside the storage root must be rejected."""
+    monkeypatch.setattr(settings, "SUPABASE_URL", "")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_KEY", "")
     with pytest.raises(FileNotFoundError):
         await fetch_audio_bytes("/etc/passwd")
 

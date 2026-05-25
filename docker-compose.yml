@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     cpus: 1.0
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: vocalmind
       POSTGRES_USER: vocalmind
@@ -59,7 +59,8 @@ services:
       - ASSISTANT_OLLAMA_MODEL=qwen2.5:7b
       # RAG — point at Docker service names, not localhost
       - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION_SOP_PARENTS=${QDRANT_COLLECTION_SOP_PARENTS:-sop_parents}
+      - QDRANT_COLLECTION_PARENTS=${QDRANT_COLLECTION_PARENTS:-vocalmind_parents}
+      - QDRANT_COLLECTION_SOP_PARENTS=${QDRANT_COLLECTION_SOP_PARENTS:-vocalmind_sop_parents}
       - OLLAMA_BASE_URL=http://ollama:11434
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-snowflake-arctic-embed2}
       - SOP_RETRIEVAL_TOP_K=${SOP_RETRIEVAL_TOP_K:-3}
@@ -161,6 +162,9 @@ services:
       - DOCS_DIR=/app/storage/docs
       - POLICY_DOCS_DIR=/app/storage/docs
       - KNOWLEDGE_DOCS_DIR=/app/storage/docs
+      - PARSED_POLICY_DIR=/app/storage/docs
+      - PARSED_SOP_DIR=/app/storage/docs
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
     restart: unless-stopped
 
   # ── VAD Preprocessing ──────────────────────────────────────────────────────

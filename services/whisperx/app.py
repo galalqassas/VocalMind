@@ -117,6 +117,73 @@ def detect_overlaps(segments: List[Dict], threshold: float = 0.1) -> List[Dict]:
             nxt["overlap"] = True
     return segments
 
+
+def merge_short_same_speaker_segments(
+    segments: List[Dict],
+    max_gap_s: float = 1.2,
+    min_seg_s: float = 1.5,
+    max_merged_s: float = 22.0,
+) -> List[Dict]:
+    """Merge contiguous same-speaker segments separated by short gaps.
+
+    WhisperX/PyAnnote tend to over-segment a single speaker's turn into many
+    sub-1-second fragments ("Hi.", "Perfect.", "Bye."). Each fragment then
+    gets its own emotion + diarization label, which dilutes both. This pass
+    glues adjacent segments together when:
+      - same speaker label
+      - gap between current.end and next.start <= max_gap_s
+      - merged duration stays under max_merged_s (cap)
+    Short fragments (< min_seg_s) are also merged with the PREVIOUS segment
+    even when the speaker label differs IF the previous one was much longer
+    (likely a mis-attributed micro-segment).
+    """
+    if not segments:
+        return segments
+
+    segments = sorted(segments, key=lambda x: float(x.get("start", 0.0)))
+    merged: List[Dict] = []
+
+    def _same_speaker(a: Dict, b: Dict) -> bool:
+        sa = (a.get("speaker") or "").strip().lower()
+        sb = (b.get("speaker") or "").strip().lower()
+        return bool(sa) and sa == sb
+
+    for seg in segments:
+        if not merged:
+            merged.append(dict(seg))
+            continue
+        last = merged[-1]
+        gap = float(seg.get("start", 0.0)) - float(last.get("end", 0.0))
+        cur_text = (last.get("text") or "").strip()
+        new_text = (seg.get("text") or "").strip()
+        merged_dur = float(seg.get("end", 0.0)) - float(last.get("start", 0.0))
+
+        # Case 1: same speaker and small gap → merge
+        if _same_speaker(last, seg) and gap <= max_gap_s and merged_dur <= max_merged_s:
+            last["end"] = float(seg.get("end", last["end"]))
+            joined = (cur_text + " " + new_text).strip() if new_text else cur_text
+            last["text"] = joined
+            if seg.get("overlap"):
+                last["overlap"] = True
+            continue
+
+        # Case 2: micro-fragment (< min_seg_s) sandwiched between same-speaker
+        # neighbors → absorb into the LAST segment. Avoids ".", "Yes." dangling.
+        cur_dur = float(seg.get("end", 0.0)) - float(seg.get("start", 0.0))
+        if cur_dur < min_seg_s and gap <= max_gap_s and merged_dur <= max_merged_s:
+            last_dur = float(last.get("end", 0.0)) - float(last.get("start", 0.0))
+            if last_dur >= min_seg_s:
+                last["end"] = float(seg.get("end", last["end"]))
+                joined = (cur_text + " " + new_text).strip() if new_text else cur_text
+                last["text"] = joined
+                if seg.get("overlap"):
+                    last["overlap"] = True
+                continue
+
+        merged.append(dict(seg))
+
+    return merged
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Model holder — loaded once at startup
 # ──────────────────────────────────────────────────────────────────────────────
@@ -305,6 +372,11 @@ async def transcribe(
 
         # Step 4 — Optional speaker role relabeling
         result["segments"] = Models.speaker_role_classifier.relabel_segments(result["segments"])
+
+        # Step 4b — Merge over-segmented same-speaker fragments. WhisperX VAD
+        # tends to split sentences into many sub-second pieces; downstream
+        # emotion + diarization both suffer from that. We collapse them here.
+        result["segments"] = merge_short_same_speaker_segments(result["segments"])
 
         # Step 5 — Overlap detection
         result["segments"] = detect_overlaps(result["segments"])

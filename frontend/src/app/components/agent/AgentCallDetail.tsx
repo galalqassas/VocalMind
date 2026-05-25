@@ -196,7 +196,7 @@ export function AgentCallDetail() {
             <h2 className="text-xl font-bold text-foreground">{callData.date} · {callData.time}</h2>
             <div className="text-[13px] text-muted-foreground mt-0.5">{callData.duration} · {callData.language}</div>
           </div>
-          <div className="relative" style={{ width: 80, height: 80 }}>
+          <div className="relative group" style={{ width: 80, height: 80 }}>
             <svg className="w-full h-full -rotate-90">
               <circle cx="40" cy="40" r="36" fill="none" stroke="var(--border)" strokeWidth="6" />
               <circle cx="40" cy="40" r="36" fill="none" stroke={getScoreColor(callData.overallScore)}
@@ -205,6 +205,9 @@ export function AgentCallDetail() {
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
               <span className="text-lg font-bold" style={{ color: getScoreColor(callData.overallScore) }}>{callData.overallScore}%</span>
+            </div>
+            <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-card px-2.5 py-1.5 text-[10px] text-muted-foreground shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+              30% Empathy · 40% Policy · 30% Resolution
             </div>
           </div>
         </div>

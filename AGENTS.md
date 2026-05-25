@@ -350,8 +350,16 @@ make seed                        # Seed SQL demo data
 | `EMOTION/VAD/WHISPERX_API_URL` | Microservice endpoints | Docker service names |
 | `OLLAMA_BASE_URL` | Embeddings | `http://ollama:11434` |
 | `QDRANT_URL` | Vector DB | `http://qdrant:6333` |
+| `QDRANT_COLLECTION_PARENTS` | Policy parent chunks collection | `vocalmind_parents` |
+| `QDRANT_COLLECTION_SOP_PARENTS` | SOP + KB parent chunks collection | `vocalmind_sop_parents` |
+| `EXTRA_AUDIO_ROOTS` | `;`-separated absolute paths added to the allow-list and tried as candidate bases when resolving stored `../storage/audio/…` paths (used when running backend natively from a worktree while audio lives in a sibling checkout) | unset |
+| `AUDIO_FOLDER_WATCHER_ENABLED` | Set to `false` to disable the storage-folder auto-ingest scanner (useful for native dev / eval runs) | `true` |
 
 Full templates: `.env.example` (root, 80 lines), `backend/.env.example` (49 lines). Local dev: change service URLs to `http://localhost:{port}`.
+
+### Running natively with GPU (CUDA) instead of Docker
+
+For local CUDA inference, keep only **postgres + qdrant + ollama + frontend** in Docker (the infra layer) and run the GPU-needy services + backend on the host with a conda env that has `torch + cu*`, `whisperx`, `pyannote`, `funasr`, `silero_vad`, and the backend deps. See `docs/eval/PIPELINE_FINDINGS.md` (`Reproducing` section) for the exact start commands. Throughput improves ~15× (e.g. CALL_15 takes ~2 min on a 4060 vs 30+ min in the Docker CPU image).
 
 ---
 
@@ -364,6 +372,8 @@ Full templates: `.env.example` (root, 80 lines), `backend/.env.example` (49 line
 | `docs/rag/RAG_OVERVIEW.md` | Dual collections, provenance flow, runtime components |
 | `docs/rag/INGESTION_PIPELINE.md` | 8-stage ingestion, Qdrant routing |
 | `docs/design/vocalmind-design-spec.md` | Complete Figma spec (932 lines) |
+| `docs/eval/PIPELINE_FINDINGS.md` | Pipeline-vs-GT evaluation, per-axis baseline → final scores, what was fixed and what remains |
+| `tools/README.md` | Reproducible evaluation harness (`reprocess_and_compare.py`, `evaluate_pipeline.py`, `compare_summary.py`) |
 | `infra/db/01_schema.sql` | v5.2 PostgreSQL DDL |
 
 ---

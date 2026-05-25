@@ -219,7 +219,8 @@ def fuse_emotion_signals(
     acoustic_emotion: str,
     acoustic_confidence: float | None = None,
 ) -> EmotionFusionResult:
-    text_emotion, text_confidence = infer_text_emotion_with_provider(text)
+    raw_text_emotion, text_confidence = infer_text_emotion_with_provider(text)
+    text_emotion = _normalize_text_label(raw_text_emotion)
     acoustic_label = _normalize_emotion(acoustic_emotion)
     acoustic_score = acoustic_confidence if acoustic_confidence is not None else 0.7
     acoustic_score = max(0.0, min(1.0, acoustic_score))

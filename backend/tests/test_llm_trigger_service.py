@@ -173,9 +173,14 @@ async def test_evaluate_process_adherence_merges_deterministic_and_llm_steps():
 
 @pytest.mark.asyncio
 async def test_evaluate_process_adherence_uses_sop_file_hint_for_topic():
+    """Topic detection: when keyword signal is weak, fall back to the SOP file hint.
+
+    The transcript here only mentions the topic keywords lightly, so the
+    file-hint takes precedence and we still get the refund topic.
+    """
     transcript = (
-        "customer: My bill jumped after the promo expired and I want a refund.\n"
-        "agent: I can check the billing error and apply the credit timeline."
+        "customer: I want a refund please.\n"
+        "agent: I can issue the refund right away."
     )
     chunks = [
         RetrievedChunk(
@@ -194,6 +199,38 @@ async def test_evaluate_process_adherence_uses_sop_file_hint_for_topic():
         )
 
     assert result.detected_topic == "refund_request"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_process_adherence_keyword_signal_wins_over_file_hint():
+    """Topic detection: a strong transcript keyword signal overrides the SOP file hint.
+
+    When the dense retriever returns an off-topic SOP (here: refund SOP for a
+    billing call where the customer talks heavily about double-charges), the
+    transcript keywords should still drive the topic — otherwise wrong-SOP
+    retrieval would hijack downstream missing-step detection.
+    """
+    transcript = (
+        "customer: My bill has a double charge from last month. The billing error keeps showing on my statement.\n"
+        "agent: I can pull up your invoice and check the billing error against your statement balance."
+    )
+    chunks = [
+        RetrievedChunk(
+            text="[01-refund-request-processing.pdf]\nStep 1 - Open the Call & Verify Identity",
+            metadata={"source_file": "01-refund-request-processing.pdf"},
+            source="manual",
+        )
+    ]
+
+    with patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()):
+        result = await evaluate_process_adherence(
+            transcript_text=transcript,
+            retrieved_sop_from_pinecone="",
+            org_filter="nexalink",
+            retrieved_sop_chunks=chunks,
+        )
+
+    assert result.detected_topic == "billing_issue"
 
 
 def test_build_emotion_transition_attributions_tracks_each_speaker_change():

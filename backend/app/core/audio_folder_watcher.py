@@ -81,7 +81,8 @@ def _build_audio_path_record(org_slug: str, file_path: Path) -> str:
     `seed_nexalink.seed_interactions` writes for the same files: a path relative
     to the backend working directory.
     """
-    return str(Path("..") / "storage" / "audio" / org_slug / file_path.name)
+    # Always use forward slashes so paths match across OS (Windows vs Linux container).
+    return (Path("..") / "storage" / "audio" / org_slug / file_path.name).as_posix()
 
 
 async def _scan_organization_folder(

@@ -19,6 +19,7 @@ import {
 } from "../../services/api";
 import { EvidenceAnchoredExplainabilityPanel } from "./EvidenceAnchoredExplainabilityPanel";
 import { AnalysisTabs } from "./AnalysisTabs";
+import { EmotionComparisonPanel } from "./EmotionComparisonPanel";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -230,7 +231,7 @@ function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
   const circ = 2 * Math.PI * r;
   const color = getScoreColor(score);
   return (
-    <div className="relative" style={{ width: size, height: size }}>
+    <div className="relative group" style={{ width: size, height: size }}>
       <svg className="w-full h-full -rotate-90">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth="6" />
         <circle
@@ -241,6 +242,9 @@ function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
         <span className="text-lg font-bold" style={{ color }}>{score}%</span>
+      </div>
+      <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-card px-2.5 py-1.5 text-[10px] text-muted-foreground shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+        30% Empathy · 40% Policy · 30% Resolution
       </div>
     </div>
   );
@@ -816,6 +820,13 @@ export function SessionDetail() {
           )}
         </div>
       </div>
+
+      {/* ── Emotion Comparison Panel (acoustic vs text vs fused) ─────────── */}
+      {data?.emotionComparison && data.emotionComparison.totalUtterances > 0 && (
+        <div className="bg-card rounded-xl border border-border p-5">
+          <EmotionComparisonPanel data={data.emotionComparison} />
+        </div>
+      )}
 
       {/* ── Explainability Panel (full width) ────────────────────────────── */}
       {explainability && (

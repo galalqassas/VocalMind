@@ -77,6 +77,41 @@ RESOLUTION_GRAPHS: dict[str, list[str]] = {
         "Confirm successful login",
         "Close with prevention advice",
     ],
+    "account_opening": [
+        "Greet and confirm intent to open account",
+        "Collect identity documents and KYC data",
+        "Disclose required fees and terms",
+        "Capture customer signature / consent",
+        "Confirm account number and next steps (debit card mailing, online banking)",
+    ],
+    "fraud_dispute": [
+        "Acknowledge and reassure the customer",
+        "Confirm card status and freeze if needed",
+        "Collect transaction details (date, amount, merchant)",
+        "Open the fraud / Reg E dispute ticket",
+        "Explain provisional credit timeline and follow-up SLA",
+    ],
+    "fee_adjustment": [
+        "Acknowledge the fee concern",
+        "Verify the fee against account history and policy",
+        "Check waiver authority and frequency cap",
+        "Apply waiver or open Manager Approval ticket",
+        "Confirm outcome and document the case",
+    ],
+    "aml_review": [
+        "Acknowledge customer without alerting to SAR review",
+        "Collect transaction context (purpose, source of funds)",
+        "Flag the account for AML / BSA review without disclosure",
+        "Open suspicious-activity ticket per regulation",
+        "Close call neutrally without confirming the review",
+    ],
+    "retention": [
+        "Acknowledge cancellation intent without resistance",
+        "Identify root cause for the cancellation",
+        "Offer the appropriate retention play (loyalty credit, plan change)",
+        "Confirm customer decision",
+        "Close: process cancellation OR confirm retention outcome",
+    ],
 }
 
 
@@ -269,12 +304,89 @@ _TOPIC_KEYWORDS: dict[str, dict[str, float]] = {
         "two-factor": 2.5,
         "2fa": 2.5,
         "verification code": 2.5,
+        "authenticator": 2.5,
+        "recovery code": 2.5,
         "username": 2.0,
+        "pin reset": 3.0,
+    },
+    "account_opening": {
+        "open an account": 3.0,
+        "open a new account": 3.0,
+        "opening an account": 3.0,
+        "kyc": 3.0,
+        "know your customer": 3.0,
+        "driver's license": 2.0,
+        "passport": 2.0,
+        "social security number": 2.0,
+        "proof of address": 2.5,
+        "debit card mailing": 2.5,
+        "account number generated": 2.5,
+        "checking account": 1.5,
+        "savings account": 1.5,
+    },
+    "fraud_dispute": {
+        "unauthorized charge": 3.0,
+        "unauthorized transaction": 3.0,
+        "card fraud": 3.0,
+        "stolen card": 3.0,
+        "lost card": 2.0,
+        "didn't make this": 3.0,
+        "i did not make": 3.0,
+        "fraudulent": 3.0,
+        "freeze the card": 3.0,
+        "close the card": 2.5,
+        "provisional credit": 2.5,
+        "reg e": 3.0,
+        "dispute the": 2.5,
+        "elder financial exploitation": 3.0,
+        "check fraud": 3.0,
+    },
+    "fee_adjustment": {
+        "overdraft fee": 3.0,
+        "overdraft": 2.0,
+        "waive the fee": 3.0,
+        "waive this fee": 3.0,
+        "fee waiver": 3.0,
+        "courtesy waiver": 2.5,
+        "monthly fee": 2.0,
+        "service fee": 2.0,
+        "nsf fee": 3.0,
+        "insufficient funds fee": 3.0,
+    },
+    "aml_review": {
+        "wire transfer": 2.0,
+        "structuring": 3.0,
+        "large cash": 2.5,
+        "suspicious activity": 3.0,
+        "aml": 3.0,
+        "bsa": 3.0,
+        "money laundering": 3.0,
+        "ctr": 2.0,
+        "currency transaction": 2.5,
+    },
+    "retention": {
+        "cancel my account": 3.0,
+        "cancel the account": 3.0,
+        "i want to cancel": 3.0,
+        "close my account": 3.0,
+        "switching to": 2.5,
+        "competitor": 2.0,
+        "leave you guys": 2.0,
+        "cancellation": 2.5,
+        "early termination fee": 2.5,
+        "etf": 2.5,
+        "downgrade": 1.5,
     },
 }
 
 
 def _detect_topic(transcript_text: str, retrieved_sop: str) -> str:
+    topic, _ = _score_topic(transcript_text, retrieved_sop)
+    return topic or "billing_issue"
+
+
+def _score_topic(transcript_text: str, retrieved_sop: str) -> tuple[str | None, float]:
+    """Return (best_topic, score). best_topic is None when no keyword fired."""
     source = f"{transcript_text}\n{retrieved_sop}".lower()
     scores: dict[str, float] = {}
     for topic, keyword_weights in _TOPIC_KEYWORDS.items():
@@ -284,7 +396,10 @@ def _detect_topic(transcript_text: str, retrieved_sop: str) -> str:
                 score += weight * source.count(keyword)
         scores[topic] = score
     best_topic = max(scores, key=scores.get)
-    return best_topic if scores[best_topic] > 0 else "billing_issue"
+    best_score = scores[best_topic]
+    if best_score <= 0:
+        return None, 0.0
+    return best_topic, best_score
 
 
 def _detect_topic_from_sop_chunks(chunks: list[RetrievedChunk]) -> str | None:
@@ -306,16 +421,61 @@ def _detect_topic_from_sop_chunks(chunks: list[RetrievedChunk]) -> str | None:
         if value
     ).lower()
 
-    hint_map = {
-        "refund_request": ("01-refund", "refund request", "refund-request"),
-        "billing_issue": ("02-billing", "billing issue", "billing-issue"),
-        "technical_support": ("03-technical", "technical support", "technical-support"),
-        "account_access": ("04-account", "account access", "account-access"),
-    }
-    for topic, hints in hint_map.items():
+    # Hints derived from the actual SOP source_file names ingested for nexalink + meridian.
+    # Order matters: more-specific patterns first so e.g. fraud_investigation outranks billing.
+    # Accept both '_' and '-' separators so legacy filenames (e.g. "01-refund-request-processing")
+    # and the canonical ingestion names ("SOP_01_refund_request_processing") both match.
+    hint_map = (
+        ("fraud_dispute", ("sop_03_fraud_investigation", "fraud-investigation", "card fraud", "reg e dispute", "card_fraud", "reg_e_dispute", "reg-e-dispute")),
+        ("aml_review", ("sop_05_aml_bsa_reporting", "aml-bsa-reporting", "aml", "bsa", "money laundering")),
+        ("account_opening", ("sop_01_account_opening_kyc", "account-opening-kyc", "kyc", "account opening", "account_opening")),
+        ("fee_adjustment", ("fee waiver", "fee_waiver", "fee-waiver", "overdraft", "bnk-sop-04")),
+        ("retention", ("sop_05_customer_retention_cancellation", "customer-retention-cancellation", "account_closure_retention", "account-closure-retention", "retention", "cancellation")),
+        ("account_access", ("sop_04_account_access_recovery", "account-access-recovery", "account access", "account_access", "2fa", "pin reset")),
+        ("technical_support", ("sop_03_technical_support_troubleshooting", "technical-support-troubleshooting", "technical support", "technical_support")),
+        ("refund_request", ("sop_01_refund_request_processing", "refund-request-processing", "refund request", "refund_request", "01-refund", "01_refund")),
+        ("billing_issue", ("sop_02_billing_issue_resolution", "billing-issue-resolution", "billing issue", "billing_issue", "02-billing", "02_billing")),
+    )
+    for topic, hints in hint_map:
         if any(hint in source_text for hint in hints):
             return topic
     return None
+
+
+# Topic → SOP source_file fragments to prefer. Each value is a list of substring
+# tokens; a chunk is "on-topic" if any token appears in the chunk's source_file
+# (lowercased). When at least one chunk matches the topic, off-topic chunks are
+# dropped from the SOP context fed to the LLM — this fixes the "wrong SOP cited"
+# class of failures where the dense retriever ranks the retention SOP above the
+# refund SOP because the customer used the word "credit".
+_TOPIC_TO_SOP_FILE_TOKENS: dict[str, tuple[str, ...]] = {
+    "refund_request": ("refund_request_processing",),
+    "billing_issue": ("billing_issue_resolution",),
+    "technical_support": ("technical_support_troubleshooting",),
+    "account_access": ("account_access_recovery",),
+    "retention": ("customer_retention_cancellation", "account_closure_retention"),
+    "account_opening": ("account_opening_kyc",),
+    "fraud_dispute": ("fraud_investigation", "reg_e_dispute_resolution"),
+    "fee_adjustment": ("account_closure_retention", "billing_issue_resolution"),
+    "aml_review": ("aml_bsa_reporting",),
+}
+
+
+def _filter_chunks_by_topic(
+    chunks: list[RetrievedChunk], topic: str | None
+) -> list[RetrievedChunk]:
+    """Return only chunks whose source_file matches the topic. If none match, return original list."""
+    if not chunks or not topic:
+        return chunks
+    tokens = _TOPIC_TO_SOP_FILE_TOKENS.get(topic) or ()
+    if not tokens:
+        return chunks
+    on_topic = [
+        chunk
+        for chunk in chunks
+        if any(tok in str(chunk.metadata.get("source_file") or "").lower() for tok in tokens)
+    ]
+    return on_topic or chunks
 
 
 def _extract_sop_steps(retrieved_sop: str) -> list[str]:
@@ -397,23 +557,124 @@ def _merge_missing_steps(
 
 
 def _is_resolved_heuristic(transcript_text: str) -> bool:
+    """Detect call-level resolution.
+
+    Strategy:
+      1) Hard NEGATIVE markers (escalation / no-resolution) → not resolved.
+      2) Strong POSITIVE markers (concrete outcome delivered) → resolved.
+      3) Otherwise weight positive vs negative soft signals; tie/none → not resolved.
+
+    Bare 'thank you' alone is never enough; every polite call ends with it.
+    """
     text = transcript_text.lower()
-    positive_endings = [
-        "resolved",
-        "fixed",
-        "works now",
-        "thank you",
-        "anything else",
-        "refund has been processed",
-        "credit has been applied",
-        "case reference",
-        "ticket number",
-        "follow-up",
-    ]
-    unresolved_markers = ["still not", "didn't work", "not fixed", "call back"]
-    if any(marker in text for marker in unresolved_markers):
+
+    # ── Hard negative: explicit non-resolution / escalation ─────────────
+    hard_negative = (
+        "still not working",
+        "didn't work",
+        "not fixed",
+        "we cannot",
+        "we can't process",
+        "unable to process",
+        "won't be able to",
+        "outside my authority",
+        "manager approval ticket",
+        "back-office ticket",
+        "needs more information",
+        "have to escalate",
+        "still being investigated",
+        "three-strike termination",
+        "ending this call",
+        "i have to disconnect",
+        "freeze the account",
+    )
+    if any(marker in text for marker in hard_negative):
         return False
-    return any(marker in text for marker in positive_endings)
+
+    # ── Strong positive: concrete outcome delivered on the call ─────────
+    strong_positive = (
+        "credit has been applied",
+        "credit has been approved",
+        "credit has been processed",
+        "credit of $",
+        "credit of about $",
+        "refund of $",
+        "refund has been processed",
+        "fee has been waived",
+        "fee waived",
+        "fee is waived",
+        "i've waived",
+        "i have waived",
+        "i've applied",
+        "i have applied",
+        "i applied a",
+        "applied a $",
+        "applied a credit",
+        "applied the credit",
+        "applied the refund",
+        "approved the credit",
+        "approved the refund",
+        "approved a credit",
+        "credit to your account",
+        "credit on the account",
+        "credit on your account",
+        "your account is now open",
+        "account is now active",
+        "your new account number",
+        "you should see this on your next",
+        "appear on your next",
+        "applied to your next",
+        "reflected on your next",
+        "issue has been resolved",
+        "issue is resolved",
+        "problem is resolved",
+        "is fixed",
+        "is now working",
+        "works now",
+        "back online",
+        "successfully reset",
+        "successfully verified",
+        "your plan has been upgraded",
+        "your plan has been updated",
+        "your plan is now",
+        "plan change has been applied",
+        "your account has been updated",
+        "case reference number for today",
+        "ticket has been created",
+    )
+    if any(marker in text for marker in strong_positive):
+        return True
+
+    # ── Soft signals — need a small majority to count as resolved ──────
+    soft_positive = (
+        "case reference number is",
+        "case reference number:",
+        "ticket number is",
+        "ticket reference",
+        "ticket id is",
+        "i have processed",
+        "i have applied",
+        "all set",
+        "all set with",
+        "confirmation number is",
+        "confirmation email",
+        "you'll receive an email",
+        "you should receive",
+        "anything else i can help",
+    )
+    soft_negative = (
+        "i'll have to",
+        "call back",
+        "i'll follow up",
+        "i will follow up",
+        "we'll get back",
+        "needs further review",
+        "review by our team",
+        "manager will review",
+    )
+    pos = sum(1 for m in soft_positive if m in text)
+    neg = sum(1 for m in soft_negative if m in text)
+    return pos >= 2 and pos > neg
 
 
 def _efficiency_score_heuristic(transcript_text: str, missing_steps: list[str], expected_steps: list[str]) -> int:
@@ -974,9 +1235,28 @@ def _build_policy_reference_from_chunk(
         policy_ref = chunk.metadata.get("policy_ref") or []
         if isinstance(policy_ref, str):
             policy_ref = [item.strip() for item in policy_ref.split(",") if item.strip()]
+        # Prefer the SOP/policy file name + section header for the human-readable
+        # reference label. The previous _extract_reference_label fallback used
+        # the chunk's first non-blank line, which for table-heavy SOPs returned
+        # raw markdown like '| Field | Value |' and made the citation unusable.
+        source_file = (chunk.metadata.get("source_file") or "").strip()
+        section_header = ""
+        for hkey in ("Header 1", "Header 2", "Header 3"):
+            val = chunk.metadata.get(hkey)
+            if val:
+                section_header = str(val).strip()
+                break
+        if source_file and section_header:
+            reference_label = f"{source_file} — {section_header}"
+        elif source_file:
+            reference_label = source_file
+        else:
+            reference_label = _clean_display_text(
+                _extract_reference_label(chunk.text, chunk.reference or fallback_reference)
+            )
         return PolicyReference(
             source=source_kind,  # type: ignore[arg-type]
-            reference=_clean_display_text(_extract_reference_label(chunk.text, chunk.reference or fallback_reference)),
+            reference=reference_label,
             clause=clause or _truncate_text(_clean_display_text(chunk.text), 220),
             doc_type=chunk_doc_type if chunk_doc_type in {"policy", "sop", "kb"} else source_kind,  # type: ignore[arg-type]
             doc_id=chunk.metadata.get("doc_id"),
@@ -1624,6 +1904,7 @@ async def evaluate_process_adherence(
     retrieved_sop_from_pinecone: str,
     org_filter: str | None = None,
     retrieved_sop_chunks: list[RetrievedChunk] | None = None,
+    full_transcript_text: str | None = None,
 ) -> ProcessAdherenceReport:
     if retrieved_sop_chunks is not None:
         retrieved_sop = "\n\n---\n\n".join(chunk.text for chunk in retrieved_sop_chunks if chunk.text)
@@ -1640,7 +1921,40 @@ async def evaluate_process_adherence(
             retrieved_sop = ""
             retrieved_sop_chunks = []
 
-    topic_hint = _detect_topic_from_sop_chunks(retrieved_sop_chunks or []) or _detect_topic(transcript_text, retrieved_sop)
+    # Two-pass topic detection: keyword score on the TRANSCRIPT is primary
+    # (the transcript carries the strongest topic signal). The retrieved-chunk
+    # source_file hint is only used when keyword scoring is genuinely weak
+    # (no keyword fired) — using the file hint as primary would let a single
+    # off-topic retrieved chunk hijack the whole pipeline (e.g. a retention
+    # SOP getting recalled by 'credit' wording in a pure refund call).
+    # Topic detection uses the FULL transcript (when available), not just the
+    # rolling-window slice — keyword density on a short window is too noisy.
+    topic_source_text = full_transcript_text or transcript_text
+    keyword_topic, keyword_score = _score_topic(topic_source_text, "")
+    file_topic = _detect_topic_from_sop_chunks(retrieved_sop_chunks or [])
+    logger.debug(
+        "topic_detect: keyword=%r score=%.1f file=%r tx_len=%d sop_chunks=%d",
+        keyword_topic, keyword_score, file_topic, len(topic_source_text or ""), len(retrieved_sop_chunks or []),
+    )
+    if keyword_topic and keyword_score >= 3.0:
+        # Strong keyword signal — trust the transcript regardless of file hint.
+        topic_hint = keyword_topic
+    elif keyword_topic and file_topic and keyword_topic == file_topic:
+        # Both agree → confident
+        topic_hint = keyword_topic
+    elif file_topic:
+        topic_hint = file_topic
+    else:
+        topic_hint = keyword_topic or "billing_issue"
+
+    # Topic-aware SOP filter: drop chunks whose source_file doesn't match the topic,
+    # so the LLM doesn't see retention SOP text when the call is about a refund.
+    if retrieved_sop_chunks:
+        filtered_chunks = _filter_chunks_by_topic(retrieved_sop_chunks, topic_hint)
+        if filtered_chunks is not retrieved_sop_chunks and len(filtered_chunks) != len(retrieved_sop_chunks):
+            retrieved_sop_chunks = filtered_chunks
+            retrieved_sop = "\n\n---\n\n".join(chunk.text for chunk in filtered_chunks if chunk.text)
+
     extracted_sop_steps = _extract_sop_steps(retrieved_sop)
     if extracted_sop_steps:
         expected_steps = extracted_sop_steps[:8]
@@ -1653,7 +1967,7 @@ async def evaluate_process_adherence(
         missing_steps=deterministic_missing,
         expected_steps=expected_steps,
     )
-    deterministic_resolved = _is_resolved_heuristic(transcript_text)
+    deterministic_resolved = _is_resolved_heuristic(full_transcript_text or transcript_text)
 
     chain = build_process_adherence_chain()
     try:
@@ -1681,6 +1995,21 @@ async def evaluate_process_adherence(
         if sop_quote:
             citations.append(EvidenceCitation(source="sop", speaker="system", quote=sop_quote[0]))
 
+        # Inject the reference-SOP citation here too so the degraded path
+        # still surfaces WHICH SOP grounded the verdict.
+        if retrieved_sop_chunks:
+            primary = retrieved_sop_chunks[0]
+            source_file = (primary.metadata.get("source_file") or "").strip()
+            header_parts = " > ".join(
+                str(primary.metadata.get(k)).strip()
+                for k in ("Header 1", "Header 2", "Header 3")
+                if primary.metadata.get(k)
+            )
+            label = f"{source_file} — {header_parts}" if source_file and header_parts else (source_file or "Retrieved SOP")
+            citations.append(
+                EvidenceCitation(source="sop", speaker="system", quote=f"[Reference SOP] {label}")
+            )
+
         return ProcessAdherenceReport(
             detected_topic=topic_hint,
             is_resolved=deterministic_resolved,
@@ -1697,7 +2026,22 @@ async def evaluate_process_adherence(
             confidence_score=None,
         )
 
-    if not result.detected_topic.strip():
+    # If the deterministic topic detector found a STRONG signal (high keyword score
+    # or both heuristics agree), trust it over the LLM. The LLM has been observed
+    # to default to refund_request/billing_issue for any call that mentions money
+    # — overriding it with a strong-signal hint is safer than letting the LLM
+    # mislabel KYC / fraud / 2FA / cancellation calls.
+    llm_topic = (result.detected_topic or "").strip()
+    if topic_hint and (
+        not llm_topic
+        or (keyword_score >= 6.0)
+        or (keyword_topic and file_topic and keyword_topic == file_topic and keyword_score >= 3.0)
+    ):
+        if llm_topic != topic_hint:
+            logger.info(
+                "process_adherence topic override: llm=%r -> hint=%r (kw_score=%.1f, kw_topic=%r, file_topic=%r)",
+                llm_topic, topic_hint, keyword_score, keyword_topic, file_topic,
+            )
         result.detected_topic = topic_hint
 
     result.missing_sop_steps = _merge_missing_steps(
@@ -1721,6 +2065,37 @@ async def evaluate_process_adherence(
             result.citations.append(
                 EvidenceCitation(source="sop", speaker="system", quote=sop_quote[0])
             )
+
+    # Ensure the response always names WHICH SOP grounded the verdict, even
+    # when the LLM returned no missing-step (i.e. fully adherent calls). We
+    # prepend a synthetic SOP citation whose quote is the SOP file name +
+    # section header — that way the UI explainability panel and downstream
+    # eval can both see the retrieval source without having to read the prompt.
+    if retrieved_sop_chunks:
+        has_sop_citation_with_source = any(
+            (c.source or "").lower() == "sop" and any(
+                tok in (c.quote or "").lower()
+                for tok in ("sop_", "policy_", ".pdf")
+            )
+            for c in (result.citations or [])
+        )
+        if not has_sop_citation_with_source:
+            primary = retrieved_sop_chunks[0]
+            source_file = (primary.metadata.get("source_file") or "").strip()
+            header_parts = " > ".join(
+                str(primary.metadata.get(k)).strip()
+                for k in ("Header 1", "Header 2", "Header 3")
+                if primary.metadata.get(k)
+            )
+            label = f"{source_file} — {header_parts}" if source_file and header_parts else (source_file or "Retrieved SOP")
+            result.citations.append(
+                EvidenceCitation(
+                    source="sop",
+                    speaker="system",
+                    quote=f"[Reference SOP] {label}",
+                )
+            )
+
     if result.confidence_score is None and retrieved_sop_chunks:
         scored_chunks = [chunk.score for chunk in retrieved_sop_chunks if chunk.score is not None]
         if scored_chunks:
@@ -1895,6 +2270,7 @@ async def _evaluate_policy_and_sop_trigger_checks(
     org_filter: str | None,
     agent_statement: str,
     policy_context: str,
+    full_transcript_text: str | None = None,
 ) -> tuple[ProcessAdherenceReport, NLIEvaluation]:
     """
     Run trigger checks that consume retrieved SOP/policy context.
@@ -1903,12 +2279,17 @@ async def _evaluate_policy_and_sop_trigger_checks(
     helper only performs judgment:
       - SOP process adherence for a transcript window.
       - NLI policy alignment for one agent statement.
+
+    `full_transcript_text` is forwarded so the topic & resolution heuristics
+    can see the whole call, not just the rolling-window slice (which is too
+    sparse for reliable keyword detection).
     """
     process_task = evaluate_process_adherence(
         transcript_text=process_context_text,
         retrieved_sop_from_pinecone=sop_context,
         org_filter=org_filter,
         retrieved_sop_chunks=sop_chunks,
+        full_transcript_text=full_transcript_text,
     )
     nli_task = run_single_claim_nli_policy_check(
         agent_statement=agent_statement,
@@ -2112,6 +2493,67 @@ async def evaluate_interaction_triggers(
         sop_context = ""
         sop_chunks = []
 
+    # Topic-aware SOP re-retrieval: if the dense retriever picked off-topic
+    # chunks (e.g. retention SOP for a refund call because "credit" appears
+    # in both), do a targeted lookup against the expected SOP source_file
+    # and replace the chunk list. This keeps the LLM grounded on the correct
+    # SOP rather than letting the wrong chunk's missing-steps pollute output.
+    try:
+        full_topic, full_topic_score = _score_topic(transcript_text, "")
+        wanted_tokens = _TOPIC_TO_SOP_FILE_TOKENS.get(full_topic or "", ())
+        on_topic_already = any(
+            any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
+            for c in sop_chunks
+        )
+        logger.debug(
+            "sop_topic_check: topic=%r score=%.1f wanted=%r on_topic=%s n_chunks=%d srcs=%r",
+            full_topic, full_topic_score, wanted_tokens, on_topic_already,
+            len(sop_chunks), [c.metadata.get("source_file") for c in sop_chunks],
+        )
+        if full_topic and full_topic_score >= 3.0 and wanted_tokens and not on_topic_already:
+            from app.core.config import settings as _settings
+            from app.llm_trigger.retrieval import SOPRetriever
+            retriever = SOPRetriever()
+            try:
+                extra = retriever.retrieve_chunks(
+                    query_text=transcript_text,
+                    collection_name=_settings.QDRANT_COLLECTION_SOP_PARENTS,
+                    top_k=max(5, _settings.SOP_RETRIEVAL_TOP_K * 2),
+                    org_filter=org_filter,
+                    doc_type="sop",
+                )
+                on_topic_extra = [
+                    c for c in extra
+                    if any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
+                ]
+                if on_topic_extra:
+                    logger.info(
+                        "sop_retrieval topic override: topic=%r tokens=%r added %d chunk(s)",
+                        full_topic, wanted_tokens, len(on_topic_extra),
+                    )
+                    sop_chunks = on_topic_extra + [c for c in sop_chunks if c not in on_topic_extra]
+                    sop_context = "\n\n---\n\n".join(c.text for c in sop_chunks if c.text)
+            except Exception as inner_exc:
+                logger.warning("sop topic re-retrieval inner failure (%s)", inner_exc)
+
+        # ALWAYS hard-filter to on-topic chunks when we have a strong signal,
+        # even if the dense retriever already included one. This keeps the
+        # trigger attribution builder + LLM prompt strictly on-topic.
+        if full_topic and full_topic_score >= 3.0 and wanted_tokens:
+            on_topic_only = [
+                c for c in sop_chunks
+                if any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
+            ]
+            if on_topic_only and len(on_topic_only) != len(sop_chunks):
+                logger.info(
+                    "sop topic hard-filter: %d -> %d chunks (topic=%r)",
+                    len(sop_chunks), len(on_topic_only), full_topic,
+                )
+                sop_chunks = on_topic_only
+                sop_context = "\n\n---\n\n".join(c.text for c in sop_chunks if c.text)
+    except Exception as exc:
+        logger.warning("sop topic re-retrieval skipped (%s)", exc)
+
     policy_context = await _resolve_active_policy_context(
         session=session,
         organization_id=interaction.organization_id,
@@ -2133,6 +2575,7 @@ async def evaluate_interaction_triggers(
         org_filter=org_filter,
         agent_statement=agent_statement,
         policy_context=policy_context.text,
+        full_transcript_text=transcript_text,
     )
     transcript_policy_task = _evaluate_transcript_policy_pipeline(
         transcript_text=process_context_text,

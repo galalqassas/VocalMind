@@ -231,12 +231,24 @@ export function AnalysisTabs({
             <EvidenceQuotes quotes={emotionTrigger.emotionShift.evidenceQuotes} />
             <CitationsList citations={emotionTrigger.emotionShift.citations} onJumpTo={onJumpTo} utterances={utterances} />
             {emotionTrigger.derived && (
-              <div className="rounded-lg bg-muted/20 border border-border/40 p-2.5 space-y-1.5">
+              <div className="rounded-lg bg-muted/20 border border-border/40 p-2.5 space-y-2">
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Derived Signals</p>
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div><span className="text-muted-foreground">Acoustic:</span><span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.acousticEmotion}</span></div>
-                  <div><span className="text-muted-foreground">Fused:</span><span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.fusedEmotion}</span></div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                  <div><span className="text-muted-foreground">Acoustic:</span><span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.acousticEmotion || "—"}</span></div>
+                  <div><span className="text-muted-foreground">Fused:</span><span className="ml-1 font-semibold text-foreground capitalize">{emotionTrigger.derived.fusedEmotion || "—"}</span></div>
                 </div>
+                {emotionTrigger.derived.customerText && (
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Latest Customer Turn</span>
+                    <p className="text-[11px] italic text-foreground/80 leading-snug">&ldquo;{emotionTrigger.derived.customerText}&rdquo;</p>
+                  </div>
+                )}
+                {emotionTrigger.derived.agentStatement && (
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Agent Response</span>
+                    <p className="text-[11px] italic text-foreground/80 leading-snug">&ldquo;{emotionTrigger.derived.agentStatement}&rdquo;</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
