@@ -5,6 +5,8 @@ Test strategy:
 1. Schema validation tests (422 checks) — no DB required
 2. Unit tests for IntentResolver — mock Gemini directly, no HTTP or DB needed
 """
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
@@ -53,6 +55,14 @@ def test_assistant_query_missing_query_text_returns_422(client):
     assert response.status_code == 422
 
 
+def test_assistant_schema_uses_speaker_role_not_speaker():
+    from app.api.routes.assistant import _SCHEMA
+
+    assert "speaker_role" in _SCHEMA
+    assert "speaker('agent" not in _SCHEMA
+    assert "u.speaker =" not in _SCHEMA
+
+
 def test_assistant_query_invalid_mode_returns_422(client):
     """Unknown mode enum value should return 422."""
     response = _post_query(client, "Hello", mode="unknown_mode")
@@ -64,6 +74,35 @@ def test_parse_sql_extracts_from_markdown_fence():
 
     raw = "Here you go:\n```sql\nSELECT 1 AS one;\n```\n"
     assert _parse_sql_from_model_output(raw) == "SELECT 1 AS one"
+
+
+def test_assistant_ollama_cloud_text_to_sql_stage_prefers_stage_model(monkeypatch):
+    from app.api.routes.assistant import _ollama_cloud_chat_complete
+
+    seen: dict[str, str] = {}
+
+    class _FakeCompletions:
+        async def create(self, **kwargs):
+            seen["model"] = kwargs.get("model", "")
+            msg = type("Msg", (), {"content": "SELECT 1"})()
+            choice = type("Choice", (), {"message": msg})()
+            return type("Resp", (), {"choices": [choice]})()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.chat = _FakeChat()
+
+    monkeypatch.setattr("app.api.routes.assistant.settings.OLLAMA_CLOUD_API_KEY", "k")
+    monkeypatch.setattr("app.api.routes.assistant.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-default")
+    monkeypatch.setattr("app.api.routes.assistant.get_model_for_stage", lambda stage: "qwen3.5:cloud")
+    monkeypatch.setattr("app.api.routes.assistant.AsyncOpenAI", _FakeClient)
+
+    result = asyncio.run(_ollama_cloud_chat_complete(prompt="x", temperature=0.0, stage="text_to_sql"))
+    assert result == "SELECT 1"
+    assert seen["model"] == "qwen3.5:cloud"
 
 
 def test_parse_sql_accepts_with_cte():
@@ -78,6 +117,24 @@ def test_parse_sql_strips_thinking_tags():
 
     raw = "<thinking>plan</thinking>\nSELECT 2 AS two"
     assert _parse_sql_from_model_output(raw) == "SELECT 2 AS two"
+
+
+def test_validate_sql_rejects_select_star_exfiltration():
+    from app.api.routes.assistant import _validate_sql_structure
+
+    with pytest.raises(ValueError, match="Wildcard projection"):
+        _validate_sql_structure(
+            "SELECT * FROM interactions WHERE organization_id = 'a0000000-0000-0000-0000-000000000001' LIMIT 50"
+        )
+
+
+def test_validate_sql_rejects_multi_statement_injection():
+    from app.api.routes.assistant import _validate_sql_structure
+
+    with pytest.raises(ValueError, match="exactly one statement"):
+        _validate_sql_structure(
+            "SELECT id FROM interactions WHERE organization_id = 'a0000000-0000-0000-0000-000000000001' LIMIT 10; DROP TABLE users"
+        )
 
 
 def test_ordinal_followup_offset_parses_second():
@@ -141,10 +198,10 @@ async def test_resolve_sql_strips_markdown_fences():
         resolver,
         "_generate_content_with_fallback",
         new_callable=AsyncMock,
-        return_value="```sql\nSELECT 1\n```",
+        return_value="```sql\nSELECT id FROM users WHERE organization_id = '00000000-0000-0000-0000-000000000001' LIMIT 1\n```",
     ):
         result = await resolver.resolve_sql("Simple query", UUID("00000000-0000-0000-0000-000000000001"))
-        assert result == "SELECT 1"
+        assert result == "SELECT id FROM users WHERE organization_id = '00000000-0000-0000-0000-000000000001' LIMIT 1"
 
 
 @pytest.mark.asyncio
@@ -246,3 +303,58 @@ async def test_synthesize_answer_fallback_on_empty_rows():
         result = await resolver.synthesize_answer("Show me data", "SELECT ...", [])
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+@pytest.mark.asyncio
+async def test_groq_chat_complete_retries_transient_failure(monkeypatch):
+    from app.api.routes.assistant import _groq_chat_complete
+
+    class _FakeCompletions:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise Exception("Connection reset by peer")
+            msg = type("Msg", (), {"content": "ok"})()
+            choice = type("Choice", (), {"message": msg})()
+            return type("Resp", (), {"choices": [choice]})()
+
+    fake_completions = _FakeCompletions()
+
+    class _FakeChat:
+        completions = fake_completions
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.chat = _FakeChat()
+
+    async def _skip_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("app.api.routes.assistant.settings.GROQ_API_KEY", "k")
+    monkeypatch.setattr("app.api.routes.assistant.settings.LLM_MODEL", "test-model")
+    monkeypatch.setattr("app.api.routes.assistant.AsyncOpenAI", _FakeClient)
+    monkeypatch.setattr("app.api.routes.assistant.asyncio.sleep", _skip_sleep)
+
+    result = await _groq_chat_complete("prompt", 0.0)
+    assert result == "ok"
+    assert fake_completions.calls == 2
+
+
+def test_process_assistant_query_sets_degraded_on_total_provider_failure(client, monkeypatch):
+    from app.api.routes.assistant import IntentResolver
+
+    async def _always_none(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(IntentResolver, "_generate_content_with_fallback", _always_none)
+    response = client.post(
+        "/api/v1/assistant/query",
+        json={"query_text": "show me top agents", "mode": "chat"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert body["degraded"] is True

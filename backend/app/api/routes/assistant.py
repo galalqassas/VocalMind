@@ -1,28 +1,121 @@
 import json
+import asyncio
 import time
 import logging
 import random
 import re
 from decimal import Decimal
 from typing import Optional
+from collections.abc import Iterable
 
 import httpx
+import sqlparse
 from openai import AsyncOpenAI
 from fastapi import APIRouter, HTTPException
 from sqlmodel import text
+from sqlalchemy.ext.asyncio import create_async_engine
 from uuid import UUID
 
 from app.core.config import settings
+from app.core.llm_circuit_breaker import CircuitOpenError, get_breaker, is_transient_llm_error
+from app.llm_trigger.chains import get_model_for_stage
 from google import genai
 from google.genai import types
 
 from app.core.database import engine
 from app.api.deps import CurrentUser
 from app.models.enums import QueryMode, UserRole
-from app.schemas.assistant import AssistantQueryRequest
+from app.schemas.assistant import AssistantQueryRequest, AssistantQueryResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+assistant_sql_engine = create_async_engine(
+    settings.ASSISTANT_DATABASE_URL,
+    future=True,
+    pool_pre_ping=True,
+    connect_args={
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0,
+    },
+)
+
+async def _with_retry_async(
+    call,
+    *,
+    max_retries: int,
+    base_delay: float,
+    retry_label: str,
+) -> Optional[str]:
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            return await call()
+        except Exception as exc:
+            last_exc = exc
+            if not is_transient_llm_error(exc) or attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 0.3)
+            logger.warning(
+                "%s attempt %d/%d failed (transient), retrying in %.1fs: %s",
+                retry_label,
+                attempt + 1,
+                max_retries,
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+
+_SQL_LIMIT_CAP = 200
+_ASSISTANT_TABLE_COLUMNS: dict[str, set[str]] = {
+    "users": {"id", "organization_id", "name", "email", "role", "agent_type", "is_active"},
+    "organizations": {"id", "name"},
+    "interactions": {
+        "id",
+        "organization_id",
+        "agent_id",
+        "duration_seconds",
+        "interaction_date",
+        "processing_status",
+        "language_detected",
+        "has_overlap",
+    },
+    "interaction_scores": {
+        "id",
+        "interaction_id",
+        "overall_score",
+        "empathy_score",
+        "policy_score",
+        "resolution_score",
+        "was_resolved",
+        "total_silence_seconds",
+        "avg_response_time_seconds",
+    },
+    "policy_compliance": {
+        "id",
+        "interaction_id",
+        "policy_id",
+        "is_compliant",
+        "compliance_score",
+        "llm_reasoning",
+    },
+    "company_policies": {"id", "organization_id", "policy_category", "policy_title", "policy_text", "is_active"},
+    "utterances": {"id", "interaction_id", "speaker_role", "emotion", "start_time_seconds", "end_time_seconds"},
+}
+_ASSISTANT_ALLOWED_TABLES = set(_ASSISTANT_TABLE_COLUMNS)
+_ASSISTANT_ALLOWED_COLUMNS_UNQUALIFIED = {
+    col for cols in _ASSISTANT_TABLE_COLUMNS.values() for col in cols
+}
+_SQL_KEYWORDS = {
+    "and", "or", "not", "as", "on", "in", "is", "null", "true", "false", "case", "when", "then", "else", "end",
+    "distinct", "order", "by", "group", "having", "desc", "asc", "where", "from", "join", "left", "right", "inner",
+    "outer", "cross", "full", "union", "all", "limit", "offset", "with", "select", "like", "ilike", "between", "exists",
+    "count", "sum", "avg", "min", "max", "round", "date_trunc", "now", "current_date", "current_timestamp", "interval",
+    "cast", "coalesce", "json_build_object", "jsonb_build_object", "row_number", "over", "partition",
+}
 
 
 def _assistant_model_names() -> list[str]:
@@ -99,13 +192,150 @@ def _parse_sql_from_model_output(raw: Optional[str]) -> Optional[str]:
         if sql:
             return sql
 
-    m = re.search(r"\b(select[\s\S]+?)(?:;\s*|\Z)", tail, re.IGNORECASE | re.DOTALL)
-    if not m:
-        m = re.search(r"\bselect[\s\S]+", tail, re.IGNORECASE | re.DOTALL)
+    m = re.search(r"\b(select[\s\S]+)$", tail, re.IGNORECASE | re.DOTALL)
     if not m:
         return None
-    sql = m.group(1).strip().rstrip(";").strip()
+    sql = m.group(1).strip()
+    pieces = [s for s in sqlparse.split(sql) if s.strip()]
+    if len(pieces) == 1:
+        sql = pieces[0].strip().rstrip(";").strip()
     return sql or None
+
+
+def _iter_select_clauses(sql: str) -> Iterable[str]:
+    for match in re.finditer(r"\bselect\b([\s\S]*?)\bfrom\b", sql, re.IGNORECASE):
+        yield (match.group(1) or "").strip()
+
+
+def _extract_cte_names(sql: str) -> set[str]:
+    cte_names: set[str] = set()
+    for match in re.finditer(r"\bwith\s+([a-z_][a-z0-9_]*)\s+as\s*\(", sql, re.IGNORECASE):
+        cte_names.add(match.group(1).lower())
+    for match in re.finditer(r",\s*([a-z_][a-z0-9_]*)\s+as\s*\(", sql, re.IGNORECASE):
+        cte_names.add(match.group(1).lower())
+    return cte_names
+
+
+def _extract_table_aliases(sql: str) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    pattern = re.compile(
+        r"\b(?:from|join)\s+([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?",
+        re.IGNORECASE,
+    )
+    cte_names = _extract_cte_names(sql)
+    for table, alias in pattern.findall(sql):
+        table_l = table.lower()
+        if table_l in cte_names:
+            continue
+        if table_l in _ASSISTANT_ALLOWED_TABLES:
+            aliases[table_l] = table_l
+            if alias:
+                aliases[alias.lower()] = table_l
+    return aliases
+
+
+def _extract_referenced_tables(sql: str) -> set[str]:
+    cte_names = _extract_cte_names(sql)
+    refs: set[str] = set()
+    for table in re.findall(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*)", sql, flags=re.IGNORECASE):
+        t = table.lower()
+        if t not in cte_names:
+            refs.add(t)
+    return refs
+
+
+def _validate_column_reference(token: str, aliases: dict[str, str]) -> None:
+    token_l = token.lower()
+    if "." in token_l:
+        alias, col = token_l.split(".", 1)
+        table = aliases.get(alias)
+        if table is None:
+            raise ValueError(f"SQL references unknown table alias '{alias}'.")
+        if col not in _ASSISTANT_TABLE_COLUMNS[table]:
+            raise ValueError(f"Column '{col}' is not allowed on table '{table}'.")
+        return
+    if token_l in _ASSISTANT_ALLOWED_COLUMNS_UNQUALIFIED:
+        return
+    if token_l in _SQL_KEYWORDS:
+        return
+    if token_l.isdigit():
+        return
+    raise ValueError(f"Column '{token}' is not in the assistant allowlist.")
+
+
+def _validate_sql_structure(sql: str) -> None:
+    sql_clean = (sql or "").strip().rstrip(";")
+    if not sql_clean:
+        raise ValueError("Generated SQL is empty.")
+    if ";" in sql_clean:
+        raise ValueError("Assistant SQL must be exactly one statement.")
+
+    split_statements = [s.strip() for s in sqlparse.split(sql_clean) if s.strip()]
+    if len(split_statements) != 1:
+        raise ValueError("Assistant SQL must be exactly one statement.")
+
+    parsed = sqlparse.parse(sql_clean)
+    if len(parsed) != 1:
+        raise ValueError("Assistant SQL must parse as a single statement.")
+
+    statement = parsed[0]
+    stype = (statement.get_type() or "").upper()
+    lead = sql_clean.lstrip().lower()
+    if stype != "SELECT" and not lead.startswith("with "):
+        raise ValueError("Only SELECT or WITH...SELECT statements are allowed.")
+
+    tables = _extract_referenced_tables(sql_clean)
+    disallowed_tables = sorted(t for t in tables if t not in _ASSISTANT_ALLOWED_TABLES)
+    if disallowed_tables:
+        raise ValueError(f"SQL references disallowed tables: {', '.join(disallowed_tables)}.")
+
+    aliases = _extract_table_aliases(sql_clean)
+    for clause in _iter_select_clauses(sql_clean):
+        normalized = re.sub(r"\bcount\s*\(\s*\*\s*\)", "count(__all__)", clause, flags=re.IGNORECASE)
+        if re.search(r"(^|,)\s*[a-z_][a-z0-9_]*\.\*\s*(,|$)", normalized, re.IGNORECASE):
+            raise ValueError("Wildcard projection (table.*) is not allowed.")
+        if re.search(r"(^|,)\s*\*\s*(,|$)", normalized, re.IGNORECASE):
+            raise ValueError("Wildcard projection (SELECT *) is not allowed.")
+
+        for alias_ref, col_ref in re.findall(
+            r"\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b",
+            clause,
+            flags=re.IGNORECASE,
+        ):
+            _validate_column_reference(f"{alias_ref}.{col_ref}", aliases)
+
+        bare_words = re.findall(r"\b([a-z_][a-z0-9_]*)\b", clause, flags=re.IGNORECASE)
+        for word in bare_words:
+            if word.lower() in aliases:
+                continue
+            if re.search(rf"\b[a-z_][a-z0-9_]*\.{word}\b", clause, flags=re.IGNORECASE):
+                continue
+            _validate_column_reference(word, aliases)
+
+    limit_matches = list(re.finditer(r"\blimit\s+(\d+)\b", sql_clean, re.IGNORECASE))
+    if not limit_matches:
+        raise ValueError(f"SQL must include an explicit LIMIT <= {_SQL_LIMIT_CAP}.")
+    limit_value = int(limit_matches[-1].group(1))
+    if limit_value > _SQL_LIMIT_CAP:
+        raise ValueError(f"LIMIT {limit_value} exceeds maximum allowed {_SQL_LIMIT_CAP}.")
+
+
+def _is_org_scoped_sql(sql: str, org_id: UUID) -> bool:
+    """
+    Verify generated SQL explicitly scopes to the caller organization.
+
+    This is a hard guard before execution; prompt instructions alone are not
+    trusted for tenant isolation.
+    """
+    normalized = re.sub(r"\s+", " ", (sql or "").lower()).strip()
+    org_str = str(org_id).lower()
+    if not normalized:
+        return False
+    if "organization_id" not in normalized:
+        return False
+    if "where" not in normalized:
+        return False
+    return org_str in normalized
 
 
 def _ordinal_followup_offset(question: str) -> Optional[int]:
@@ -143,7 +373,7 @@ def _build_ordinal_followup_sql(previous_sql: str, offset: int) -> Optional[str]
     base = _strip_trailing_limit_offset(previous_sql)
     if not base:
         return None
-    return f"WITH prev AS ({base}) SELECT * FROM prev LIMIT 1 OFFSET {max(0, offset)}"
+    return f"WITH prev AS ({base}) SELECT id FROM prev LIMIT 1 OFFSET {max(0, offset)}"
 
 
 def _ordinal_word(offset: int) -> str:
@@ -191,13 +421,13 @@ def _deterministic_rank_answer(rows: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 _SCHEMA = """
 Tables and columns:
-- users: id(UUID), name, email, role('manager'/'agent'), organization_id(UUID)
+- users: id(UUID), organization_id(UUID), name, email, role('manager'/'agent'), agent_type('human'/'ai'), is_active(BOOL)
 - organizations: id(UUID), name
 - interactions: id(UUID), organization_id(UUID), agent_id(UUID->users.id), duration_seconds, interaction_date(TIMESTAMP), processing_status('completed'/'pending'/'failed'), language_detected, has_overlap(BOOL)
-- interaction_scores: id(UUID), interaction_id(UUID->interactions.id), overall_score(FLOAT 0-1), empathy_score(FLOAT 0-1), policy_score(FLOAT 0-1), resolution_score(FLOAT 0-1), was_resolved(BOOL)
+- interaction_scores: id(UUID), interaction_id(UUID->interactions.id), overall_score(FLOAT 0-1), empathy_score(FLOAT 0-1), policy_score(FLOAT 0-1), resolution_score(FLOAT 0-1), was_resolved(BOOL), total_silence_seconds(FLOAT), avg_response_time_seconds(FLOAT)
 - policy_compliance: id(UUID), interaction_id(UUID), policy_id(UUID->company_policies.id), is_compliant(BOOL), compliance_score(FLOAT 0-1), llm_reasoning(TEXT)
-- company_policies: id(UUID), policy_category, policy_title, policy_text, is_active(BOOL)
-- utterances: id(UUID), interaction_id(UUID), speaker('agent'/'customer'), emotion('neutral'/'happy'/'frustrated'/'angry'/'sad'/'empathetic'/'fearful'), start_time(FLOAT), end_time(FLOAT)
+- company_policies: id(UUID), organization_id(UUID), policy_category, policy_title, policy_text, is_active(BOOL)
+- utterances: id(UUID), interaction_id(UUID), speaker_role('agent'/'customer'), emotion('neutral'/'happy'/'frustrated'/'angry'/'sad'/'empathetic'/'fearful'), start_time_seconds(FLOAT), end_time_seconds(FLOAT)
 """
 
 
@@ -249,7 +479,7 @@ Q: list policy violations
 A: SELECT i.id::text AS interaction_id, cp.policy_title, ROUND(pc.compliance_score::NUMERIC * 10, 1) AS compliance_score, pc.llm_reasoning FROM policy_compliance pc JOIN company_policies cp ON pc.policy_id = cp.id JOIN interactions i ON pc.interaction_id = i.id WHERE pc.is_compliant = false AND i.organization_id = '{org}' LIMIT 50
 
 Q: most common customer emotions
-A: SELECT emotion, COUNT(*) AS count FROM utterances u JOIN interactions i ON u.interaction_id = i.id WHERE u.speaker = 'customer' AND i.organization_id = '{org}' GROUP BY emotion ORDER BY count DESC LIMIT 10
+A: SELECT emotion, COUNT(*) AS count FROM utterances u JOIN interactions i ON u.interaction_id = i.id WHERE u.speaker_role = 'customer' AND i.organization_id = '{org}' GROUP BY emotion ORDER BY count DESC LIMIT 10
 
 Question: {question}
 SQL:"""
@@ -312,18 +542,94 @@ async def _ollama_chat_complete(prompt: str, temperature: float) -> Optional[str
                     "stream": False,
                     "options": {"temperature": temperature},
                 }
+                breaker = get_breaker("ollama_local")
                 try:
-                    r = await client.post(url, json=payload)
-                    r.raise_for_status()
-                    data = r.json()
-                    msg = data.get("message") or {}
-                    content = (msg.get("content") or "").strip()
+                    async def _request_once() -> Optional[str]:
+                        r = await client.post(url, json=payload)
+                        r.raise_for_status()
+                        data = r.json()
+                        msg = data.get("message") or {}
+                        content = (msg.get("content") or "").strip()
+                        return content or None
+
+                    async def _breaker_wrapped_once() -> Optional[str]:
+                        return await breaker.call(_request_once)
+
+                    content = await _with_retry_async(
+                        _breaker_wrapped_once,
+                        max_retries=2,
+                        base_delay=0.5,
+                        retry_label=f"Ollama local ({base}/{model_name})",
+                    )
                     if content:
                         return content
+                except CircuitOpenError:
+                    logger.warning(
+                        "Ollama local circuit open; skipping provider attempt (base=%s model=%s)",
+                        base,
+                        model_name,
+                    )
+                    continue
                 except Exception as exc:
                     logger.warning("Ollama assistant request failed (base=%s model=%s): %s", base, model_name, exc)
                     continue
+    logger.error(
+        "Assistant provider exhaustion: all Ollama local attempts failed (bases=%s models=%s)",
+        uniq_bases,
+        uniq_models,
+    )
     return None
+
+
+async def _ollama_cloud_chat_complete(
+    prompt: str,
+    temperature: float,
+    *,
+    stage: str | None = None,
+) -> Optional[str]:
+    """Chat completion via Ollama Cloud OpenAI-compatible API."""
+    key = (settings.OLLAMA_CLOUD_API_KEY or "").strip()
+    if not key:
+        return None
+    if stage:
+        model = (get_model_for_stage(stage) or "").strip()
+    else:
+        model = (settings.OLLAMA_CLOUD_FAST_MODEL or "").strip()
+    if not model:
+        return None
+    breaker = get_breaker("ollama_cloud")
+    try:
+        client = AsyncOpenAI(
+            api_key=key,
+            base_url=settings.OLLAMA_CLOUD_BASE_URL,
+            timeout=settings.ASSISTANT_OLLAMA_TIMEOUT_SECONDS,
+        )
+
+        async def _request_once() -> Optional[str]:
+            resp = await client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+            return content or None
+
+        async def _breaker_wrapped_once() -> Optional[str]:
+            return await breaker.call(_request_once)
+
+        return await _with_retry_async(
+            _breaker_wrapped_once,
+            max_retries=2,
+            base_delay=0.5,
+            retry_label=f"Ollama Cloud ({model})",
+        )
+    except CircuitOpenError:
+        logger.warning("Ollama Cloud circuit open; skipping provider attempt (%s)", model)
+        return None
+    except Exception as exc:
+        logger.warning("Ollama Cloud assistant request failed (%s): %s", model, exc)
+        logger.error("Assistant provider exhaustion: Ollama Cloud request failed with no fallback result (%s)", model)
+        return None
 
 
 async def _groq_chat_complete(prompt: str, temperature: float) -> Optional[str]:
@@ -332,21 +638,38 @@ async def _groq_chat_complete(prompt: str, temperature: float) -> Optional[str]:
     if not key:
         return None
     model = (settings.LLM_MODEL or "llama-3.3-70b-versatile").strip()
+    breaker = get_breaker("groq")
     try:
         client = AsyncOpenAI(
             api_key=key,
             base_url="https://api.groq.com/openai/v1",
             timeout=settings.ASSISTANT_OLLAMA_TIMEOUT_SECONDS,
         )
-        resp = await client.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
+
+        async def _request_once() -> Optional[str]:
+            resp = await client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+            return content or None
+
+        async def _breaker_wrapped_once() -> Optional[str]:
+            return await breaker.call(_request_once)
+
+        return await _with_retry_async(
+            _breaker_wrapped_once,
+            max_retries=2,
+            base_delay=0.5,
+            retry_label=f"Groq ({model})",
         )
-        content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
-        return content or None
+    except CircuitOpenError:
+        logger.warning("Groq circuit open; skipping provider attempt (%s)", model)
+        return None
     except Exception as exc:
         logger.warning("Groq assistant request failed (%s): %s", model, exc)
+        logger.error("Assistant provider exhaustion: Groq request failed with no fallback result (%s)", model)
         return None
 
 
@@ -399,9 +722,16 @@ class IntentResolver:
             if raise_on_rate_limit:
                 raise last_error
             logger.warning("Gemini rate-limited or exhausted; continuing without Gemini text")
+            logger.error("Assistant provider exhaustion: Gemini attempts exhausted with no response")
         return None
 
-    async def _generate_content_with_fallback(self, prompt: str, temperature: float) -> Optional[str]:
+    async def _generate_content_with_fallback(
+        self,
+        prompt: str,
+        temperature: float,
+        *,
+        stage: str | None = None,
+    ) -> Optional[str]:
         """Gemini, Ollama, or both (auto), depending on ASSISTANT_LLM_PROVIDER."""
         self.last_llm_backend = ""
         provider = (settings.ASSISTANT_LLM_PROVIDER or "auto").strip().lower()
@@ -418,13 +748,19 @@ class IntentResolver:
                 self.last_llm_backend = "Groq"
             return t
 
+        if provider == "ollama_cloud":
+            t = await _ollama_cloud_chat_complete(prompt, temperature, stage=stage)
+            if t:
+                self.last_llm_backend = "Ollama Cloud"
+            return t
+
         if provider == "gemini":
             t = await self._gemini_generate(prompt, temperature, raise_on_rate_limit=True)
             if t:
                 self.last_llm_backend = "Gemini"
             return t
 
-        # auto: prefer Gemini -> Groq -> Ollama
+        # auto: prefer Gemini -> Groq -> Ollama Cloud -> local Ollama
         if self._keys:
             t = await self._gemini_generate(prompt, temperature, raise_on_rate_limit=False)
             if t:
@@ -433,6 +769,10 @@ class IntentResolver:
         t = await _groq_chat_complete(prompt, temperature)
         if t:
             self.last_llm_backend = "Groq"
+            return t
+        t = await _ollama_cloud_chat_complete(prompt, temperature, stage=stage)
+        if t:
+            self.last_llm_backend = "Ollama Cloud"
             return t
         t = await _ollama_chat_complete(prompt, temperature)
         if t:
@@ -449,7 +789,11 @@ class IntentResolver:
     ) -> Optional[str]:
         prompt = _build_sql_prompt(org_id, question, conversation_block)
         try:
-            response_text = await self._generate_content_with_fallback(prompt, 0.0)
+            response_text = await self._generate_content_with_fallback(
+                prompt,
+                0.0,
+                stage="text_to_sql",
+            )
             sql = _parse_sql_from_model_output(response_text)
 
             if (not sql or "UNKNOWN" in (sql or "").upper()) and conversation_block.strip() and not _retried_without_context:
@@ -461,26 +805,21 @@ class IntentResolver:
             if not sql or "UNKNOWN" in (sql or "").upper():
                 if response_text:
                     repair_prompt = _build_sql_repair_prompt(org_id, question, response_text)
-                    repaired = await self._generate_content_with_fallback(repair_prompt, 0.0)
+                    repaired = await self._generate_content_with_fallback(
+                        repair_prompt,
+                        0.0,
+                        stage="text_to_sql",
+                    )
                     repaired_sql = _parse_sql_from_model_output(repaired)
                     if repaired_sql and "UNKNOWN" not in repaired_sql.upper():
                         sql = repaired_sql
 
             if not sql or "UNKNOWN" in (sql or "").upper():
                 if response_text:
-                    logger.warning(
+                    logger.debug(
                         "Assistant SQL parse produced nothing; preview=%r",
-                        (response_text[:400] + "…") if len(response_text) > 400 else response_text,
+                        (response_text[:100] + "…") if len(response_text) > 100 else response_text,
                     )
-                return None
-            lead = sql.lstrip().lower()
-            if not (lead.startswith("select") or lead.startswith("with")):
-                return None
-
-            safe = sql.lower()
-            bad = ("drop ", "delete ", "update ", "insert ", "truncate ", "alter ", "create ")
-            if any(k in safe for k in bad):
-                logger.error(f"Rejected unsafe SQL: {sql[:200]}")
                 return None
 
             return sql
@@ -656,7 +995,7 @@ async def get_assistant_history(current_user: CurrentUser):
 async def process_assistant_query(
     request: AssistantQueryRequest,
     current_user: CurrentUser,
-):
+) -> AssistantQueryResponse:
     if current_user.role != UserRole.manager:
         raise HTTPException(status_code=403, detail="Assistant is only available to managers")
 
@@ -698,6 +1037,7 @@ async def process_assistant_query(
                 "content": _HELP_RESPONSE,
                 "mode": mode.value,
                 "success": True,
+                "degraded": False,
                 "executionTime": exec_label,
                 "execution_time": exec_label,
             }
@@ -748,6 +1088,7 @@ async def process_assistant_query(
                 "content": msg,
                 "mode": mode.value,
                 "success": False,
+                "degraded": True,
                 "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
                 "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
             }
@@ -776,18 +1117,86 @@ async def process_assistant_query(
                 "content": msg,
                 "mode": mode.value,
                 "success": False,
+                "degraded": True,
+                "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
+                "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
+            }
+
+        if not _is_org_scoped_sql(sql, org_id):
+            err_msg = (
+                "I can only run organization-scoped analytics queries. "
+                "Please rephrase your request."
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO assistant_queries (user_id, organization_id, query_mode, query_text, generated_sql, response_text, execution_time_ms) VALUES (:u, :o, :m, :q, :s, :r, :e)"
+                ),
+                {
+                    "u": str(manager_id),
+                    "o": str(org_id),
+                    "m": mode.value,
+                    "q": query_text,
+                    "s": sql,
+                    "r": err_msg,
+                    "e": int((time.time() - start_time) * 1000),
+                },
+            )
+            await conn.commit()
+            return {
+                "type": "ai",
+                "content": err_msg,
+                "mode": mode.value,
+                "sql": sql,
+                "success": False,
+                "degraded": True,
+                "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
+                "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
+            }
+
+        try:
+            _validate_sql_structure(sql)
+        except ValueError as exc:
+            err_msg = (
+                "I can only run safe analytics queries. "
+                f"{exc}"
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO assistant_queries (user_id, organization_id, query_mode, query_text, generated_sql, response_text, execution_time_ms) VALUES (:u, :o, :m, :q, :s, :r, :e)"
+                ),
+                {
+                    "u": str(manager_id),
+                    "o": str(org_id),
+                    "m": mode.value,
+                    "q": query_text,
+                    "s": sql,
+                    "r": err_msg,
+                    "e": int((time.time() - start_time) * 1000),
+                },
+            )
+            await conn.commit()
+            return {
+                "type": "ai",
+                "content": err_msg,
+                "mode": mode.value,
+                "sql": sql,
+                "success": False,
+                "degraded": True,
                 "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
                 "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
             }
 
         try:
             t0 = time.time()
-            res = await conn.execute(text(sql))
+            print("ASSISTANT_SQL_ENGINE_EXEC readonly role path")
+            async with assistant_sql_engine.connect() as assistant_conn:
+                res = await assistant_conn.execute(text(sql))
             rows = [dict(r._mapping) for r in res]
             exec_ms = int((time.time() - t0) * 1000)
         except Exception as exc:
             await conn.rollback()
-            logger.error(f"SQL exec error: {exc} | SQL: {sql[:300]}")
+            sql_preview = (sql[:100] + "…") if len(sql) > 100 else sql
+            logger.debug("SQL exec error: %s | SQL preview: %s", exc, sql_preview, exc_info=True)
             err_msg = "I understood your request but hit a database error. Try rephrasing or type 'help' for example queries."
             await conn.execute(
                 text(
@@ -810,6 +1219,7 @@ async def process_assistant_query(
                 "mode": mode.value,
                 "sql": sql,
                 "success": False,
+                "degraded": True,
                 "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
                 "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
             }
@@ -885,4 +1295,5 @@ async def process_assistant_query(
             "data": rows,
             "rowCount": len(rows),
             "success": True,
+            "degraded": False,
         }
