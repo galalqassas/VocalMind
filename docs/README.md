@@ -1,64 +1,54 @@
-# VocalMind Documentation Index
+# VocalMind Documentation Portal
 
-This folder contains the team-facing technical documentation for the main evaluation and retrieval subsystems in VocalMind.
+Welcome to the VocalMind project documentation index. This portal contains all user manuals, operations manuals, system architecture deep dives, API references, and microservices documentation.
 
-## Start Here
+---
 
-1. [Evidence-Anchored Explainability Layer](./explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)
-- Unified guide for span-level trigger attribution, claim provenance, API fields, and manager Evidence Card behavior
+## 1. Get Started (User & Setup Guides)
 
-2. [LLM Trigger Feature Guide](./llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)
-- Architecture, SOP retrieval flow, payload behavior, testing, and maintenance notes for LLM-trigger evaluation
+*   **[Deployment & Setup Guide](./operations/DEPLOYMENT.md)**: Steps to launch VocalMind in Docker, CPU/GPU options, and local dev setup.
+*   **[Manager User Guide](./user-guide/MANAGER_GUIDE.md)**: Navigating the Manager Dashboard, call detail analysis, evidence cards, and Assistant.
+*   **[Agent User Guide](./user-guide/AGENT_GUIDE.md)**: Coaching details, performance trends, and the emotion dispute workflow.
 
-3. [RAG Overview](./rag/RAG_OVERVIEW.md)
-- Retrieval architecture, dual-collection indexing, provenance flow, and runtime components
+---
 
-4. [RAG Ingestion Pipeline](./rag/INGESTION_PIPELINE.md)
-- Document ingestion, parsing, chunking, and indexing workflow for policy and SOP content
+## 2. System Architecture Deep Dives
 
-## Documentation Areas
+*   **[System Architecture Overview](./architecture/SYSTEM_OVERVIEW.md)**: High-level component interactions, network topology, and tenancy.
+*   **[Backend Gateway Architecture](./architecture/BACKEND_ARCHITECTURE.md)**: FastAPI gateway directories, lifespan contexts, and workers.
+*   **[Audio Processing Pipeline](./architecture/AUDIO_PROCESSING_PIPELINE.md)**: Pipeline stages, in-memory queues, and diarization.
+*   **[Database Schema Reference](./architecture/DATABASE_SCHEMA.md)**: Transactional data dictionary mapping 18 SQLModel tables and 10 enums.
+*   **[Emotion Fusion Architecture](./architecture/EMOTION_FUSION.md)**: Dual-signal fusion formulas, modality agreement weight metrics, and fallback heuristics.
+*   **[Frontend Architecture Guide](./frontend/FRONTEND_ARCHITECTURE.md)**: React 18 SPA directories, routing hierarchies, and explainability UI.
+*   **[Evidence-Anchored Explainability](./explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)**: Span-level triggers and claim retrieval provenance mapping.
+*   **[LLM Trigger Engine](./llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)**: The 3-chain judging engine and prompt protections.
+*   **[RAG Retrieval Overview](./rag/RAG_OVERVIEW.md)**: Indexing granularities, parent/child splits, and vector mapping.
+*   **[RAG Ingestion Pipeline](./rag/INGESTION_PIPELINE.md)**: Document parsing via Docling, cleans, and Qdrant loads.
+*   **[Pipeline Evaluation Findings](./eval/PIPELINE_FINDINGS.md)**: Pipeline performance compared to ground truth samples.
 
-### `explainability/`
+---
 
-Cross-cutting documentation for the shared explainability layer that links:
+## 3. Microservice References
 
-1. transcript spans
-2. retrieved SOP/policy evidence
-3. verdicts shown in the manager UI
+*   **[VAD Service](./microservices/VAD_SERVICE.md)**: Silero Voice Activity Detection voice segmentation service.
+*   **[WhisperX Service](./microservices/WHISPERX_SERVICE.md)**: Transcription, PyAnnote diarization, segment merging, and speaker roles.
+*   **[Emotion Service](./microservices/EMOTION_SERVICE.md)**: funASR emotion2vec speech emotion and DistilRoBERTa text emotion classifiers.
+*   **[RAG Service](./microservices/RAG_SERVICE.md)**: Parent/child collections, RAG retrieval adaptors, and ingestion scripts.
 
-### `llm_trigger/`
+---
 
-Documentation for:
+## 4. Operational Runbooks
 
-1. emotion-trigger analysis
-2. SOP/process-adherence reasoning
-3. NLI policy review
-4. interaction-detail explainability payload mapping
+*   **[Knowledge Base & PDF Ingestion](./operations/KNOWLEDGE_BASE_MANAGEMENT.md)**: Adding policies/SOPs, running CLI ingestion, and troubleshooting.
+*   **[Audio Auto-Ingest Scanner](./operations/AUDIO_AUTO_INGEST.md)**: Background watcher directories, filename rules, and queues.
+*   **[Evaluation & Benchmarking Harness](./operations/EVALUATION_HARNESS.md)**: Command line tools, evaluation metrics, and gold standard runs.
+*   **[Manager Assistant NL-to-SQL](./llm_trigger/MANAGER_ASSISTANT.md)**: SQL execution parsers, LLM fallbacks, and security check filters.
 
-### `rag/`
+---
 
-Documentation for:
+## 5. API & Configuration References
 
-1. document ingestion
-2. retrieval and synthesis
-3. compliance and answer-evaluation flows
-4. retrieval provenance surfaced to explainability consumers
-
-## Suggested Reading Paths
-
-### If you are new to the project
-
-1. Read [Evidence-Anchored Explainability Layer](./explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)
-2. Read [LLM Trigger Feature Guide](./llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)
-3. Read [RAG Overview](./rag/RAG_OVERVIEW.md)
-
-### If you are debugging manager call review
-
-1. Read [Evidence-Anchored Explainability Layer](./explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)
-2. Read [LLM Trigger Feature Guide](./llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)
-
-### If you are debugging policy retrieval or provenance
-
-1. Read [RAG Overview](./rag/RAG_OVERVIEW.md)
-2. Read [RAG Ingestion Pipeline](./rag/INGESTION_PIPELINE.md)
-3. Read [Evidence-Anchored Explainability Layer](./explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)
+*   **[REST API Reference](./api/REST_API_REFERENCE.md)**: Controller routes dictionary, authentication endpoints, schema inputs, and responses.
+*   **[Configuration Env Dictionary](./backend/CONFIGURATION.md)**: Environment configurations, defaults, and usage.
+*   **[Security & RBAC Controls](./backend/SECURITY.md)**: JWT creation, password hashing, OAuth callbacks, and SQL injection guards.
+*   **[Testing & Verification Guide](./backend/TESTING.md)**: Running FastAPI pytests, frontend Vitest/Cypress suites, and benchmark tools.

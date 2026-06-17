@@ -30,9 +30,9 @@ A robust Retrieval-Augmented Generation (RAG) system for policy document analysi
 
 Team-facing RAG documentation is maintained in:
 
-1. `docs/rag/RAG_OVERVIEW.md`
-2. `docs/rag/INGESTION_PIPELINE.md`
-3. `docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md`
+1. **[RAG Overview](../../docs/rag/RAG_OVERVIEW.md)**
+2. **[Ingestion Pipeline](../../docs/rag/INGESTION_PIPELINE.md)**
+3. **[Evidence-Anchored Explainability Layer](../../docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)**
 
 ---
 

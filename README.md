@@ -252,26 +252,38 @@ python infra/scripts/measure_dashboard_baseline.py --api-base http://localhost:8
 python infra/fixtures/kaggle/scripts/kaggle_api_smoke_test.py --audio-file storage/audio/nexalink/CALL_01_priya_refund_outage.wav
 ```
 
-### Speaker Classifier Artifact
+### Speaker Classifier Artifacts
 
-You can populate the model artifacts in two ways:
+#### Option A: Logistic Regression Model (Hybrid Pipeline - Default)
+The backend uses a hybrid speaker role classifier combining ML predictions and rule-based priors. The required model weights and TF-IDF vectorizer must be placed in:
+* **Model Weights**: [model.pkl](file:///g:/projects/VocalMind/backend/app/core/model.pkl)
+* **TF-IDF Vectorizer**: [vectorizer.pkl](file:///g:/projects/VocalMind/backend/app/core/vectorizer.pkl)
 
-#### Option A: Download programmatically from DagsHub MLflow
-Run the download script using the DagsHub tracking credentials (configured in `.env`):
-```bash
-# List all experiment runs on DagsHub MLflow
-python tools/download_mlflow_model.py --list
+These files are excluded from Git via `.gitignore`. Teammates can retrieve them as follows:
 
-# Download model artifacts for a specific run ID into the speaker role directory
-python tools/download_mlflow_model.py --run-id <RUN_ID>
-```
+1. **Download the model weights from MLflow**:
+   Ensure `MLFLOW_TRACKING_PASSWORD` (your DagsHub Personal Access Token) is set in your `.env` or terminal environment, then run the download tool:
+   ```bash
+   python tools/download_mlflow_model.py --run-id 85c2377290ee459a8232c8136d0721c5 --output-dir backend/app/core/
+   ```
+   *Note: This downloads files into a subfolder. Move the model weights to the core directory using python (cross-platform):*
+   ```bash
+   python -c "import shutil; shutil.move('backend/app/core/model/model.pkl', 'backend/app/core/model.pkl'); shutil.rmtree('backend/app/core/model')"
+   ```
 
-#### Option B: Prepare from local ZIP export
+
+2. **Retrieve the vectorizer**:
+   Since the remote MLflow run only logged the model classifier and not the TF-IDF vectorizer, and regenerating it locally can cause a vocabulary alignment shift, teammates must copy the exact `vectorizer.pkl` from the team's shared/secured storage and place it directly under `backend/app/core/vectorizer.pkl`.
+
+
+#### Option B: DistilBERT Model (WhisperX Speaker-Role Pass)
+For the optional second-pass WhisperX relabeling:
 Place `speaker_classifier_export.zip` at the repo root and run:
 ```bash
 make prepare-speaker-model
 ```
 This extracts the DistilBERT model into `services/whisperx/models/speaker_role/distilbert/`. The zip is gitignored — it must be provided separately. WhisperX will fail to start without these model files.
+
 
 
 ### Audio Auto-Ingest

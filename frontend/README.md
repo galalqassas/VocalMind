@@ -19,7 +19,7 @@ It renders:
 2. Retrieval Provenance Scoring cards
 3. Timestamp jump actions that sync cards back to audio playback
 
-See `docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md` for the full feature contract.
+See **[Evidence-Anchored Explainability Layer](../docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)** for the full feature contract.
 
 ## Development
 
