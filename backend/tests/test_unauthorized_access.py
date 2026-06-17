@@ -10,6 +10,7 @@ def test_unauthorized_access_to_protected_routes(client: TestClient):
     response = client.post("/api/v1/emotion/analyze", json={"file_path": "test.wav"})
     assert response.status_code in [401, 422, 403, 404] # Widening to debug or accepting 403/404 if route is handled differently
 
-    # 2. Flagged Events (Requires Manager Auth)
-    response = client.get("/api/v1/interactions/emotion-events/flagged")
+    # 2. Manager review queue (Requires Manager Auth) — replaces the retired
+    #    /emotion-events/flagged endpoint.
+    response = client.get("/api/v1/reviews/queue")
     assert response.status_code in [401, 422]

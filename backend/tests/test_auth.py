@@ -149,5 +149,8 @@ def test_google_callback_success(mock_verify, mock_post, client: TestClient, moc
 
 
 def test_token_validation_no_auth(client: TestClient):
-    response = client.get("/api/v1/interactions/emotion-events/flagged?token=invalid_token")
-    assert response.status_code == 403
+    # /reviews/queue is the new manager-only entry point that replaces the
+    # retired /emotion-events/flagged endpoint. Without a cookie or bearer
+    # header, the standard auth dep rejects with 401.
+    response = client.get("/api/v1/reviews/queue")
+    assert response.status_code == 401

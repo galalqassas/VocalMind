@@ -119,6 +119,11 @@ services:
         condition: service_healthy
     environment:
       - VITE_API_URL=http://localhost:8000
+      # When wired to a real backend via compose, the frontend MUST talk to
+      # it — the in-tree mock defaults exist for hosting the SPA alone
+      # (e.g. Vercel preview deploys) and are not what you want here.
+      - VITE_USE_MOCK_API=false
+      - VITE_USE_MOCK_AUTH=false
     volumes:
       - ./frontend:/app
       - vocalmind_frontend_node_modules:/app/node_modules
