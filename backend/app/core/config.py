@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     SEED_MOCK_INTERACTIONS: bool = False
 
+    # When True, lifespan runs seed_nexalink + seed_meridian on every boot.
+    # Always True for local dev; MUST be False for any deployment pointed at a
+    # shared/production database, otherwise startup will re-seed the demo orgs
+    # alongside whatever orgs are already there.
+    SEED_DEMO_DATA: bool = True
+
     # Auto-ingest watcher: scans storage/audio/<org_slug>/ and enqueues new
     # audio files for processing via the existing in-memory worker.
     AUDIO_FOLDER_WATCHER_ENABLED: bool = True

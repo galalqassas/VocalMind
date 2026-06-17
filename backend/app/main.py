@@ -40,8 +40,11 @@ async def _prewarm_with_log() -> None:
 async def lifespan(app: FastAPI):
     validate_startup_settings(settings)
     await create_db_and_tables()
-    await seed_nexalink_main()
-    await seed_meridian_main()
+    if settings.SEED_DEMO_DATA:
+        await seed_nexalink_main()
+        await seed_meridian_main()
+    else:
+        logger.info("SEED_DEMO_DATA=false — skipping Nexalink/Meridian demo seeding")
     await start_processing_worker()
     await start_audio_folder_watcher()
     # Pre-warm the dashboard cache so the first manager load is instantaneous
