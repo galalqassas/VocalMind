@@ -1,5 +1,6 @@
 import { Link } from "react-router";
-import { ArrowRight, Mic, Shield, UserCircle } from "lucide-react";
+import { ArrowRight, Shield, UserCircle } from "lucide-react";
+import logoSrc from "../../assets/logo/logo.svg";
 
 export function LandingPage() {
   return (
@@ -8,9 +9,7 @@ export function LandingPage() {
         {/* Logo and Title */}
         <div className="text-center mb-16">
           <div className="flex items-center justify-center gap-4 mb-6">
-            <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/20">
-              <Mic className="w-8 h-8 text-primary-foreground" />
-            </div>
+            <img src={logoSrc} alt="VocalMind" className="w-16 h-16 object-contain" />
             <h1 className="text-5xl font-bold text-foreground" style={{ fontFamily: "var(--font-sans)" }}>
               VocalMind
             </h1>

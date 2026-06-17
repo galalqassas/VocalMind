@@ -18,6 +18,7 @@ from app.core.audio_resolver import fetch_audio_bytes
 from app.core.config import settings
 from app.core.database import engine
 from app.core.emotion_fusion import build_deterministic_emotion_analysis
+from app.core.notification_service import emit, emit_to_managers
 from app.core.inference_contracts import (
     audio_content_type,
     build_local_full_response,
@@ -26,7 +27,7 @@ from app.core.inference_contracts import (
 from app.core.speaker_role_infer import relabel_segments_with_speaker_model
 from app.llm_trigger.service import evaluate_interaction_triggers
 from app.models.emotion_event import EmotionEvent
-from app.models.enums import JobStage, JobStatus, ProcessingStatus, SpeakerRole
+from app.models.enums import JobStage, JobStatus, NotificationType, ProcessingStatus, SpeakerRole
 from app.models.interaction import Interaction
 from app.models.interaction_score import InteractionScore
 from app.models.llm_trigger_cache import InteractionLLMTriggerCache
@@ -890,6 +891,41 @@ async def process_interaction(interaction_id: UUID) -> None:
         except Exception:
             await session.rollback()
             raise
+
+        # Notify the agent and managers that the call finished evaluation.
+        try:
+            score_row = (await session.exec(
+                select(InteractionScore).where(InteractionScore.interaction_id == interaction_id)
+            )).first()
+            score_pct = int(round((score_row.overall_score or 0.0) * 100)) if score_row else None
+            body = (
+                f"Evaluation finished. Overall score {score_pct}."
+                if score_pct is not None
+                else "Evaluation finished."
+            )
+            if interaction.agent_id:
+                await emit(
+                    session,
+                    recipient_user_id=interaction.agent_id,
+                    organization_id=interaction.organization_id,
+                    type=NotificationType.evaluation_complete,
+                    title="Call evaluation complete",
+                    body=body,
+                    link_url=f"/agent/calls/{interaction_id}",
+                    payload={"interaction_id": str(interaction_id)},
+                )
+            await emit_to_managers(
+                session,
+                organization_id=interaction.organization_id,
+                type=NotificationType.evaluation_complete,
+                title="Call evaluation complete",
+                body=body,
+                link_url=f"/manager/inspector/{interaction_id}",
+                payload={"interaction_id": str(interaction_id)},
+            )
+            await session.commit()
+        except Exception:
+            logger.exception("Failed to emit evaluation_complete notification for %s", interaction_id)
 
 
 async def mark_interaction_failed(interaction_id: UUID, error_message: str) -> None:

@@ -69,7 +69,7 @@ async def dispute_compliance(
             detail="You can only dispute verdicts on your own calls.",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     pc.is_flagged = True
     pc.agent_flagged_by = current_user.id
     pc.agent_flagged_at = now

@@ -224,8 +224,15 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
             print(f"Error reading {file_path.name}: {exc}")
             return ""
 
+    def normalize_title(raw: str) -> str:
+        # Strip markdown escapes (docling emits "\_") and normalize separators so
+        # a parsed-markdown heading and its source filename map to the SAME title.
+        # Without this, the PDF copy (clean filename) and the .md copy (escaped
+        # heading) produce different titles and get ingested as duplicates.
+        return " ".join(raw.replace("\\", "").replace("_", " ").replace("-", " ").split()).title()
+
     def extract_markdown_title(file_path: Path, text: str) -> str:
-        title = file_path.stem.replace("_", " ").replace("-", " ").title()
+        title = normalize_title(file_path.stem)
         for line in text.splitlines():
             clean_line = line.strip()
             if clean_line.startswith("#"):
@@ -237,7 +244,7 @@ async def seed_policies_and_faqs(session: AsyncSession, org_id):
                     .strip()
                 )
                 if cleaned:
-                    return cleaned.title()
+                    return normalize_title(cleaned)
         return title
 
     first_policy = None

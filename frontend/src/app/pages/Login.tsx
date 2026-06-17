@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { useAuth } from "../contexts/AuthContext";
-import { Headphones, Mail, Lock, LogIn, AlertCircle } from "lucide-react";
+import { Mail, Lock, LogIn, AlertCircle } from "lucide-react";
+import logoSrc from "../../assets/logo/logo.svg";
 
 export default function Login() {
   const { login, user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -55,9 +56,7 @@ export default function Login() {
 
       <div className="relative z-10 w-full max-w-[400px] px-6">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-gradient-to-br from-[#1D4ED8] to-[#3B82F6] rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20 mb-4">
-            <Headphones className="w-6 h-6 text-white" />
-          </div>
+          <img src={logoSrc} alt="VocalMind" className="w-14 h-14 object-contain mb-4" />
           <h1 className="text-[24px] font-bold text-foreground tracking-tight">Welcome to VocalMind</h1>
           <p className="text-[14px] text-muted-foreground mt-1">Sign in to your dashboard</p>
         </div>

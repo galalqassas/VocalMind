@@ -79,7 +79,7 @@ async def dispute_emotion_event(
             detail="You can only dispute emotion events on your own calls.",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     event.is_flagged = True
     event.agent_flagged_by = current_user.id
     event.agent_flagged_at = now

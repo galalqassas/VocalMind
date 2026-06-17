@@ -98,7 +98,7 @@ async def mark_read(
 
     if not notification.is_read:
         notification.is_read = True
-        notification.read_at = datetime.now(timezone.utc)
+        notification.read_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(notification)
         await session.commit()
 
@@ -113,7 +113,7 @@ async def mark_all_read(session: SessionDep, current_user: CurrentUser):
         .where(Notification.is_read.is_(False))
     )
     result = await session.exec(stmt)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     touched = 0
     for n in result.all():
         n.is_read = True
