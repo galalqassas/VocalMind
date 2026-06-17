@@ -11,6 +11,11 @@ on:
     paths:
       - "services/rag/**"
       - ".github/workflows/rag_ci.yml"
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to test'
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,6 +34,8 @@ jobs:
         working-directory: services/rag
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5

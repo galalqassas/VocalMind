@@ -13,6 +13,11 @@ on:
       - "infra/benchmarks/**"
       - "infra/scripts/eval/**"
       - ".github/workflows/quality-benchmarks.yml"
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to test'
+        required: false
 
 jobs:
   quality-benchmarks:
@@ -20,6 +25,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5

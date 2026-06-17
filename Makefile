@@ -164,3 +164,6 @@ prepare-speaker-model: ## Extract speaker-role DistilBERT for WhisperX + backend
 clean: ## Remove all caches and build artifacts
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .nyc_output -o -name coverage \) -prune -exec rm -rf {} + 2>/dev/null || true
 	rm -rf frontend/dist frontend/.nyc_output
+
+run-ci: ## Trigger manual CI/CD run via GitHub CLI (Usage: make run-ci [sha=<SHA_OR_REF>] [workflow=<ci.yml|backend.yml|...>])
+	@gh workflow run $(if $(workflow),$(workflow),ci.yml) $(if $(sha),-f commit_sha=$(sha))
