@@ -63,3 +63,13 @@ class PeriodType(str, Enum):
     daily = "daily"
     weekly = "weekly"
     monthly = "monthly"
+
+
+class NotificationType(str, Enum):
+    """In-app notification kinds delivered via the notifications table."""
+    evaluation_complete = "evaluation_complete"      # → agent + manager when a call finishes evaluation
+    agent_flag_pending = "agent_flag_pending"        # → managers in org when an agent disputes
+    flag_approved = "flag_approved"                  # → agent whose flag the manager accepted
+    flag_rejected = "flag_rejected"                  # → agent whose flag the manager rejected
+    manager_correction = "manager_correction"        # → agent when manager corrects their call directly
+    feedback_applied = "feedback_applied"            # → manager when a feedback row gets exported to training

@@ -32,6 +32,14 @@ CREATE TYPE speaker_role_enum AS ENUM ('agent', 'customer');
 CREATE TYPE query_mode_enum   AS ENUM ('voice', 'chat');
 CREATE TYPE feedback_status_enum AS ENUM ('pending', 'reviewed', 'applied');
 CREATE TYPE period_type_enum   AS ENUM ('daily', 'weekly', 'monthly');
+CREATE TYPE notification_type_enum AS ENUM (
+    'evaluation_complete',
+    'agent_flag_pending',
+    'flag_approved',
+    'flag_rejected',
+    'manager_correction',
+    'feedback_applied'
+);
 
 
 -- ============================================================
@@ -218,7 +226,16 @@ CREATE TABLE policy_compliance (
     degraded              BOOLEAN NOT NULL DEFAULT FALSE,
     llm_reasoning         TEXT    NULL,
     evidence_text         TEXT    NULL,
-    retrieved_policy_text TEXT    NULL
+    retrieved_policy_text TEXT    NULL,
+    -- agent-dispute fields (parity with emotion_events v5.2)
+    is_flagged            BOOLEAN NOT NULL DEFAULT FALSE,
+    agent_flagged_by      UUID    NULL REFERENCES users(id) ON DELETE SET NULL,
+    agent_flagged_at      TIMESTAMPTZ NULL,
+    agent_flag_note       TEXT    NULL,
+    CONSTRAINT policy_compliance_agent_flag_consistency CHECK (
+        (agent_flagged_by IS NULL AND agent_flagged_at IS NULL)
+        OR (agent_flagged_by IS NOT NULL AND agent_flagged_at IS NOT NULL AND is_flagged = TRUE)
+    )
 );
 
 -- 13. compliance_feedback
@@ -297,6 +314,21 @@ CREATE TABLE interaction_llm_trigger_cache (
     CONSTRAINT uq_interaction_llm_trigger_cache_interaction UNIQUE (interaction_id)
 );
 
+-- 21. notifications
+CREATE TABLE notifications (
+    id                  UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+    recipient_user_id   UUID    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    organization_id     UUID    NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    type                notification_type_enum NOT NULL,
+    title               VARCHAR(255) NOT NULL,
+    body                TEXT    NULL,
+    link_url            VARCHAR(512) NULL,
+    payload             JSONB   NULL,
+    is_read             BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at             TIMESTAMPTZ NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ============================================================
 -- 3. INDEXES
 -- ============================================================
@@ -311,6 +343,10 @@ CREATE INDEX idx_emotion_events_interaction_id     ON emotion_events(interaction
 CREATE INDEX idx_emotion_events_agent_flagged      ON emotion_events(agent_flagged_by) WHERE agent_flagged_by IS NOT NULL;
 CREATE INDEX idx_organization_policies_org_id      ON organization_policies(organization_id);
 CREATE INDEX idx_policy_compliance_interaction_id  ON policy_compliance(interaction_id);
+CREATE INDEX idx_policy_compliance_agent_flagged   ON policy_compliance(agent_flagged_by) WHERE agent_flagged_by IS NOT NULL;
+CREATE INDEX idx_notifications_recipient_unread    ON notifications(recipient_user_id, is_read);
+CREATE INDEX idx_notifications_org                 ON notifications(organization_id);
+CREATE INDEX idx_notifications_created_at          ON notifications(created_at DESC);
 CREATE INDEX idx_agent_snapshots_agent_id          ON agent_performance_snapshots(agent_id);
 CREATE INDEX idx_assistant_queries_user_id         ON assistant_queries(user_id);
 CREATE INDEX idx_interaction_llm_trigger_cache_interaction_id ON interaction_llm_trigger_cache(interaction_id);

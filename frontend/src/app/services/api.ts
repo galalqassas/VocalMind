@@ -30,7 +30,7 @@ function clearPersistedAccessToken() {
   persistAccessToken(null);
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const isFormData = typeof FormData !== "undefined" && options?.body instanceof FormData;
   const headers = new Headers(options?.headers || {});
   if (!isFormData && !headers.has("Content-Type")) {

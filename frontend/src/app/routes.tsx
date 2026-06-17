@@ -6,6 +6,8 @@ import { SessionInspector } from "./components/manager/SessionInspector";
 import { SessionDetail } from "./components/manager/SessionDetail";
 import { ManagerAssistant } from "./components/manager/ManagerAssistant";
 import { KnowledgeBase } from "./components/manager/KnowledgeBase";
+import { ReviewQueue } from "./components/manager/ReviewQueue";
+import { NotificationsPage } from "./components/notifications/NotificationsPage";
 import { AgentDashboard } from "./components/agent/AgentDashboard";
 import { AgentCalls } from "./components/agent/AgentCalls";
 import { AgentCallDetail } from "./components/agent/AgentCallDetail";
@@ -42,6 +44,8 @@ export const router = createBrowserRouter([
           { index: true, element: <ManagerDashboard /> },
           { path: "inspector", element: <SessionInspector /> },
           { path: "inspector/:id", element: <SessionDetail /> },
+          { path: "reviews", element: <ReviewQueue /> },
+          { path: "notifications", element: <NotificationsPage /> },
           { path: "assistant", element: <ManagerAssistant /> },
           { path: "knowledge", element: <KnowledgeBase /> },
           { path: "settings", element: <ManagerSettings /> },
@@ -56,6 +60,7 @@ export const router = createBrowserRouter([
           { index: true, element: <AgentDashboard /> },
           { path: "calls", element: <AgentCalls /> },
           { path: "calls/:id", element: <AgentCallDetail /> },
+          { path: "notifications", element: <NotificationsPage /> },
           { path: "settings", element: <SettingsPage /> },
           { path: "*", element: <UnderDevelopment /> },
         ],

@@ -5,17 +5,10 @@ import { UserNav } from "./UserNav";
 import {
   Activity,
   Phone,
-  Bell,
   Menu,
 } from "lucide-react";
 import logoSrc from "../../../assets/logo/logo.svg";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
+import { NotificationBell } from "../notifications/NotificationBell";
 
 export function AgentLayout() {
   const { user } = useAuth();
@@ -31,6 +24,7 @@ export function AgentLayout() {
     if (location.pathname === "/agent") return "My Performance";
     if (location.pathname === "/agent/calls") return "My Calls";
     if (location.pathname.includes("calls")) return "Call Detail";
+    if (location.pathname.includes("notifications")) return "Notifications";
     return "My Performance";
   };
 
@@ -65,20 +59,7 @@ export function AgentLayout() {
         </div>
 
         <div className="flex items-center gap-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="w-8 h-8 flex items-center justify-center bg-accent/30 border border-border rounded-lg hover:bg-accent transition-colors">
-                <Bell className="w-4 h-4 text-muted-foreground" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-64 bg-card border-border shadow-lg" align="end">
-              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                No new notifications
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <NotificationBell />
           <UserNav />
         </div>
       </div>

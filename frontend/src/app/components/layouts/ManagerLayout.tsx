@@ -6,19 +6,13 @@ import {
   Search,
   MessageSquare,
   BookOpen,
-  Bell,
+  ClipboardCheck,
   Download,
   Menu,
 } from "lucide-react";
 import logoSrc from "../../../assets/logo/logo.svg";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
 import { Separator } from "../ui/separator";
+import { NotificationBell } from "../notifications/NotificationBell";
 
 export function ManagerLayout() {
   const [collapsed, setCollapsed] = useState(false);
@@ -27,6 +21,7 @@ export function ManagerLayout() {
   const navItems = [
     { icon: LayoutDashboard, label: "Dashboard", path: "/manager" },
     { icon: Search, label: "Session Inspector", path: "/manager/inspector" },
+    { icon: ClipboardCheck, label: "Review Queue", path: "/manager/reviews" },
     { icon: MessageSquare, label: "Manager Assistant", path: "/manager/assistant" },
     { icon: BookOpen, label: "Knowledge Base", path: "/manager/knowledge" },
   ];
@@ -35,6 +30,8 @@ export function ManagerLayout() {
     if (location.pathname === "/manager") return "Dashboard";
     if (location.pathname.includes("inspector") && !location.pathname.includes("/manager/inspector/")) return "Session Inspector";
     if (location.pathname.includes("inspector/")) return "Call Detail";
+    if (location.pathname.includes("reviews")) return "Review Queue";
+    if (location.pathname.includes("notifications")) return "Notifications";
     if (location.pathname.includes("assistant")) return "Manager Assistant";
     if (location.pathname.includes("knowledge")) return "Knowledge Base";
     return "Dashboard";
@@ -75,20 +72,7 @@ export function ManagerLayout() {
             <Download className="w-3.5 h-3.5" />
             Export
           </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="w-8 h-8 flex items-center justify-center bg-accent/30 border border-border rounded-lg hover:bg-accent transition-colors">
-                <Bell className="w-4 h-4 text-muted-foreground" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-64 bg-card border-border shadow-lg" align="end">
-              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                No new notifications
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <NotificationBell />
           <UserNav />
         </div>
       </div>

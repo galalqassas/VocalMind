@@ -30,7 +30,14 @@ class OrganizationPolicy(SQLModel, table=True):
 
 
 class PolicyCompliance(SQLModel, table=True):
-    """AI compliance verdict for a policy against an interaction."""
+    """AI compliance verdict for a policy against an interaction.
+
+    Agent-flagging workflow (mirrors EmotionEvent v5.2):
+      - Agents see their compliance verdicts on their own call detail page.
+      - "Dispute" → sets is_flagged + agent_flagged_by/at/note.
+      - Manager review queue surfaces flagged verdicts.
+      - Manager accept → ComplianceFeedback row at `reviewed`.
+    """
     __tablename__ = "policy_compliance"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -42,3 +49,9 @@ class PolicyCompliance(SQLModel, table=True):
     llm_reasoning: Optional[str] = None
     evidence_text: Optional[str] = None
     retrieved_policy_text: Optional[str] = None
+
+    # ── Agent-dispute fields ────────────────────────────────
+    is_flagged: bool = Field(default=False)
+    agent_flagged_by: Optional[UUID] = Field(default=None, foreign_key="users.id")
+    agent_flagged_at: Optional[datetime] = Field(default=None)
+    agent_flag_note: Optional[str] = Field(default=None)

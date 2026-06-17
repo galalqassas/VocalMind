@@ -16,6 +16,7 @@ import { EmotionComparisonPanel } from "../manager/EmotionComparisonPanel.tsx";
 import { EvidenceAnchoredExplainabilityPanel } from "../manager/EvidenceAnchoredExplainabilityPanel";
 import { AnalysisTabs } from "../manager/AnalysisTabs";
 import { formatResponseTime } from "../../utils/interactionFormat";
+import { FlagButton } from "./FlagButton";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -360,7 +361,10 @@ export function AgentCallDetail() {
                       <div key={v.id} className="bg-card border border-amber-500/20 rounded-xl p-3">
                         <h4 className="text-[13px] font-semibold text-foreground mb-1">{v.policyTitle}</h4>
                         <p className="text-[12px] text-muted-foreground mb-1">{v.reasoning}</p>
-                        <span className="text-[12px] font-semibold text-amber-500">Score: {v.score}% · target 80%+</span>
+                        <div className="flex items-center justify-between mt-1.5">
+                          <span className="text-[12px] font-semibold text-amber-500">Score: {v.score}% · target 80%+</span>
+                          <FlagButton kind="compliance" targetId={v.id} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -404,6 +408,9 @@ export function AgentCallDetail() {
                   </div>
                   <div className="bg-background border-l-4 border-success rounded p-2.5">
                     <p className="text-[12px] italic text-muted-foreground leading-relaxed">{event.justification}</p>
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <FlagButton kind="emotion" targetId={event.id} />
                   </div>
                 </div>
               );

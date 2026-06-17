@@ -20,6 +20,7 @@ import {
 import { EvidenceAnchoredExplainabilityPanel } from "./EvidenceAnchoredExplainabilityPanel";
 import { AnalysisTabs } from "./AnalysisTabs";
 import { EmotionComparisonPanel } from "./EmotionComparisonPanel";
+import { ManagerCorrectionSheet } from "./ManagerCorrectionSheet";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -735,6 +736,13 @@ export function SessionDetail() {
                       <span className="text-muted-foreground/60">&middot;</span>
                       <span>{e.timestamp}</span>
                     </button>
+                    <ManagerCorrectionSheet
+                      kind="emotion"
+                      emotionEventId={e.id}
+                      currentEmotion={e.toEmotion}
+                      currentJustification={e.justification}
+                      triggerLabel="Correct"
+                    />
                     <div className="flex-1 h-px bg-border" />
                   </div>
                 );

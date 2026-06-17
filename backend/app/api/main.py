@@ -19,6 +19,10 @@ from app.api.routes.transcription import router as transcription_router
 from app.api.routes.users import router as users_router
 from app.api.routes.vad import router as vad_router
 from app.api.routes.internal import router as internal_router
+from app.api.routes.notifications import router as notifications_router
+from app.api.routes.reviews import router as reviews_router
+from app.api.routes.feedback import router as feedback_router
+from app.api.routes.compliance_disputes import router as compliance_disputes_router
 
 api_router = APIRouter()
 
@@ -38,3 +42,7 @@ api_router.include_router(transcription_router.router, prefix="/transcription", 
 api_router.include_router(vad_router.router, prefix="/vad", tags=["vad"])
 api_router.include_router(full_router.router, prefix="/full", tags=["full"])
 api_router.include_router(internal_router, prefix="/internal", tags=["internal"])
+api_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
+api_router.include_router(reviews_router, prefix="/reviews", tags=["reviews"])
+api_router.include_router(feedback_router, prefix="/feedback", tags=["feedback"])
+api_router.include_router(compliance_disputes_router, prefix="/policy-compliance", tags=["compliance-disputes"])
