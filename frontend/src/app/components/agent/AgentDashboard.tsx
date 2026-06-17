@@ -1,19 +1,62 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
-import { Star, Phone, Target, Zap, Loader2, AlertTriangle } from "lucide-react";
+import { Star, Phone, Target, Zap, Loader2, AlertTriangle, ShieldAlert } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { getAgentProfile, getAgents, getUserMe, type AgentProfile } from "../../services/api";
 
 const MinimalTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-card/90 backdrop-blur-sm border border-border px-2 py-1 rounded-lg shadow-xl -mt-8">
+      <div className="-mt-8 rounded-lg border border-border bg-card/90 px-2 py-1 shadow-xl backdrop-blur-sm">
         <p className="text-[12px] font-bold text-success">{payload[0].value}%</p>
       </div>
     );
   }
   return null;
 };
+
+function scoreColor(score: number): string {
+  if (score >= 85) return "text-success";
+  if (score >= 75) return "text-primary";
+  return "text-warning";
+}
+
+function StatCard({
+  label, value, sub, icon: Icon, accent,
+}: {
+  label: string;
+  value: string | number;
+  sub: string;
+  icon: typeof Star;
+  accent: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card/40 p-5 shadow-sm transition-colors hover:border-primary/30">
+      <div className="mb-3 flex items-start justify-between">
+        <h3 className="text-[12px] font-bold uppercase tracking-widest text-muted-foreground">{label}</h3>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${accent}`}>
+          <Icon className="h-[18px] w-[18px]" />
+        </div>
+      </div>
+      <div className="text-3xl font-black leading-none text-foreground">{value}</div>
+      <div className="mt-1 text-[12px] text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function Bar({ label, value, textColor, barColor }: { label: string; value: number; textColor: string; barColor: string }) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[13px] text-foreground">{label}</span>
+        <span className={`text-[13px] font-bold ${textColor}`}>{value}%</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-muted">
+        <div className={`h-full rounded-full ${barColor} transition-all`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
 
 export function AgentDashboard() {
   const { agentId: routeAgentId } = useParams();
@@ -25,18 +68,14 @@ export function AgentDashboard() {
     const loadAgent = async () => {
       try {
         let targetId = routeAgentId;
-
         if (!targetId) {
           try {
             const currentUser = await getUserMe();
-            if (currentUser.role === "agent") {
-              targetId = currentUser.id;
-            }
+            if (currentUser.role === "agent") targetId = currentUser.id;
           } catch {
-            // Fall back to the first available agent when auth lookup is unavailable.
+            /* fall back to first agent */
           }
         }
-
         if (!targetId) {
           const agents = await getAgents();
           if (agents.length === 0) {
@@ -45,35 +84,32 @@ export function AgentDashboard() {
           }
           targetId = agents[0].id;
         }
-
-        const profile = await getAgentProfile(targetId);
-        setData(profile);
+        setData(await getAgentProfile(targetId));
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
         setLoading(false);
       }
     };
-
     void loadAgent();
   }, [routeAgentId]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="w-8 h-8 text-[#10B981] animate-spin" />
-        <span className="ml-3 text-[#6B7280] text-sm">Loading your dashboard...</span>
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span className="ml-3 text-sm text-muted-foreground">Loading your dashboard…</span>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex h-96 items-center justify-center">
         <div className="text-center">
-          <AlertTriangle className="w-10 h-10 text-[#F59E0B] mx-auto mb-3" />
-          <p className="text-[#6B7280] text-sm">Failed to load agent data</p>
-          <p className="text-muted-foreground/80 text-xs mt-1">{error}</p>
+          <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-warning" />
+          <p className="text-sm font-semibold text-foreground">Failed to load agent data</p>
+          <p className="mt-1 text-xs text-muted-foreground">{error}</p>
         </div>
       </div>
     );
@@ -84,245 +120,106 @@ export function AgentDashboard() {
     : `${data.avgResponseTime}s`;
 
   return (
-    <div className="p-6 space-y-6">
-      <div
-        className="rounded-2xl p-7 text-white"
-        style={{ background: "linear-gradient(135deg, #064E3B 0%, #0F766E 100%)" }}
-      >
-        <div className="flex items-start justify-between mb-6">
+    <div className="space-y-6 p-4 md:p-8">
+      {/* Hero */}
+      <div className="overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary to-primary/75 p-7 text-primary-foreground shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-6">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-white/60 mb-2">
-              MY PERFORMANCE
-            </div>
-            <h2 className="text-[28px] leading-none mb-2" style={{ fontFamily: "var(--font-serif)" }}>
-              {data.name}
-            </h2>
-            <p className="text-[13px] text-white/60">
-              {data.role} • VocalMind Corp
-            </p>
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-primary-foreground/70">My Performance</p>
+            <h2 className="mt-1.5 text-3xl font-black tracking-tight">{data.name}</h2>
+            <p className="mt-1 text-[13px] text-primary-foreground/70">{data.role}</p>
           </div>
-
           <div className="text-right">
-            <div className="text-[56px] leading-none mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-              {data.overallScore}%
-            </div>
-            <div className="text-[11px] text-white/50">
-              Overall Score
-            </div>
+            <div className="text-5xl font-black leading-none">{data.overallScore}%</div>
+            <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/60">Overall Score</div>
           </div>
         </div>
 
-        <div className="h-px bg-primary/20 mb-5" />
+        <div className="my-5 h-px bg-primary-foreground/15" />
 
         <div className="grid grid-cols-3 gap-6">
-          <div>
-            <div className="text-[36px] leading-none mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-              {data.callsThisWeek}
+          {[
+            { v: data.callsThisWeek, l: "Calls This Week" },
+            { v: `#${data.teamRank}`, l: "Team Rank" },
+            { v: `${data.resolutionRate}%`, l: "Resolution Rate" },
+          ].map((m) => (
+            <div key={m.l}>
+              <div className="text-3xl font-black leading-none">{m.v}</div>
+              <div className="mt-1 text-[11px] font-medium text-primary-foreground/60">{m.l}</div>
             </div>
-            <div className="text-[11px] text-white/50">
-              Calls This Week
-            </div>
-          </div>
-          <div>
-            <div className="text-[36px] leading-none mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-              #{data.teamRank}
-            </div>
-            <div className="text-[11px] text-white/50">
-              Team Rank
-            </div>
-          </div>
-          <div>
-            <div className="text-[36px] leading-none mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-              {data.resolutionRate}%
-            </div>
-            <div className="text-[11px] text-white/50">
-              Resolution Rate
-            </div>
-          </div>
+          ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-[13px] font-bold text-muted-foreground">Overall Score</h2>
-            <div className="w-9 h-9 bg-success/10 rounded-xl flex items-center justify-center">
-              <Star className="w-[18px] h-[18px] text-success" />
-            </div>
-          </div>
-          <div className="text-[40px] leading-none text-success mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-            {data.overallScore}%
-          </div>
-          <div className="text-[12px] text-muted-foreground">
-            from all calls
-          </div>
-        </div>
-
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-[13px] font-bold text-muted-foreground">Total Calls</h2>
-            <div className="w-9 h-9 bg-success/10 rounded-xl flex items-center justify-center">
-              <Phone className="w-[18px] h-[18px] text-success" />
-            </div>
-          </div>
-          <div className="text-[40px] leading-none text-success mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-            {data.totalCalls}
-          </div>
-          <div className="text-[12px] text-muted-foreground">
-            processed calls
-          </div>
-        </div>
-
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-[13px] font-bold text-muted-foreground">Resolution Rate</h2>
-            <div className="w-9 h-9 bg-[#F5F3FF] rounded-xl flex items-center justify-center">
-              <Target className="w-[18px] h-[18px] text-[#8B5CF6]" />
-            </div>
-          </div>
-          <div className="text-[40px] leading-none text-accent-foreground mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-            {data.resolutionRate}%
-          </div>
-          <div className="text-[12px] text-muted-foreground">
-            issues resolved
-          </div>
-        </div>
-
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-[13px] font-bold text-muted-foreground">Avg Response</h2>
-            <div className="w-9 h-9 bg-[#FFFBEB] rounded-xl flex items-center justify-center">
-              <Zap className="w-[18px] h-[18px] text-[#F59E0B]" />
-            </div>
-          </div>
-          <div className="text-[40px] leading-none text-warning mb-1" style={{ fontFamily: "var(--font-serif)" }}>
-            {displayAvgResponseTime}
-          </div>
-          <div className="text-[12px] text-muted-foreground">
-            response time
-          </div>
-        </div>
+      {/* Stat cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Overall Score" value={`${data.overallScore}%`} sub="from all calls" icon={Star} accent="bg-success/10 text-success" />
+        <StatCard label="Total Calls" value={data.totalCalls} sub="processed calls" icon={Phone} accent="bg-primary/10 text-primary" />
+        <StatCard label="Resolution Rate" value={`${data.resolutionRate}%`} sub="issues resolved" icon={Target} accent="bg-violet-500/10 text-violet-500" />
+        <StatCard label="Avg Response" value={displayAvgResponseTime} sub="response time" icon={Zap} accent="bg-warning/10 text-warning" />
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <h2 className="text-[15px] font-bold text-foreground mb-1">My Score Breakdown</h2>
-          <p className="text-[11px] italic text-muted-foreground mb-5">
-            Averaged across my calls: empathy, policy, and resolution.
-          </p>
-
+      {/* Breakdown + trend */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <h3 className="text-[15px] font-bold text-foreground">My Score Breakdown</h3>
+          <p className="mb-5 mt-0.5 text-[12px] text-muted-foreground">Averaged across my calls: empathy, policy, and resolution.</p>
           <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[13px] text-foreground">Empathy Score</span>
-                <span className="text-[13px] font-semibold text-primary">{data.empathyScore}%</span>
-              </div>
-              <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all"
-                  style={{ width: `${data.empathyScore}%` }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[13px] text-foreground">Policy Adherence</span>
-                <span className="text-[13px] font-semibold text-success">{data.policyScore}%</span>
-              </div>
-              <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-success rounded-full transition-all"
-                  style={{ width: `${data.policyScore}%` }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[13px] text-foreground">Resolution</span>
-                <span className="text-[13px] font-semibold text-accent-foreground">{data.resolutionScore}%</span>
-              </div>
-              <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-accent-foreground rounded-full"
-                  style={{ width: `${data.resolutionScore}%` }}
-                />
-              </div>
-            </div>
+            <Bar label="Empathy Score" value={data.empathyScore} textColor="text-primary" barColor="bg-primary" />
+            <Bar label="Policy Adherence" value={data.policyScore} textColor="text-success" barColor="bg-success" />
+            <Bar label="Resolution" value={data.resolutionScore} textColor="text-violet-500" barColor="bg-violet-500" />
           </div>
         </div>
 
-        <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-          <h2 className="text-[15px] font-bold text-foreground mb-1">My Weekly Trend</h2>
-          <p className="text-[11px] italic text-muted-foreground mb-4">
-            Interaction score trend for my calls this week.
-          </p>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <h3 className="text-[15px] font-bold text-foreground">My Weekly Trend</h3>
+          <p className="mb-4 mt-0.5 text-[12px] text-muted-foreground">Interaction score trend for my calls this week.</p>
           <ResponsiveContainer width="100%" height={190}>
             <LineChart data={data.weeklyTrend}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} opacity={0.5} />
               <XAxis dataKey="day" tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} axisLine={{ stroke: "var(--border)" }} />
               <YAxis domain={[70, 100]} tick={{ fontSize: 12, fill: "var(--muted-foreground)" }} axisLine={{ stroke: "var(--border)" }} />
               <Tooltip content={<MinimalTooltip />} cursor={{ stroke: "var(--success)", strokeWidth: 1 }} />
-              <Line
-                type="monotone"
-                dataKey="score"
-                stroke="var(--success)"
-                strokeWidth={3}
-                dot={{ fill: "var(--card)", stroke: "var(--success)", strokeWidth: 2, r: 5 }}
-                activeDot={{ r: 7, strokeWidth: 0 }}
-              />
+              <Line type="monotone" dataKey="score" stroke="var(--success)" strokeWidth={3}
+                dot={{ fill: "var(--card)", stroke: "var(--success)", strokeWidth: 2, r: 5 }} activeDot={{ r: 7, strokeWidth: 0 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div className="bg-card rounded-[14px] border border-border p-5 transition-all">
-        <h2 className="text-[15px] font-bold text-foreground mb-1">My Recent Calls</h2>
-        <p className="text-[11px] italic text-muted-foreground mb-4">
-          Personal calls only, sorted by date descending.
-        </p>
-
+      {/* Recent calls */}
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-[15px] font-bold text-foreground">My Recent Calls</h3>
+        <p className="mb-4 mt-0.5 text-[12px] text-muted-foreground">Personal calls only, sorted by date descending.</p>
         <div className="space-y-3">
           {data.recentCalls.map((call) => (
             <Link
               key={call.id}
               to={`/agent/calls/${call.id}`}
-              className={`block border rounded-[10px] p-3.5 transition-all active:scale-[0.99] ${
+              className={`block rounded-2xl border p-4 transition-all hover:shadow-sm active:scale-[0.99] ${
                 call.hasReview
-                  ? "bg-warning/5 border-warning/20 hover:border-warning/40"
-                  : "bg-card border-border hover:border-success/50 hover:bg-muted/10"
+                  ? "border-warning/30 bg-warning/5 hover:border-warning/50"
+                  : "border-border bg-background/40 hover:border-primary/40 hover:bg-muted/20"
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-foreground">
-                    {call.time}
-                  </span>
+                  <span className="text-[14px] font-bold text-foreground">{call.time}</span>
                   {call.hasReview && (
-                    <span className="px-2 py-0.5 bg-[#FEF3C7] text-[#92400E] rounded-full text-[11px] font-medium">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2.5 py-0.5 text-[11px] font-bold text-warning">
+                      <ShieldAlert className="h-3 w-3" />
                       Review needed
                     </span>
                   )}
                 </div>
                 <div className="text-right">
-                  <div
-                    className="text-[22px] leading-none mb-1"
-                    style={{
-                      fontFamily: "var(--font-serif)",
-                      color: call.score >= 85 ? "var(--success)" : call.score >= 75 ? "var(--primary)" : "var(--warning)",
-                    }}
-                  >
-                    {call.score}%
-                  </div>
-                  <div className={`text-[11px] font-bold ${call.resolved ? "text-success" : "text-destructive"}`}>
+                  <div className={`text-2xl font-black leading-none ${scoreColor(call.score)}`}>{call.score}%</div>
+                  <div className={`mt-1 text-[11px] font-bold ${call.resolved ? "text-success" : "text-destructive"}`}>
                     {call.resolved ? "Resolved" : "Unresolved"}
                   </div>
                 </div>
               </div>
-              <div className="text-[12px] text-muted-foreground">
-                {call.duration} • {call.language}
-              </div>
+              <div className="mt-2 text-[12px] text-muted-foreground">{call.duration} • {call.language}</div>
             </Link>
           ))}
         </div>
