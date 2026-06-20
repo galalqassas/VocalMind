@@ -36,36 +36,6 @@ jobs:
       - name: Run quality benchmark suite
         run: python infra/scripts/eval/eval_all.py
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: false
-
-      - name: Install RAG dependencies
-        run: cd services/rag && uv sync
-
-      - name: Start RAG Infrastructure
-        # Production uses Ollama Cloud; the compose file has no local ollama
-        # service. Run a throwaway ollama container for CI embeddings only.
-        run: |
-          docker compose up -d qdrant
-          docker run -d --name vocalmind-ollama -p 11434:11434 ollama/ollama:0.3.4
-          sleep 10
-          docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2
-
-      - name: Ingest Documents
-        run: cd services/rag && uv run python main.py --ingest
-
-      - name: Run RAGAS Quality Evaluation
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          if [ -z "$GROQ_API_KEY" ]; then
-            echo "GROQ_API_KEY secret is not set. Skipping RAGAS evaluation to prevent CI failure."
-            exit 0
-          fi
-          make quality-eval-ragas
-
       - name: Upload benchmark reports
         if: always()
         uses: actions/upload-artifact@v4

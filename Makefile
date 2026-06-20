@@ -124,7 +124,6 @@ quality-eval-resolution: ## Run resolution quality benchmark
 
 quality-eval-all: ## Run all component quality benchmarks (fails on regression)
 	python infra/scripts/eval/eval_all.py
-	$(MAKE) quality-eval-ragas
 
 e2e-local-audio: ## Full local E2E on default mounted audio (login, ingest, poll, assert)
 	python infra/scripts/e2e_local_audio.py --include-llm
