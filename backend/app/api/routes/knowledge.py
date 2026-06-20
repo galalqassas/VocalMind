@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Path as FastAPIPath
+from uuid import UUID
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import select
@@ -26,27 +27,29 @@ KB_DOCS_FOLDER = "knowledge-base"
 LEGACY_KB_DOCS_FOLDER = "kb"
 KB_CATEGORY_PREFIX = "kb:"
 
+from pydantic import Field
+
 # --- Schemas ---
 
 class PolicyCreate(BaseModel):
-    title: str
-    category: str
-    content: str
+    title: str = Field(..., description="The title of the company policy document.")
+    category: str = Field(..., description="The category category of the policy (e.g. refunds, billing, compliance).")
+    content: str = Field(..., description="The full markdown or plain text content of the policy.")
 
 class PolicyUpdate(BaseModel):
-    title: Optional[str] = None
-    category: Optional[str] = None
-    content: Optional[str] = None
+    title: Optional[str] = Field(None, description="The updated title of the policy.")
+    category: Optional[str] = Field(None, description="The updated category of the policy.")
+    content: Optional[str] = Field(None, description="The updated content of the policy.")
 
 class FAQCreate(BaseModel):
-    question: str
-    answer: str
-    category: str
+    question: str = Field(..., description="The question text for the FAQ article.")
+    answer: str = Field(..., description="The detailed answer text for the FAQ article.")
+    category: str = Field(..., description="The category category of the FAQ article.")
 
 class FAQUpdate(BaseModel):
-    question: Optional[str] = None
-    answer: Optional[str] = None
-    category: Optional[str] = None
+    question: Optional[str] = Field(None, description="The updated question text.")
+    answer: Optional[str] = Field(None, description="The updated answer text.")
+    category: Optional[str] = Field(None, description="The updated category of the FAQ.")
 
 
 def _fallback_label(value: str | None, fallback: str) -> str:
@@ -113,9 +116,11 @@ def _delete_document_file(base_root: str, org_slug: str, folder_name: str, docum
 # --- Endpoints ---
 
 
-@router.get("/policies")
+@router.get("/policies", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def list_policies(session: SessionDep, current_user: CurrentUser):
-    """List all company policies with usage metrics."""
+    """
+    Retrieve all company policies with associated organization usage metrics.
+    """
     # Subquery for compliance count
     count_stmt = (
         select(PolicyCompliance.policy_id, func.count(PolicyCompliance.id).label("usage_count"))
@@ -149,9 +154,11 @@ async def list_policies(session: SessionDep, current_user: CurrentUser):
     ]
 
 
-@router.post("/policies")
+@router.post("/policies", status_code=201, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 422: {"description": "Invalid input payload"}})
 async def create_policy(session: SessionDep, current_user: CurrentUser, data: PolicyCreate):
-    """Create a new policy and assign it to the current organization."""
+    """
+    Create a new company policy and assign it to the current organization.
+    """
     policy = CompanyPolicy(
         organization_id=current_user.organization_id,
         policy_title=data.title,
@@ -175,15 +182,17 @@ async def create_policy(session: SessionDep, current_user: CurrentUser, data: Po
     return {"status": "success", "id": str(policy.id)}
 
 
-@router.post("/policies/upload")
+@router.post("/policies/upload", status_code=201, responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 422: {"description": "Invalid form fields"}})
 async def upload_policy(
     session: SessionDep,
     current_user: CurrentUser,
-    title: str = Form(default=""),
-    category: str = Form(default="Guidelines"),
-    file: UploadFile = File(...),
+    title: str = Form(default="", description="The optional custom title for the policy document."),
+    category: str = Form(default="Guidelines", description="The category category for the policy."),
+    file: UploadFile = File(..., description="The PDF file containing the policy text to extract."),
 ):
-    """Upload a PDF policy and store its extracted text in the knowledge base."""
+    """
+    Upload a PDF policy document and store its extracted text in the knowledge base.
+    """
     policy_id = uuid4()
     extracted_text, _ = await _store_pdf_upload(
         session,
@@ -217,9 +226,16 @@ async def upload_policy(
     return {"status": "success", "id": str(policy.id)}
 
 
-@router.patch("/policies/{policy_id}")
-async def update_policy(session: SessionDep, current_user: CurrentUser, policy_id: str, data: PolicyUpdate):
-    """Update an existing policy."""
+@router.patch("/policies/{policy_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to modify this policy"}, 404: {"description": "Policy not found"}, 422: {"description": "Invalid UUID format or input body"}})
+async def update_policy(
+    session: SessionDep,
+    current_user: CurrentUser,
+    policy_id: UUID = FastAPIPath(..., description="The unique UUID of the policy to update."),
+    data: PolicyUpdate = None,
+):
+    """
+    Update an existing company policy's title, category, or text content.
+    """
     statement = select(CompanyPolicy).where(
         CompanyPolicy.id == policy_id,
         CompanyPolicy.organization_id == current_user.organization_id,
@@ -242,16 +258,18 @@ async def update_policy(session: SessionDep, current_user: CurrentUser, policy_i
     return {"status": "success"}
 
 
-@router.patch("/policies/{policy_id}/upload")
+@router.patch("/policies/{policy_id}/upload", responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to modify this policy"}, 404: {"description": "Policy not found"}, 422: {"description": "Invalid UUID or form fields"}})
 async def replace_policy_upload(
     session: SessionDep,
     current_user: CurrentUser,
-    policy_id: str,
-    title: str = Form(default=""),
-    category: str = Form(default=""),
-    file: UploadFile = File(...),
+    policy_id: UUID = FastAPIPath(..., description="The unique UUID of the policy to replace."),
+    title: str = Form(default="", description="The optional updated title of the policy."),
+    category: str = Form(default="", description="The optional updated category of the policy."),
+    file: UploadFile = File(..., description="The new PDF version of the policy document."),
 ):
-    """Replace an existing policy with a newer PDF version."""
+    """
+    Replace an existing policy with a newer PDF version and re-extract text.
+    """
     statement = select(CompanyPolicy).where(
         CompanyPolicy.id == policy_id,
         CompanyPolicy.organization_id == current_user.organization_id,
@@ -267,7 +285,7 @@ async def replace_policy_upload(
         file,
         settings.POLICY_DOCS_ROOT,
         POLICY_DOCS_FOLDER,
-        policy_id,
+        str(policy_id),
     )
 
     policy.policy_title = _fallback_label(title, policy.policy_title)
@@ -281,9 +299,15 @@ async def replace_policy_upload(
     return {"status": "success", "id": str(policy.id)}
 
 
-@router.post("/policies/{policy_id}/toggle")
-async def toggle_policy(session: SessionDep, current_user: CurrentUser, policy_id: str):
-    """Toggle a policy's active status for the organization."""
+@router.post("/policies/{policy_id}/toggle", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 404: {"description": "Policy assignment not found"}, 422: {"description": "Invalid UUID format"}})
+async def toggle_policy(
+    session: SessionDep,
+    current_user: CurrentUser,
+    policy_id: UUID = FastAPIPath(..., description="The unique UUID of the policy to toggle active status for."),
+):
+    """
+    Toggle a policy's active status for the organization.
+    """
     statement = select(OrganizationPolicy).where(
         OrganizationPolicy.organization_id == current_user.organization_id,
         OrganizationPolicy.policy_id == policy_id
@@ -301,9 +325,11 @@ async def toggle_policy(session: SessionDep, current_user: CurrentUser, policy_i
     return {"status": "success", "isActive": org_policy.is_active}
 
 
-@router.get("/faqs")
+@router.get("/faqs", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def list_faqs(session: SessionDep, current_user: CurrentUser):
-    """List all FAQ articles."""
+    """
+    Retrieve all FAQ articles belonging to the organization.
+    """
     result = await session.exec(
         select(FAQArticle, OrganizationFAQArticle)
         .join(OrganizationFAQArticle, OrganizationFAQArticle.article_id == FAQArticle.id)
@@ -330,9 +356,11 @@ async def list_faqs(session: SessionDep, current_user: CurrentUser):
     ]
 
 
-@router.post("/faqs")
+@router.post("/faqs", status_code=201, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 422: {"description": "Invalid input payload"}})
 async def create_faq(session: SessionDep, current_user: CurrentUser, data: FAQCreate):
-    """Create a new FAQ and assign it to the current organization."""
+    """
+    Create a new FAQ article and assign it to the current organization.
+    """
     faq = FAQArticle(
         organization_id=current_user.organization_id,
         question=data.question,
@@ -355,15 +383,17 @@ async def create_faq(session: SessionDep, current_user: CurrentUser, data: FAQCr
     return {"status": "success", "id": str(faq.id)}
 
 
-@router.post("/faqs/upload")
+@router.post("/faqs/upload", status_code=201, responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 422: {"description": "Invalid form fields"}})
 async def upload_faq(
     session: SessionDep,
     current_user: CurrentUser,
-    question: str = Form(default=""),
-    category: str = Form(default="Knowledge"),
-    file: UploadFile = File(...),
+    question: str = Form(default="", description="The FAQ question text."),
+    category: str = Form(default="Knowledge", description="The FAQ category."),
+    file: UploadFile = File(..., description="The PDF file to extract the FAQ answer from."),
 ):
-    """Upload a PDF FAQ article and store the extracted answer text."""
+    """
+    Upload a PDF FAQ article and store the extracted answer text in the knowledge base.
+    """
     faq_id = uuid4()
     extracted_text, _ = await _store_pdf_upload(
         session,
@@ -396,9 +426,16 @@ async def upload_faq(
     return {"status": "success", "id": str(faq.id)}
 
 
-@router.patch("/faqs/{faq_id}")
-async def update_faq(session: SessionDep, current_user: CurrentUser, faq_id: str, data: FAQUpdate):
-    """Update an existing FAQ."""
+@router.patch("/faqs/{faq_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to modify this FAQ"}, 404: {"description": "FAQ not found"}, 422: {"description": "Invalid UUID format or input body"}})
+async def update_faq(
+    session: SessionDep,
+    current_user: CurrentUser,
+    faq_id: UUID = FastAPIPath(..., description="The unique UUID of the FAQ to update."),
+    data: FAQUpdate = None,
+):
+    """
+    Update an existing FAQ article's question, answer, or category.
+    """
     statement = select(FAQArticle).where(
         FAQArticle.id == faq_id,
         FAQArticle.organization_id == current_user.organization_id,
@@ -422,16 +459,18 @@ async def update_faq(session: SessionDep, current_user: CurrentUser, faq_id: str
     return {"status": "success"}
 
 
-@router.patch("/faqs/{faq_id}/upload")
+@router.patch("/faqs/{faq_id}/upload", responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to modify this FAQ"}, 404: {"description": "FAQ not found"}, 422: {"description": "Invalid UUID or form fields"}})
 async def replace_faq_upload(
     session: SessionDep,
     current_user: CurrentUser,
-    faq_id: str,
-    question: str = Form(default=""),
-    category: str = Form(default=""),
-    file: UploadFile = File(...),
+    faq_id: UUID = FastAPIPath(..., description="The unique UUID of the FAQ to replace."),
+    question: str = Form(default="", description="The optional updated question of the FAQ."),
+    category: str = Form(default="", description="The optional updated category of the FAQ."),
+    file: UploadFile = File(..., description="The new PDF version of the FAQ document."),
 ):
-    """Replace an existing FAQ with a newer PDF version."""
+    """
+    Replace an existing FAQ with a newer PDF version and re-extract text.
+    """
     statement = select(FAQArticle).where(
         FAQArticle.id == faq_id,
         FAQArticle.organization_id == current_user.organization_id,
@@ -447,7 +486,7 @@ async def replace_faq_upload(
         file,
         settings.KNOWLEDGE_DOCS_ROOT,
         SOP_DOCS_FOLDER,
-        faq_id,
+        str(faq_id),
     )
 
     faq.question = _fallback_label(question, faq.question)
@@ -460,9 +499,15 @@ async def replace_faq_upload(
     return {"status": "success", "id": str(faq.id)}
 
 
-@router.post("/faqs/{faq_id}/toggle")
-async def toggle_faq(session: SessionDep, current_user: CurrentUser, faq_id: str):
-    """Toggle an FAQ's active status for the organization."""
+@router.post("/faqs/{faq_id}/toggle", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 404: {"description": "FAQ assignment not found"}, 422: {"description": "Invalid UUID format"}})
+async def toggle_faq(
+    session: SessionDep,
+    current_user: CurrentUser,
+    faq_id: UUID = FastAPIPath(..., description="The unique UUID of the FAQ to toggle active status for."),
+):
+    """
+    Toggle an FAQ's active status for the organization.
+    """
     statement = select(OrganizationFAQArticle).where(
         OrganizationFAQArticle.organization_id == current_user.organization_id,
         OrganizationFAQArticle.article_id == faq_id
@@ -478,11 +523,11 @@ async def toggle_faq(session: SessionDep, current_user: CurrentUser, faq_id: str
     await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "isActive": org_faq.is_active}
 
-@router.delete("/policies/{policy_id}")
+@router.delete("/policies/{policy_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to delete this policy"}, 404: {"description": "Policy not found"}, 422: {"description": "Invalid UUID format"}})
 async def delete_policy(
     session: SessionDep,
     current_user: CurrentUser,
-    policy_id: str
+    policy_id: UUID = FastAPIPath(..., description="The unique UUID of the policy to delete."),
 ):
     """
     Remove a policy from the organization's knowledge base.
@@ -520,18 +565,18 @@ async def delete_policy(
         ).first()
         if policy:
             await session.delete(policy)
-        _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, policy_id)
+        _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, str(policy_id))
 
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=org_slug)
     return {"status": "success", "message": "Policy deleted"}
 
 
-@router.delete("/faqs/{faq_id}")
+@router.delete("/faqs/{faq_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to delete this FAQ"}, 404: {"description": "FAQ not found"}, 422: {"description": "Invalid UUID format"}})
 async def delete_faq(
     session: SessionDep,
     current_user: CurrentUser,
-    faq_id: str
+    faq_id: UUID = FastAPIPath(..., description="The unique UUID of the FAQ to delete."),
 ):
     """
     Remove an FAQ article from the organization's knowledge base.
@@ -565,9 +610,8 @@ async def delete_faq(
         ).first()
         if faq:
             await session.delete(faq)
-        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, SOP_DOCS_FOLDER, faq_id)
-        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_FAQ_DOCS_FOLDER, faq_id)
-
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, SOP_DOCS_FOLDER, str(faq_id))
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_FAQ_DOCS_FOLDER, str(faq_id))
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "message": "FAQ deleted"}
@@ -586,9 +630,11 @@ def _kb_display_category(raw_category: str) -> str:
     return raw_category
 
 
-@router.get("/kb")
+@router.get("/kb", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def list_kb_articles(session: SessionDep, current_user: CurrentUser):
-    """List all knowledge base articles for the organization."""
+    """
+    List all knowledge base articles for the organization.
+    """
     result = await session.exec(
         select(FAQArticle, OrganizationFAQArticle)
         .join(OrganizationFAQArticle, OrganizationFAQArticle.article_id == FAQArticle.id)
@@ -615,15 +661,17 @@ async def list_kb_articles(session: SessionDep, current_user: CurrentUser):
     ]
 
 
-@router.post("/kb/upload")
+@router.post("/kb/upload", status_code=201, responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 422: {"description": "Invalid form parameters"}})
 async def upload_kb_article(
     session: SessionDep,
     current_user: CurrentUser,
-    title: str = Form(default=""),
-    category: str = Form(default="General"),
-    file: UploadFile = File(...),
+    title: str = Form(default="", description="The custom title for the KB article."),
+    category: str = Form(default="General", description="The KB category/namespace."),
+    file: UploadFile = File(..., description="The PDF file to extract knowledge base text from."),
 ):
-    """Upload a PDF as a knowledge base article."""
+    """
+    Upload a PDF as a knowledge base article.
+    """
     kb_id = uuid4()
     extracted_text, _ = await _store_pdf_upload(
         session,
@@ -656,16 +704,18 @@ async def upload_kb_article(
     return {"status": "success", "id": str(faq.id)}
 
 
-@router.patch("/kb/{kb_id}/upload")
+@router.patch("/kb/{kb_id}/upload", responses={400: {"description": "Invalid PDF file"}, 401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to modify this KB article"}, 404: {"description": "KB article not found"}, 422: {"description": "Invalid UUID format or form parameters"}})
 async def replace_kb_upload(
     session: SessionDep,
     current_user: CurrentUser,
-    kb_id: str,
-    title: str = Form(default=""),
-    category: str = Form(default=""),
-    file: UploadFile = File(...),
+    kb_id: UUID = FastAPIPath(..., description="The unique UUID of the KB article to replace."),
+    title: str = Form(default="", description="The optional updated title of the KB article."),
+    category: str = Form(default="", description="The optional updated category of the KB article."),
+    file: UploadFile = File(..., description="The new PDF version of the KB article."),
 ):
-    """Replace an existing KB article with a newer PDF version."""
+    """
+    Replace an existing KB article with a newer PDF version and re-extract text.
+    """
     result = await session.exec(
         select(FAQArticle).where(
             FAQArticle.id == kb_id,
@@ -682,7 +732,7 @@ async def replace_kb_upload(
         file,
         settings.KNOWLEDGE_DOCS_ROOT,
         KB_DOCS_FOLDER,
-        kb_id,
+        str(kb_id),
     )
     faq.question = _fallback_label(title, faq.question)
     faq.answer = extracted_text or faq.answer
@@ -695,9 +745,15 @@ async def replace_kb_upload(
     return {"status": "success", "id": str(faq.id)}
 
 
-@router.post("/kb/{kb_id}/toggle")
-async def toggle_kb_article(session: SessionDep, current_user: CurrentUser, kb_id: str):
-    """Toggle a KB article's active status."""
+@router.post("/kb/{kb_id}/toggle", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 404: {"description": "KB article assignment not found"}, 422: {"description": "Invalid UUID format"}})
+async def toggle_kb_article(
+    session: SessionDep,
+    current_user: CurrentUser,
+    kb_id: UUID = FastAPIPath(..., description="The unique UUID of the KB article to toggle active status for."),
+):
+    """
+    Toggle a KB article's active status.
+    """
     result = await session.exec(
         select(OrganizationFAQArticle).where(
             OrganizationFAQArticle.organization_id == current_user.organization_id,
@@ -714,11 +770,11 @@ async def toggle_kb_article(session: SessionDep, current_user: CurrentUser, kb_i
     return {"status": "success", "isActive": org_faq.is_active}
 
 
-@router.delete("/kb/{kb_id}")
+@router.delete("/kb/{kb_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - not authorized to delete this KB article"}, 404: {"description": "KB article not found"}, 422: {"description": "Invalid UUID format"}})
 async def delete_kb_article(
     session: SessionDep,
     current_user: CurrentUser,
-    kb_id: str,
+    kb_id: UUID = FastAPIPath(..., description="The unique UUID of the KB article to delete."),
 ):
     """Remove a KB article from the organization. Only the owning org can delete it."""
     # Authorize via the organization's link (matches list_kb visibility).
@@ -751,7 +807,7 @@ async def delete_kb_article(
     org_slug = await _get_org_slug(session, current_user.organization_id)
     if not remaining:
         await session.delete(faq_entity)
-        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, kb_id)
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, str(kb_id))
 
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=org_slug)

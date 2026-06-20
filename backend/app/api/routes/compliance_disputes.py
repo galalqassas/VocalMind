@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Path, status
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -25,27 +25,31 @@ router = APIRouter()
 
 
 class DisputeRequest(BaseModel):
-    agent_flag_note: Optional[str] = None
+    agent_flag_note: Optional[str] = Field(None, description="Optional note from the agent explaining the reason for disputing the compliance verdict.")
 
 
 class DisputeResponse(BaseModel):
-    compliance_id: UUID
-    is_flagged: bool
-    agent_flagged_at: datetime
-    message: str
+    compliance_id: UUID = Field(..., description="The unique UUID of the policy compliance record that was disputed.")
+    is_flagged: bool = Field(..., description="Flag indicating if the compliance record is currently marked as disputed.")
+    agent_flagged_at: datetime = Field(..., description="Timestamp when the dispute flag was submitted.")
+    message: str = Field(..., description="Human-readable status message confirming the dispute creation.")
 
 
 @router.post(
     "/{compliance_id}/dispute",
     response_model=DisputeResponse,
     summary="Agent disputes a compliance verdict",
+    responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - only agents can dispute their own calls"}, 404: {"description": "Compliance record or interaction not found"}, 422: {"description": "Invalid parameter format"}}
 )
 async def dispute_compliance(
-    compliance_id: UUID,
-    body: DisputeRequest,
-    session: SessionDep,
-    current_user: CurrentUser,
+    compliance_id: UUID = Path(..., description="The unique UUID of the policy compliance record to dispute."),
+    body: DisputeRequest = None,
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Mark a policy compliance record as disputed. Triggers a notification to all managers in the agent's organization.
+    """
     if current_user.role != UserRole.agent:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -73,7 +77,7 @@ async def dispute_compliance(
     pc.is_flagged = True
     pc.agent_flagged_by = current_user.id
     pc.agent_flagged_at = now
-    pc.agent_flag_note = body.agent_flag_note
+    pc.agent_flag_note = body.agent_flag_note if body else None
     session.add(pc)
 
     await emit_to_managers(
@@ -81,7 +85,7 @@ async def dispute_compliance(
         organization_id=current_user.organization_id,
         type=NotificationType.agent_flag_pending,
         title=f"{current_user.name} flagged a compliance verdict",
-        body=body.agent_flag_note,
+        body=body.agent_flag_note if body else None,
         link_url="/manager/reviews",
         payload={
             "interaction_id": str(pc.interaction_id),
@@ -99,12 +103,16 @@ async def dispute_compliance(
     )
 
 
-@router.delete("/{compliance_id}/dispute")
+@router.delete("/{compliance_id}/dispute", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - you can only retract disputes you submitted"}, 404: {"description": "Compliance record not found"}, 422: {"description": "Invalid parameter format"}})
 async def retract_compliance_dispute(
-    compliance_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUser,
+    compliance_id: UUID = Path(..., description="The unique UUID of the policy compliance record to retract dispute from."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Retract a previously submitted compliance dispute.
+    Agents can only retract their own disputes; managers can clear any dispute in their organization.
+    """
     pc = (await session.exec(
         select(PolicyCompliance).where(PolicyCompliance.id == compliance_id)
     )).first()

@@ -21,8 +21,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Path, status
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -35,27 +35,31 @@ router = APIRouter(prefix="/emotion-events", tags=["emotion-events"])
 
 
 class DisputeRequest(BaseModel):
-    agent_flag_note: Optional[str] = None  # free-text "why I think this is wrong"
+    agent_flag_note: Optional[str] = Field(None, description="Optional note from the agent explaining the reason for disputing the emotion event.")
 
 
 class DisputeResponse(BaseModel):
-    event_id: UUID
-    is_flagged: bool
-    agent_flagged_at: datetime
-    message: str
+    event_id: UUID = Field(..., description="The unique UUID of the emotion event that was disputed.")
+    is_flagged: bool = Field(..., description="Flag indicating if the emotion event is currently marked as disputed.")
+    agent_flagged_at: datetime = Field(..., description="Timestamp when the dispute flag was submitted.")
+    message: str = Field(..., description="Human-readable status message confirming the dispute creation.")
 
 
 @router.post(
     "/{event_id}/dispute",
     response_model=DisputeResponse,
     summary="Agent disputes an emotion event",
+    responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - only agents can dispute their own calls"}, 404: {"description": "Emotion event or parent interaction not found"}, 422: {"description": "Invalid parameter format"}}
 )
 async def dispute_emotion_event(
-    event_id: UUID,
-    body: DisputeRequest,
     session: SessionDep,
     current_user: CurrentUser,
+    event_id: UUID = Path(..., description="The unique UUID of the emotion event to dispute."),
+    body: DisputeRequest = None,
 ):
+    """
+    Mark an AI-predicted emotion event as disputed. Triggers a notification to all managers in the agent's organization.
+    """
     if current_user.role != UserRole.agent:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -83,7 +87,7 @@ async def dispute_emotion_event(
     event.is_flagged = True
     event.agent_flagged_by = current_user.id
     event.agent_flagged_at = now
-    event.agent_flag_note = body.agent_flag_note
+    event.agent_flag_note = body.agent_flag_note if body else None
     session.add(event)
 
     await emit_to_managers(
@@ -91,7 +95,7 @@ async def dispute_emotion_event(
         organization_id=current_user.organization_id,
         type=NotificationType.agent_flag_pending,
         title=f"{current_user.name} flagged an emotion event",
-        body=body.agent_flag_note,
+        body=body.agent_flag_note if body else None,
         link_url="/manager/reviews",
         payload={
             "interaction_id": str(event.interaction_id),
@@ -112,12 +116,17 @@ async def dispute_emotion_event(
 @router.delete(
     "/{event_id}/dispute",
     summary="Agent or manager retracts an emotion dispute",
+    responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - you can only retract disputes you submitted"}, 404: {"description": "Emotion event not found"}, 422: {"description": "Invalid parameter format"}}
 )
 async def retract_dispute(
-    event_id: UUID,
     session: SessionDep,
     current_user: CurrentUser,
+    event_id: UUID = Path(..., description="The unique UUID of the emotion event to retract dispute from."),
 ):
+    """
+    Retract a previously submitted emotion dispute.
+    Agents can only retract their own disputes; managers can clear any dispute in their organization.
+    """
     event = (await session.exec(
         select(EmotionEvent).where(EmotionEvent.id == event_id)
     )).first()

@@ -40,15 +40,15 @@ def _ensure_rag_on_path() -> None:
 
 
 class RAGQueryRequest(BaseModel):
-    query: str
-    mode: str = "answer"
+    query: str = Field(..., description="The query string or question to search within the vector database.")
+    mode: str = Field("answer", description="The search mode ('answer' for general Q&A retrieval or 'compliance' for policy compliance checks).")
 
 
 class RAGQueryResponse(BaseModel):
-    response: str
-    chunks: list[dict]
-    timing: dict
-    retrieval_provenance: list[dict] = Field(default_factory=list)
+    response: str = Field(..., description="The generated/retrieved answer text.")
+    chunks: list[dict] = Field(..., description="List of raw source document text chunks retrieved from the vector database.")
+    timing: dict = Field(..., description="A dictionary of timing durations for query stages.")
+    retrieval_provenance: list[dict] = Field(default_factory=list, description="Structured attribution evidence cards tracing the source document metadata.")
 
 
 _engine_lock = threading.Lock()
@@ -106,8 +106,12 @@ def _build_retrieval_provenance(query: str, chunks: list[dict]) -> list[dict]:
 @router.get(
     "/health",
     summary="Health check for RAG service dependencies",
+    responses={500: {"description": "RAG engine initialization failed"}}
 )
 async def rag_health():
+    """
+    Check the health status of RAG service dependencies, including Qdrant and Ollama.
+    """
     checks: dict[str, str] = {}
     engine_available = False
     try:
@@ -160,7 +164,7 @@ def _get_engine():
         return _engine
 
 
-@router.post("/query", response_model=RAGQueryResponse)
+@router.post("/query", response_model=RAGQueryResponse, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 500: {"description": "RAG engine query processing failed"}, 422: {"description": "Invalid query input parameters"}})
 async def query_rag_endpoint(request: RAGQueryRequest, current_user: CurrentUser):
     """Retrieve grounded context from RAG collections and expose provenance."""
     engine = _get_engine()

@@ -3,7 +3,7 @@
 
 from collections import Counter
 from datetime import datetime, timezone
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Path as FastAPIPath, Query as FastAPIQuery
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select, func
@@ -350,12 +350,33 @@ RagComplianceReportResponse.model_rebuild()
 
 
 class InteractionFromStorageRequest(APIModel):
-    storage_path: str = Field(min_length=3, max_length=512)
-    agent_id: UUID | None = None
-    file_size_bytes: int | None = Field(default=None, ge=0)
-    duration_seconds: int | None = Field(default=None, ge=0)
-    interaction_date: datetime | None = None
-    verify_exists: bool = False
+    storage_path: str = Field(
+        min_length=3,
+        max_length=512,
+        description="The path to the audio file in Supabase storage."
+    )
+    agent_id: UUID | None = Field(
+        default=None,
+        description="Optional agent ID to associate with the interaction."
+    )
+    file_size_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional size of the audio file in bytes."
+    )
+    duration_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional duration of the audio in seconds."
+    )
+    interaction_date: datetime | None = Field(
+        default=None,
+        description="Optional date and time when the interaction occurred."
+    )
+    verify_exists: bool = Field(
+        default=False,
+        description="Whether to verify if the file exists in Supabase storage before creating the interaction."
+    )
 
 
 async def _resolve_interaction_agent(
@@ -377,12 +398,22 @@ async def _resolve_interaction_agent(
     return agent
 
 
-@router.post("")
+@router.post(
+    "",
+    responses={
+        400: {"description": "Invalid file format or empty file"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Agent or organization not found"},
+        422: {"description": "Validation Error"},
+        502: {"description": "Audio storage connection error"}
+    }
+)
 async def create_interaction(
     session: SessionDep,
     current_user: CurrentUser,
-    file: UploadFile = File(...),
-    agent_id: UUID | None = Form(default=None),
+    file: UploadFile = File(..., description="The real audio call recording file to upload (.wav or .mp3 format)."),
+    agent_id: UUID | None = Form(default=None, description="Optional agent ID to associate with the interaction. Defaults to the organization's default agent."),
 ):
     """Upload a real audio call, persist it to configured storage, and enqueue processing."""
     if not is_supported_audio_filename(file.filename):
@@ -456,12 +487,25 @@ async def create_interaction(
     }
 
 
-@router.post("/from-storage")
+@router.post(
+    "/from-storage",
+    responses={
+        400: {"description": "Invalid file format"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Agent or Supabase storage object not found"},
+        422: {"description": "Validation Error"}
+    }
+)
 async def create_interaction_from_storage(
     payload: InteractionFromStorageRequest,
     session: SessionDep,
     current_user: CurrentUser,
 ):
+    """
+    Create an interaction referencing a file already stored in Supabase Storage.
+    This initializes the metadata records and enqueues all processing jobs.
+    """
     filename = Path(payload.storage_path).name
     if not is_supported_audio_filename(filename):
         raise HTTPException(status_code=400, detail="Only .wav and .mp3 files are supported.")
@@ -560,12 +604,24 @@ async def create_interaction_from_storage(
     }
 
 
-@router.get("/{interaction_id}/processing-status")
+@router.get(
+    "/{interaction_id}/processing-status",
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        422: {"description": "Invalid UUID format"}
+    }
+)
 async def get_interaction_processing_status(
-    interaction_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUser,
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to check processing status for."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Get the processing status and job stage details for a specific interaction.
+    Useful for polling to check if transcription, emotion fusion, or LLM scoring has finished.
+    """
     interaction_result = await session.exec(
         select(Interaction).where(
             Interaction.id == interaction_id,
@@ -597,14 +653,26 @@ async def get_interaction_processing_status(
     }
 
 
-@router.post("/{interaction_id}/reprocess")
+@router.post(
+    "/{interaction_id}/reprocess",
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        409: {"description": "Conflict - interaction is already processing and force is false"},
+        422: {"description": "Invalid UUID format"}
+    }
+)
 async def reprocess_interaction(
-    interaction_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUser,
-    force: bool = False,
-    priority: bool = False,
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to reprocess."),
+    force: bool = FastAPIQuery(default=False, description="If true, bypasses checks for active jobs and forces reprocessing."),
+    priority: bool = FastAPIQuery(default=False, description="If true, enqueues with high priority."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Reprocess an interaction by resetting its status to pending and re-running all pipeline stages.
+    """
     interaction_result = await session.exec(
         select(Interaction).where(
             Interaction.id == interaction_id,
@@ -643,11 +711,21 @@ async def reprocess_interaction(
     }
 
 
-@router.delete("/{interaction_id}", status_code=204)
+@router.delete(
+    "/{interaction_id}",
+    status_code=204,
+    responses={
+        204: {"description": "Interaction deleted successfully"},
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        422: {"description": "Invalid UUID format"}
+    }
+)
 async def delete_interaction(
-    interaction_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUser,
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to permanently delete."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
     """
     Permanently delete an interaction and all dependent rows.
@@ -1067,7 +1145,13 @@ async def _resolve_llm_org_filter(
     return org_slug.strip() if isinstance(org_slug, str) and org_slug.strip() else None
 
 
-@router.get("")
+@router.get(
+    "",
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"}
+    }
+)
 async def list_interactions(session: SessionDep, current_user: CurrentUser):
     """List all interactions with agent name and scores."""
 
@@ -1146,13 +1230,22 @@ async def list_interactions(session: SessionDep, current_user: CurrentUser):
     return interactions
 
 
-@router.get("/{interaction_id}", response_model=InteractionDetailResponse)
+@router.get(
+    "/{interaction_id}",
+    response_model=InteractionDetailResponse,
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        422: {"description": "Invalid UUID format"}
+    }
+)
 async def get_interaction_detail(
-    interaction_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUser,
-    include_llm_triggers: bool = False,
-    llm_force_rerun: bool = False,
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to retrieve detailed information for."),
+    include_llm_triggers: bool = FastAPIQuery(default=False, description="Whether to evaluate and include LLM trigger verdicts (emotion shift, process adherence, policy RAG)."),
+    llm_force_rerun: bool = FastAPIQuery(default=False, description="If true, forces a re-evaluation of LLM trigger prompts even if cached results exist."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
     """Get a single interaction with utterances, emotion events, and policy violations."""
 
@@ -1422,8 +1515,20 @@ async def get_interaction_detail(
     }
 
 
-@router.get("/{interaction_id}/emotion-comparison")
-async def get_interaction_emotion_comparison(interaction_id: UUID, session: SessionDep, current_user: CurrentUser):
+@router.get(
+    "/{interaction_id}/emotion-comparison",
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        422: {"description": "Invalid UUID format"}
+    }
+)
+async def get_interaction_emotion_comparison(
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to retrieve emotion comparison data for."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
+):
     """Return compact acoustic vs text vs fused emotion comparison for manager panel."""
     interaction_result = await session.exec(
         select(Interaction.id).where(
@@ -1465,8 +1570,22 @@ def generate_dummy_wav(duration_seconds: int) -> bytes:
     return buf.getvalue()
 
 
-@router.get("/{interaction_id}/audio")
-async def get_interaction_audio(interaction_id: UUID, session: SessionDep, current_user: CurrentUser):
+@router.get(
+    "/{interaction_id}/audio",
+    responses={
+        401: {"description": "Not authenticated"},
+        403: {"description": "Access denied - unauthorized organization access"},
+        404: {"description": "Interaction not found"},
+        422: {"description": "Invalid UUID format"},
+        502: {"description": "Cannot reach storage"},
+        504: {"description": "Audio fetch timed out"}
+    }
+)
+async def get_interaction_audio(
+    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to retrieve the audio stream for."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
+):
     """Stream the audio file for an interaction from Supabase Storage or local path."""
 
     # Get the audio path and duration

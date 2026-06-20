@@ -44,21 +44,25 @@ class PasswordChange(BaseModel):
         return value
 
 
-@router.get("/me", response_model=User)
+@router.get("/me", response_model=User, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def read_user_me(
     current_user: CurrentUser,
 ) -> Any:
-    """Get current user."""
+    """
+    Get details of the currently authenticated user session.
+    """
     return current_user
 
 
-@router.patch("/me", response_model=User)
+@router.patch("/me", response_model=User, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 404: {"description": "User profile not found"}})
 async def update_user_me(
     body: ProfileUpdate,
     session: SessionDep,
     current_user: CurrentUser,
 ) -> Any:
-    """Update the current user's display name and/or avatar."""
+    """
+    Update the current user's profile display name and/or avatar URL.
+    """
     user = await session.get(User, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -75,15 +79,16 @@ async def update_user_me(
     return user
 
 
-@router.post("/me/change-password", status_code=status.HTTP_200_OK)
+@router.post("/me/change-password", status_code=status.HTTP_200_OK, responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}, 404: {"description": "User profile not found"}})
 async def change_password(
     body: PasswordChange,
     session: SessionDep,
     current_user: CurrentUser,
 ) -> dict:
-    """Change the current user's password.
+    """
+    Change the current user's password.
 
-    If the account already has a password set, the correct ``current_password``
+    If the account already has a password set, the correct current_password
     is required. Google-OAuth accounts without a password can set one directly.
     """
     user = await session.get(User, current_user.id)

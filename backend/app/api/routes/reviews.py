@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Path, status
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -40,67 +40,68 @@ def _ensure_manager(current_user: User) -> None:
 # ── Response schemas ─────────────────────────────────────────────────────────
 
 class EmotionFlagItem(BaseModel):
-    kind: Literal["emotion"] = "emotion"
-    review_id: UUID                                  # = emotion_event.id
-    interaction_id: UUID
-    agent_id: UUID
-    agent_name: str
-    agent_flagged_at: datetime
-    agent_flag_note: Optional[str]
-    # AI verdict snapshot
-    previous_emotion: Optional[str]
-    new_emotion: str
-    llm_justification: Optional[str]
-    confidence_score: Optional[float]
-    jump_to_seconds: float
+    kind: Literal["emotion"] = Field("emotion", description="Discriminator field identifying this review item as an emotion dispute.")
+    review_id: UUID = Field(..., description="The unique UUID of the disputed emotion event.")
+    interaction_id: UUID = Field(..., description="The unique UUID of the interaction/call containing this event.")
+    agent_id: UUID = Field(..., description="The unique UUID of the agent who flagged the event.")
+    agent_name: str = Field(..., description="The name or email of the agent who flagged the event.")
+    agent_flagged_at: datetime = Field(..., description="Timestamp when the agent flagged the event.")
+    agent_flag_note: Optional[str] = Field(None, description="Optional explanation note provided by the agent when flagging.")
+    previous_emotion: Optional[str] = Field(None, description="The original emotion detected before the event (if any).")
+    new_emotion: str = Field(..., description="The new disputed emotion label predicted by AI.")
+    llm_justification: Optional[str] = Field(None, description="AI-generated justification for the predicted emotion.")
+    confidence_score: Optional[float] = Field(None, description="AI confidence score for the predicted emotion.")
+    jump_to_seconds: float = Field(..., description="Timestamp in seconds offset from the audio start where the emotion event occurred.")
 
 
 class ComplianceFlagItem(BaseModel):
-    kind: Literal["compliance"] = "compliance"
-    review_id: UUID                                  # = policy_compliance.id
-    interaction_id: UUID
-    agent_id: UUID
-    agent_name: str
-    agent_flagged_at: datetime
-    agent_flag_note: Optional[str]
-    # AI verdict snapshot
-    policy_id: UUID
-    policy_title: Optional[str]
-    is_compliant: bool
-    compliance_score: float
-    llm_reasoning: Optional[str]
-    evidence_text: Optional[str]
+    kind: Literal["compliance"] = Field("compliance", description="Discriminator field identifying this review item as a compliance dispute.")
+    review_id: UUID = Field(..., description="The unique UUID of the disputed policy compliance record.")
+    interaction_id: UUID = Field(..., description="The unique UUID of the interaction/call containing this compliance record.")
+    agent_id: UUID = Field(..., description="The unique UUID of the agent who flagged the compliance record.")
+    agent_name: str = Field(..., description="The name or email of the agent who flagged the compliance record.")
+    agent_flagged_at: datetime = Field(..., description="Timestamp when the agent flagged the compliance record.")
+    agent_flag_note: Optional[str] = Field(None, description="Optional explanation note provided by the agent when flagging.")
+    policy_id: UUID = Field(..., description="The unique UUID of the policy that was evaluated.")
+    policy_title: Optional[str] = Field(None, description="Title of the evaluated policy.")
+    is_compliant: bool = Field(..., description="The disputed compliance status (True if compliant, False otherwise).")
+    compliance_score: float = Field(..., description="The disputed compliance score value.")
+    llm_reasoning: Optional[str] = Field(None, description="AI-generated reasoning for the compliance verdict.")
+    evidence_text: Optional[str] = Field(None, description="Transcript evidence text anchored to the compliance verdict.")
 
 
 class ReviewQueueResponse(BaseModel):
-    emotion: List[EmotionFlagItem]
-    compliance: List[ComplianceFlagItem]
+    emotion: List[EmotionFlagItem] = Field(..., description="List of agent-disputed emotion events pending manager review.")
+    compliance: List[ComplianceFlagItem] = Field(..., description="List of agent-disputed compliance verdicts pending manager review.")
 
 
 class EmotionReviewRequest(BaseModel):
-    decision: Literal["accept", "reject"]
-    corrected_emotion: Optional[str] = None        # required when decision == accept
-    corrected_justification: Optional[str] = None
-    manager_note: Optional[str] = None
+    decision: Literal["accept", "reject"] = Field(..., description="The manager's decision to accept (correct) or reject (dismiss) the agent's dispute.")
+    corrected_emotion: Optional[str] = Field(None, description="The corrected emotion label. Required if decision is 'accept'.")
+    corrected_justification: Optional[str] = Field(None, description="Optional manager justification for the correction.")
+    manager_note: Optional[str] = Field(None, description="Optional review notes/feedback for the agent.")
 
 
 class ComplianceReviewRequest(BaseModel):
-    decision: Literal["accept", "reject"]
-    corrected_is_compliant: Optional[bool] = None  # required when decision == accept
-    corrected_score: Optional[float] = None
-    manager_note: Optional[str] = None
+    decision: Literal["accept", "reject"] = Field(..., description="The manager's decision to accept (correct) or reject (dismiss) the agent's dispute.")
+    corrected_is_compliant: Optional[bool] = Field(None, description="The corrected compliance status. Required if decision is 'accept'.")
+    corrected_score: Optional[float] = Field(None, description="Optional corrected compliance score value (0.0 to 1.0).")
+    manager_note: Optional[str] = Field(None, description="Optional review notes/feedback for the agent.")
 
 
 class ReviewDecisionResponse(BaseModel):
-    review_id: UUID
-    decision: str
-    feedback_id: Optional[UUID] = None
+    review_id: UUID = Field(..., description="The unique UUID of the reviewed dispute (event_id or compliance_id).")
+    decision: str = Field(..., description="The manager's decision ('accept' or 'reject').")
+    feedback_id: Optional[UUID] = Field(None, description="The unique UUID of the created feedback/correction record, if accepted.")
 
 
 # ── Queue ────────────────────────────────────────────────────────────────────
 
-@router.get("/queue", response_model=ReviewQueueResponse)
+@router.get("/queue", response_model=ReviewQueueResponse, responses={401: {"description": "Not authenticated"}, 403: {"description": "Manager access or organization scope validation failed"}})
 async def get_review_queue(session: SessionDep, current_user: CurrentUser):
+    """
+    Retrieve the queue of all agent-disputed AI evaluations (emotion and compliance) within the manager's organization.
+    """
     _ensure_manager(current_user)
     org_id = current_user.organization_id
 
@@ -167,13 +168,17 @@ async def get_review_queue(session: SessionDep, current_user: CurrentUser):
 
 # ── Emotion flag decision ────────────────────────────────────────────────────
 
-@router.post("/emotion/{event_id}", response_model=ReviewDecisionResponse)
+@router.post("/emotion/{event_id}", response_model=ReviewDecisionResponse, responses={401: {"description": "Not authenticated"}, 403: {"description": "Manager access or organization scope validation failed"}, 404: {"description": "Emotion event not found"}, 422: {"description": "Invalid parameter or body format"}})
 async def review_emotion_flag(
-    event_id: UUID,
-    body: EmotionReviewRequest,
-    session: SessionDep,
-    current_user: CurrentUser,
+    event_id: UUID = Path(..., description="The unique UUID of the disputed emotion event to review."),
+    body: EmotionReviewRequest = None,
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Review and submit a decision (accept/reject) on an agent-disputed emotion event.
+    Accepting the dispute creates an EmotionFeedback correction record and notifies the agent.
+    """
     _ensure_manager(current_user)
 
     event = (await session.exec(
@@ -256,13 +261,17 @@ async def review_emotion_flag(
 
 # ── Compliance flag decision ────────────────────────────────────────────────
 
-@router.post("/compliance/{compliance_id}", response_model=ReviewDecisionResponse)
+@router.post("/compliance/{compliance_id}", response_model=ReviewDecisionResponse, responses={401: {"description": "Not authenticated"}, 403: {"description": "Manager access or organization scope validation failed"}, 404: {"description": "Compliance record not found"}, 422: {"description": "Invalid parameter or body format"}})
 async def review_compliance_flag(
-    compliance_id: UUID,
-    body: ComplianceReviewRequest,
-    session: SessionDep,
-    current_user: CurrentUser,
+    compliance_id: UUID = Path(..., description="The unique UUID of the disputed compliance record to review."),
+    body: ComplianceReviewRequest = None,
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
 ):
+    """
+    Review and submit a decision (accept/reject) on an agent-disputed compliance verdict.
+    Accepting the dispute creates a ComplianceFeedback correction record and notifies the agent.
+    """
     _ensure_manager(current_user)
 
     pc = (await session.exec(

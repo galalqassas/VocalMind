@@ -9,7 +9,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
@@ -33,29 +33,33 @@ def _ensure_manager(current_user) -> None:
 
 
 class EmotionCorrectionRequest(BaseModel):
-    emotion_event_id: UUID
-    corrected_emotion: str
-    corrected_justification: Optional[str] = None
-    correction_reason: Optional[str] = None
+    emotion_event_id: UUID = Field(..., description="The unique UUID of the emotion event being corrected.")
+    corrected_emotion: str = Field(..., description="The new corrected emotion label (e.g., happy, frustrated, neutral).")
+    corrected_justification: Optional[str] = Field(None, description="Optional text justification explaining the corrected emotion.")
+    correction_reason: Optional[str] = Field(None, description="The reason why the manager is correcting this emotion event.")
 
 
 class ComplianceCorrectionRequest(BaseModel):
-    policy_compliance_id: UUID
-    corrected_is_compliant: bool
-    corrected_score: Optional[float] = None
-    correction_reason: Optional[str] = None
+    policy_compliance_id: UUID = Field(..., description="The unique UUID of the policy compliance record being corrected.")
+    corrected_is_compliant: bool = Field(..., description="Whether the interaction is actually compliant with the policy.")
+    corrected_score: Optional[float] = Field(None, description="Optional corrected score value (0.0 to 1.0) for compliance.")
+    correction_reason: Optional[str] = Field(None, description="The reason why the manager is correcting this compliance record.")
 
 
 class CorrectionResponse(BaseModel):
-    feedback_id: UUID
+    feedback_id: UUID = Field(..., description="The unique UUID of the created feedback/correction record.")
 
 
-@router.post("/emotion", response_model=CorrectionResponse, status_code=201)
+@router.post("/emotion", response_model=CorrectionResponse, status_code=201, responses={401: {"description": "Not authenticated"}, 403: {"description": "Manager access or organization scope validation failed"}, 404: {"description": "Emotion event not found"}, 422: {"description": "Request body validation failed"}})
 async def correct_emotion(
     body: EmotionCorrectionRequest,
     session: SessionDep,
     current_user: CurrentUser,
 ):
+    """
+    Submit a manager correction for an AI-predicted emotion event.
+    Creates a reviewed feedback entry and triggers a notification to the agent.
+    """
     _ensure_manager(current_user)
 
     event = (await session.exec(
@@ -115,12 +119,16 @@ async def correct_emotion(
     return CorrectionResponse(feedback_id=feedback.id)
 
 
-@router.post("/compliance", response_model=CorrectionResponse, status_code=201)
+@router.post("/compliance", response_model=CorrectionResponse, status_code=201, responses={401: {"description": "Not authenticated"}, 403: {"description": "Manager access or organization scope validation failed"}, 404: {"description": "Compliance record not found"}, 422: {"description": "Request body validation failed"}})
 async def correct_compliance(
     body: ComplianceCorrectionRequest,
     session: SessionDep,
     current_user: CurrentUser,
 ):
+    """
+    Submit a manager correction for an AI-evaluated policy compliance result.
+    Creates a reviewed feedback entry and triggers a notification to the agent.
+    """
     _ensure_manager(current_user)
 
     pc = (await session.exec(

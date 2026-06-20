@@ -861,9 +861,11 @@ async def _fetch_conversation_block(conn, user_id: UUID, max_pairs: int = 6, max
     return block
 
 
-@router.get("/history")
+@router.get("/history", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - manager role required"}})
 async def get_assistant_history(current_user: CurrentUser):
-    """Recent assistant exchanges for the signed-in manager (newest sessions last)."""
+    """
+    Retrieve recent AI assistant query history for the authenticated manager.
+    """
     if current_user.role != UserRole.manager:
         raise HTTPException(status_code=403, detail="Assistant is only available to managers")
 
@@ -983,11 +985,14 @@ async def get_assistant_history(current_user: CurrentUser):
         return history
 
 
-@router.post("/query")
+@router.post("/query", response_model=AssistantQueryResponse, responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - manager role required"}, 422: {"description": "Invalid input query parameters"}})
 async def process_assistant_query(
     request: AssistantQueryRequest,
     current_user: CurrentUser,
 ) -> AssistantQueryResponse:
+    """
+    Submit a natural language query or chat message to the AI Manager Assistant.
+    """
     if current_user.role != UserRole.manager:
         raise HTTPException(status_code=403, detail="Assistant is only available to managers")
 

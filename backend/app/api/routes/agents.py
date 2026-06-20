@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Path
 from sqlmodel import select, func
 from uuid import UUID
 from sqlalchemy import extract
@@ -21,9 +21,12 @@ def _can_access_agent_profile(current_user: CurrentUser, agent_id: UUID) -> bool
     return True
 
 
-@router.get("")
+@router.get("", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def list_agents(session: SessionDep, current_user: CurrentUser):
-    """List all agents for the current organization."""
+    """
+    List all active agents belonging to the current user's organization.
+    Agents can only view themselves.
+    """
     stmt = select(UserModel).where(
         UserModel.role == UserRole.agent,
         UserModel.is_active == True,  # noqa: E712
@@ -43,9 +46,15 @@ async def list_agents(session: SessionDep, current_user: CurrentUser):
     ]
 
 
-@router.get("/{agent_id}")
-async def get_agent_profile(agent_id: UUID, session: SessionDep, current_user: CurrentUser):
-    """Get agent profile with stats, weekly trend, and recent calls."""
+@router.get("/{agent_id}", responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - agents can only access their own profile"}, 404: {"description": "Agent not found"}, 422: {"description": "Invalid UUID format"}})
+async def get_agent_profile(
+    agent_id: UUID = Path(..., description="The unique UUID of the agent to fetch the profile for."),
+    session: SessionDep = None,
+    current_user: CurrentUser = None,
+):
+    """
+    Retrieve details for a specific agent profile, including aggregate performance scores, recent interactions, and weekly trends.
+    """
     if not _can_access_agent_profile(current_user, agent_id):
         raise HTTPException(status_code=403, detail="Agents can only access their own profile")
 

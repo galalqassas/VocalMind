@@ -57,11 +57,49 @@ async def lifespan(app: FastAPI):
         await stop_processing_worker()
 
 
+tags_metadata = [
+    {"name": "auth", "description": "Authentication, Google OAuth, and session management."},
+    {"name": "emotion", "description": "Speech and text emotion analysis and dual-emotion fusion."},
+    {"name": "emotion-events", "description": "Agent-disputed emotion events and manager reviews."},
+    {"name": "dashboard", "description": "Call center performance indicators, trends, and leaderboard statistics."},
+    {"name": "interactions", "description": "Call recording interactions upload, reprocessing, listing, and analysis details."},
+    {"name": "knowledge", "description": "Policy, FAQ, and KB document CRUD operations and PDF ingestion."},
+    {"name": "agents", "description": "Agent performance tracking and profile administration."},
+    {"name": "assistant", "description": "Natural-language-to-SQL AI Manager Assistant chat and query processing."},
+    {"name": "users", "description": "User profile management and password operations."},
+    {"name": "llm-trigger", "description": "Compliance, emotion shift, process adherence, and policy check LLM triggers."},
+    {"name": "rag", "description": "RAG querying and vector DB retrieval proxy endpoints."},
+    {"name": "diarization", "description": "Voice activity detection and speaker diarization endpoints."},
+    {"name": "transcription", "description": "Speech-to-text transcription endpoints."},
+    {"name": "vad", "description": "Audio voice activity detection split endpoints."},
+    {"name": "full", "description": "Unified pipeline (VAD + ASR + Emotion) execution endpoint."},
+    {"name": "internal", "description": "Internal developer diagnostics, system status, and backend configuration."},
+    {"name": "notifications", "description": "In-app notifications CRUD operations and polling endpoints."},
+    {"name": "reviews", "description": "Agent compliance/emotion dispute coaching and review queue management."},
+    {"name": "feedback", "description": "Post-interaction compliance and emotion feedback collection."},
+    {"name": "compliance-disputes", "description": "Policy compliance dispute workflow for agents and managers."},
+]
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan,
+    summary="Call-center AI platform for audio transcription, diarization, emotion fusion, and LLM compliance scoring.",
+    description="""
+VocalMind is a multi-tenant call-center AI platform that provides:
+* **Speech Processing**: VAD, WhisperX transcription, and speaker diarization.
+* **Dual-Emotion Fusion**: Joint acoustic and text emotion analysis per utterance.
+* **LLM Compliance scoring**: Evidence-anchored policy validation and process adherence tracking.
+* **AI Manager Assistant**: Natural-language-to-SQL dashboard querying.
+* **RAG System**: Dual Qdrant collections for compliance validation and FAQ Q&A.
+    """,
+    contact={
+        "name": "VocalMind Engineering Team",
+        "email": "engineering@vocalmind.ai",
+        "url": "https://vocalmind.ai",
+    },
+    openapi_tags=tags_metadata,
 )
 
 # Prometheus /metrics endpoint. Excludes itself and /health so the counters
@@ -123,11 +161,18 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def root():
+    """
+    Root endpoint that provides a welcoming message for the VocalMind API.
+    """
     return {"message": "Welcome to VocalMind API"}
 
 
 @app.get("/health")
 async def health():
+    """
+    Verify application health by testing the backend database connection.
+    Returns 200 OK if successful, or 503 Service Unavailable if the database is unreachable.
+    """
     try:
         dsn = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
         conn = await asyncpg.connect(dsn=dsn, timeout=3.0)
@@ -143,5 +188,9 @@ async def health():
 
 @app.get("/health/circuit-breakers")
 async def circuit_breakers_health():
+    """
+    Retrieve current state of all LLM and third-party API circuit breakers.
+    Used for monitoring service degradation and diagnostic health checks.
+    """
     # Diagnostic-only endpoint. Restrict to internal/admin access before exposing publicly.
     return JSONResponse(status_code=200, content=get_breaker_states())

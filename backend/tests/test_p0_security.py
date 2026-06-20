@@ -124,7 +124,7 @@ def test_cross_org_policy_patch_returns_403(cross_org_client):
         "/api/v1/knowledge/policies",
         json={"title": "Refund", "category": "Guidelines", "content": "abc"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     policy_id = response.json()["id"]
 
     current_user_state["user"] = test_session.exec(
@@ -146,7 +146,7 @@ def test_cross_org_policy_patch_shared_policy_returns_403(cross_org_client):
         "/api/v1/knowledge/policies",
         json={"title": "Refund", "category": "Guidelines", "content": "abc"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     policy_id = response.json()["id"]
 
     shared_policy = test_session.exec(

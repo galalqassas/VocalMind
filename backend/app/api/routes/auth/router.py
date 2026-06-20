@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
@@ -66,13 +66,16 @@ def _create_token(user_id: Any) -> dict:
 
 # ---------- Password login ----------
 
-@router.post("/login/access-token", response_model=Token)
+@router.post("/login/access-token", response_model=Token, responses={400: {"description": "Incorrect email or password, or inactive user"}})
 async def login_access_token(
     response: Response,
     session: SessionDep,
     form_data: OAuth2PasswordRequestForm = Depends(),
 ) -> Any:
-    """OAuth2 compatible token login."""
+    """
+    Authenticate user using email and password and return a bearer access token.
+    Also sets the 'vocalmind_token' cookie.
+    """
     statement = select(UserModel).where(UserModel.email == form_data.username)
     result = await session.exec(statement)
     user = result.first()
@@ -101,9 +104,16 @@ async def login_access_token(
 
 # ---------- Google OAuth (direct ID-token from frontend) ----------
 
-@router.post("/google", response_model=Token)
-async def google_auth(token: str, response: Response, session: SessionDep) -> Any:
-    """Google Login: Verify Google ID token and return access token."""
+@router.post("/google", response_model=Token, responses={400: {"description": "Invalid Google token or inactive user"}})
+async def google_auth(
+    token: str = Query(..., description="The Google ID token received from the frontend Google sign-in."),
+    response: Response = None,
+    session: SessionDep = None,
+) -> Any:
+    """
+    Authenticate user using a direct Google ID token and return a bearer access token.
+    Creates a new user profile if the email is not registered.
+    """
     google_user = verify_google_token(token)
     if not google_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Google token")
@@ -128,7 +138,9 @@ async def google_auth(token: str, response: Response, session: SessionDep) -> An
 
 @router.get("/google/login")
 async def login_google():
-    """Redirect to Google's consent screen."""
+    """
+    Redirect the client browser to Google's OAuth2 consent screen.
+    """
     state = secrets.token_urlsafe(32)
     _oauth_states.add(state)
     params = urlencode({
@@ -142,9 +154,16 @@ async def login_google():
     return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
 
-@router.get("/google/callback")
-async def google_callback(code: str, state: str, session: SessionDep):
-    """Exchange authorization code for tokens and log the user in."""
+@router.get("/google/callback", responses={400: {"description": "Invalid state or token exchange failure"}})
+async def google_callback(
+    code: str = Query(..., description="The authorization code returned by Google OAuth redirect."),
+    state: str = Query(..., description="The state parameter used to prevent CSRF attacks."),
+    session: SessionDep = None,
+):
+    """
+    Exchange the authorization code for access/ID tokens and log the user in.
+    Sets the auth cookie and redirects back to frontend success page.
+    """
     if state not in _oauth_states:
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
     _oauth_states.discard(state)
@@ -187,8 +206,11 @@ async def google_callback(code: str, state: str, session: SessionDep):
     )
     return response
 
+
 @router.post("/logout")
 async def logout(response: Response):
-    """Log out by clearing the HttpOnly cookie."""
+    """
+    Log out the currently authenticated user by deleting the vocalmind_token cookie.
+    """
     response.delete_cookie(key="vocalmind_token", httponly=True, samesite="lax")
     return {"message": "Logged out successfully"}

@@ -42,9 +42,12 @@ def _compliance_color(rate: float) -> str:
     return "#EF4444"
 
 
-@router.get("/stats")
+@router.get("/stats", responses={401: {"description": "Not authenticated"}, 403: {"description": "Credentials invalid"}})
 async def get_dashboard_stats(session: SessionDep, current_user: CurrentUser):
-    """Return all data needed by the Manager Dashboard in one call."""
+    """
+    Retrieve all aggregated Key Performance Indicators (KPIs), metrics, weekly trends,
+    emotion distribution, and agent performance rankings for the manager dashboard.
+    """
     
     # Check cache first
     cache_key = f"manager_stats_{current_user.organization_id}"
