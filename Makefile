@@ -90,6 +90,15 @@ rag-test: ## Run RAG tests
 rag-install: ## Install RAG dependencies
 	cd services/rag && uv sync
 
+ragas-eval-quick: ## Run quick reference-free RAGAS evaluation
+	cd services/rag && uv run python ragas_eval.py --mode reference-free
+
+ragas-generate-testset: ## Generate synthetic RAGAS testset from policy/SOP docs
+	cd services/rag && uv run python ragas_eval.py --mode generate --size 50
+
+ragas-eval-full: ## Run full RAGAS evaluation with all metrics
+	cd services/rag && uv run python ragas_eval.py --mode full
+
 llm-trigger-test: ## Run full LLM-trigger validation (backend + RAG + frontend)
 	cd backend && uv run pytest tests/test_llm_trigger_service.py tests/test_interactions_llm_triggers.py tests/test_sop_retrieval.py -q
 	cd services/rag && uv run pytest tests/test_ingest.py -q
@@ -106,6 +115,9 @@ quality-eval-policy: ## Run policy quality benchmark
 
 quality-eval-rag: ## Run RAG quality benchmark
 	python infra/scripts/eval/eval_rag.py
+
+quality-eval-ragas: ## Run RAGAS reference-free quality evaluation
+	cd services/rag && uv run python ragas_eval.py --mode reference-free
 
 quality-eval-resolution: ## Run resolution quality benchmark
 	python infra/scripts/eval/eval_resolution.py

@@ -87,7 +87,9 @@ class TestSettings:
 
     def test_similarity_top_k(self):
         s = Settings()
-        assert s.similarity_top_k == 5
+        # Reranker scans a wider pool (RERANK_CANDIDATE_K) and returns the top 3,
+        # which keeps unused tail chunks out of the synthesis context.
+        assert s.similarity_top_k == 3
 
     def test_validate_config_raises_on_missing_docs_dir(self, tmp_path):
         s = Settings()

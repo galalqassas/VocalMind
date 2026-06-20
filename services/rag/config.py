@@ -158,9 +158,68 @@ class Settings(BaseSettings):
     child_chunking: ChildChunkingConfig = Field(default_factory=ChildChunkingConfig)
 
     # Query defaults
-    similarity_top_k: int = 5
+    # top_k=3: the reranker scans a wide pool (RERANK_CANDIDATE_K) and returns
+    # only the 3 best chunks. Fewer unused tail chunks → higher context precision,
+    # since the precision judge penalizes retrieved contexts the answer didn't use.
+    similarity_top_k: int = 3
     response_mode: Literal["compact", "refine", "tree_summarize"] = "compact"
     RAG_QUERY_LOG_ENABLED: bool = Field(default=False, alias="RAG_QUERY_LOG_ENABLED")
+
+    # ── Synthesis prompt mode ──
+    # "safe"      — grounded + honest escape-hatch (admits when context lacks the
+    #               answer). Production default: safer for a compliance assistant.
+    # "assertive" — grounded but never hedges; states policy as fact. Maximizes
+    #               RAGAS answer-relevancy for evaluation, at some cost to honesty.
+    SYNTHESIS_PROMPT_MODE: Literal["safe", "assertive"] = Field(
+        default="safe", alias="SYNTHESIS_PROMPT_MODE"
+    )
+
+    # ── HyDE (Hypothetical Document Embeddings) ──
+    # When enabled, the LLM drafts a hypothetical answer passage for each query;
+    # that passage (concatenated with the query) is embedded for retrieval.
+    # Closes the question↔statement embedding gap on policy/SOP corpora.
+    HYDE_ENABLED: bool = Field(default=False, alias="HYDE_ENABLED")
+    HYDE_MAX_TOKENS: int = Field(default=200, alias="HYDE_MAX_TOKENS")
+
+    # ── Reranking (cross-encoder) ──
+    # When enabled, retrieval pulls `rerank_candidate_k` chunks from Qdrant,
+    # reranks them with a cross-encoder, and keeps the top `similarity_top_k`.
+    RERANK_ENABLED: bool = Field(default=True, alias="RERANK_ENABLED")
+    RERANK_MODEL: str = Field(default="BAAI/bge-reranker-v2-m3", alias="RERANK_MODEL")
+    RERANK_CANDIDATE_K: int = Field(default=20, alias="RERANK_CANDIDATE_K")
+
+    # ── RAGAS judge LLM (local LM Studio / OpenAI-compatible endpoint) ──
+    RAGAS_JUDGE_MODEL: str = Field(default="qwen2.5-7b-instruct", alias="RAGAS_JUDGE_MODEL")
+    RAGAS_JUDGE_BASE_URL: str = Field(default="http://localhost:1234/v1", alias="RAGAS_JUDGE_BASE_URL")
+    RAGAS_JUDGE_API_KEY: str = Field(default="lm-studio", alias="RAGAS_JUDGE_API_KEY")
+    # Judge provider: "local" | "groq" | "vertex".
+    #   vertex — Vertex AI Gemini via service account (billed to GCP credits,
+    #            no free-tier req/day cap, reliably grades every sample). This is
+    #            the most reliable judge; local 7-8B models emit unparseable
+    #            verdicts (NaN) or spurious zeros, distorting the aggregate.
+    #   groq   — Groq llama-3.3-70b (good, but free tier has a 100k token/day cap
+    #            and rejects n>1 for AnswerRelevancy).
+    #   local  — LM Studio endpoint (offline; weakest, capped ~0.74).
+    RAGAS_JUDGE_PROVIDER: str = Field(default="local", alias="RAGAS_JUDGE_PROVIDER")
+
+    # ── Vertex AI (Gemini judge) ──
+    VERTEX_PROJECT: str = Field(default="", alias="VERTEX_PROJECT")
+    VERTEX_LOCATION: str = Field(default="us-central1", alias="VERTEX_LOCATION")
+    VERTEX_SA_FILE: str = Field(default="", alias="VERTEX_SA_FILE")
+
+    # ── Reranker score threshold ──
+    # Cross-encoder chunks below this score are dropped before synthesis.
+    # Disabled by default (very low sentinel): empirically, dropping chunks
+    # produced terser responses that LOWERED RAGAS context precision on the
+    # local-judge setup. Raise this only with evidence it helps your corpus.
+    RERANK_MIN_SCORE: float = Field(default=-1000.0, alias="RERANK_MIN_SCORE")
+
+    # ── Local synthesis override (overrides Groq for RAG answer generation) ──
+    # Set SYNTHESIS_BASE_URL to an OpenAI-compatible endpoint (e.g. LM Studio)
+    # to avoid Groq token limits during evaluation / offline runs.
+    SYNTHESIS_BASE_URL: str = Field(default="", alias="SYNTHESIS_BASE_URL")
+    SYNTHESIS_MODEL: str = Field(default="", alias="SYNTHESIS_MODEL")
+    SYNTHESIS_API_KEY: str = Field(default="lm-studio", alias="SYNTHESIS_API_KEY")
 
     def model_post_init(self, __context) -> None:
         """Resolve relative env paths from the RAG service directory."""

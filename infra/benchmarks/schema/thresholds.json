@@ -25,5 +25,12 @@
     "max_missed_detection_rate": 0.20,
     "max_false_alarm_rate": 0.15,
     "max_speaker_confusion_rate": 0.15
+  },
+  "ragas": {
+    "min_faithfulness": 0.7,
+    "min_answer_relevancy": 0.7,
+    "min_context_precision": 0.6,
+    "min_context_recall": 0.6,
+    "min_answer_correctness": 0.6
   }
 }

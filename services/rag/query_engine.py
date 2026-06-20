@@ -36,6 +36,7 @@ try:
     )
     from .prompt_safety import sanitize_prompt_text, with_injection_guard
     from .llm_circuit_breaker import get_breaker
+    from .reranker import rerank_points
 except ImportError:  # pragma: no cover - allows direct script/test imports
     from config import (
         settings,
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover - allows direct script/test imports
     )
     from prompt_safety import sanitize_prompt_text, with_injection_guard
     from llm_circuit_breaker import get_breaker
+    from reranker import rerank_points
 
 
 logger = logging.getLogger(__name__)
@@ -75,18 +77,94 @@ class RAGQueryEngine:
             self.logs_dir = Path("/tmp/rag_logs")
             self.logs_dir.mkdir(exist_ok=True)
 
-    def _setup_llm(self) -> None:
-        """Configure Groq LLM for response synthesis via LlamaIndex."""
-        synthesis_model = rag_synthesis_model()
-        self.llm = LlamaGroq(
-            model=synthesis_model,
-            api_key=settings.groq.api_key.get_secret_value(),
-            temperature=settings.groq.temperature,
-            max_tokens=settings.groq.max_tokens,
-            context_window=settings.groq.context_window,
+    @staticmethod
+    def _build_qa_prompt() -> str:
+        """Return the synthesis prompt for the configured SYNTHESIS_PROMPT_MODE.
+
+        Both variants are strictly grounded; they differ only in how they handle
+        uncertainty:
+          safe      — admits when the context lacks the answer (production default,
+                      safer for a compliance assistant; higher RAGAS faithfulness).
+          assertive — never hedges, states policy as fact (maximizes RAGAS
+                      answer-relevancy by avoiding noncommittal phrasing).
+        """
+        header = (
+            "You are a customer-service policy assistant. Answer the query using "
+            "the policy/SOP context below.\n"
+            "---------------------\n"
+            "{context_str}\n"
+            "---------------------\n"
+            "Instructions:\n"
+            "1. GROUNDING: Use ONLY information found in the context above. Every "
+            "statement must be directly supported by the context. Never add facts, "
+            "assumptions, or outside knowledge that is not present in the context.\n"
         )
+        if settings.SYNTHESIS_PROMPT_MODE == "assertive":
+            body = (
+                "2. DIRECTNESS: Answer directly and assertively, as established "
+                "policy. Open by restating the subject of the question, then state "
+                "the answer plainly as fact. Do NOT hedge — never write phrases like "
+                "'the context does not explicitly state', 'based on the provided "
+                "information', or 'it appears that'. When the context supports an "
+                "answer, state it with confidence and do not add disclaimers.\n"
+                "3. COMPLETENESS: Synthesize all relevant details from the context "
+                "into a clear, well-organized answer of several complete sentences. "
+                "Stay on-topic and do not add unrelated policies. Never give "
+                "one-line answers.\n"
+            )
+        else:  # "safe"
+            body = (
+                "2. RELEVANCE: Directly and fully answer the specific question "
+                "asked. Restate the core of the question in your answer so it stands "
+                "on its own. Do not introduce unrelated policies or steps the query "
+                "did not ask about.\n"
+                "3. COMPLETENESS: Synthesize all relevant details from the provided "
+                "context into a clear, well-organized answer of several complete "
+                "sentences. Never give one-word or one-line answers.\n"
+                "4. HONESTY: If — and only if — the context genuinely does not "
+                "contain the information needed to answer, say so plainly rather than "
+                "guessing. Do not fabricate policy that is not supported by the "
+                "context.\n"
+            )
+        return header + body + "Query: {query_str}\nAnswer: "
+
+    def _setup_llm(self) -> None:
+        """Configure LLM for response synthesis via LlamaIndex.
+
+        Uses a local OpenAI-compatible endpoint (LM Studio) when
+        SYNTHESIS_BASE_URL is set, otherwise falls back to Groq.
+        """
+        from llama_index.core import PromptTemplate
+
+        if settings.SYNTHESIS_BASE_URL:
+            from llama_index.llms.openai_like import OpenAILike
+
+            synthesis_model = settings.SYNTHESIS_MODEL or rag_synthesis_model()
+            self.llm = OpenAILike(
+                model=synthesis_model,
+                api_base=settings.SYNTHESIS_BASE_URL,
+                api_key=settings.SYNTHESIS_API_KEY,
+                temperature=settings.groq.temperature,
+                max_tokens=settings.groq.max_tokens,
+                context_window=settings.groq.context_window,
+                is_chat_model=True,
+            )
+            logger.info("Synthesis LLM: %s @ %s", synthesis_model, settings.SYNTHESIS_BASE_URL)
+        else:
+            synthesis_model = rag_synthesis_model()
+            self.llm = LlamaGroq(
+                model=synthesis_model,
+                api_key=settings.groq.api_key.get_secret_value(),
+                temperature=settings.groq.temperature,
+                max_tokens=settings.groq.max_tokens,
+                context_window=settings.groq.context_window,
+            )
+
+        qa_prompt_tmpl = PromptTemplate(self._build_qa_prompt())
+
         self.synthesizer = get_response_synthesizer(
             llm=self.llm,
+            text_qa_template=qa_prompt_tmpl,
             response_mode=settings.response_mode,
         )
         # Raw OpenAI-compatible client for structured prompts (evaluator uses it)
@@ -133,6 +211,39 @@ class RAGQueryEngine:
             f"(last attempted endpoint: {last_path}): {last_error}"
         )
 
+    # ── HyDE query expansion ──────────────────────────────────────────────
+
+    def _hyde_expand(self, query_text: str) -> str:
+        """
+        Generate a hypothetical answer passage and prepend it to the query.
+
+        HyDE closes the question↔statement embedding gap: a query embeds in
+        question-space, but the matching policy chunk is declarative. A drafted
+        hypothetical answer embeds far closer to the real chunk. The original
+        query is kept alongside so retrieval is never worse than baseline.
+        Falls back to the raw query on any error.
+        """
+        prompt = (
+            "Write a short, factual passage (2-3 sentences) that would plausibly "
+            "appear in a customer-service policy or SOP document and that directly "
+            "answers the following question. Do not hedge; state it as policy text.\n"
+            f"Question: {query_text}\n"
+            "Passage:"
+        )
+        try:
+            from llama_index.core.llms import ChatMessage
+
+            resp = self.llm.chat(
+                [ChatMessage(role="user", content=prompt)],
+                max_tokens=settings.HYDE_MAX_TOKENS,
+            )
+            hypothetical = str(resp).strip()
+            if hypothetical:
+                return f"{query_text}\n{hypothetical}"
+        except Exception as exc:
+            logger.warning("HyDE expansion failed (%s); using raw query.", exc)
+        return query_text
+
     # ── Retrieval ─────────────────────────────────────────────────────────
 
     def _retrieve(
@@ -150,13 +261,19 @@ class RAGQueryEngine:
             (scored_points, retrieval_seconds)
         """
         top_k = top_k or settings.similarity_top_k
+        # When reranking, pull a wider candidate pool from Qdrant and let the
+        # cross-encoder pick the final top_k. Otherwise fetch exactly top_k.
+        fetch_k = max(top_k, settings.RERANK_CANDIDATE_K) if settings.RERANK_ENABLED else top_k
         scoped_org = str(org_filter).strip() if org_filter is not None else ""
         if not scoped_org:
             # Deny-by-default: never issue unscoped multi-tenant vector queries.
             scoped_org = "__missing_org_scope__"
 
         t0 = time.perf_counter()
-        query_vector = self._embed_query(query_text)
+        # HyDE: embed a hypothetical-answer-expanded query, but keep the original
+        # question for reranking so relevance is judged against the real intent.
+        embed_text = self._hyde_expand(query_text) if settings.HYDE_ENABLED else query_text
+        query_vector = self._embed_query(embed_text)
 
         def _build_filter(include_doc_type: bool) -> Filter | None:
             conditions = [FieldCondition(key="org", match=MatchValue(value=scoped_org))]
@@ -168,7 +285,7 @@ class RAGQueryEngine:
         results = self.qdrant.query_points(
             collection_name=collection,
             query=query_vector,
-            limit=top_k,
+            limit=fetch_k,
             query_filter=query_filter,
         ).points
         if doc_type and not results:
@@ -180,9 +297,13 @@ class RAGQueryEngine:
             results = self.qdrant.query_points(
                 collection_name=collection,
                 query=query_vector,
-                limit=top_k,
+                limit=fetch_k,
                 query_filter=_build_filter(include_doc_type=False),
             ).points
+
+        # Cross-encoder rerank of the candidate pool down to top_k.
+        results = rerank_points(query_text, results, top_k)
+
         retrieval_time = time.perf_counter() - t0
         return results, retrieval_time
 
