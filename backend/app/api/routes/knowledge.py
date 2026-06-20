@@ -488,29 +488,39 @@ async def delete_policy(
     Remove a policy from the organization's knowledge base.
     Only the policy's owning organization can delete it.
     """
-    policy_stmt = select(CompanyPolicy).where(
-        CompanyPolicy.id == policy_id,
-        CompanyPolicy.organization_id == current_user.organization_id,
-    )
-    policy_res = await session.exec(policy_stmt)
-    policy = policy_res.first()
-    if not policy:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this policy")
-
+    # Authorize via the organization's link to the policy — the same boundary
+    # list_policies uses. A policy can be linked to an org while the underlying
+    # CompanyPolicy.organization_id points at a different (e.g. seeded) owner, so
+    # gating on CompanyPolicy.organization_id would 403 on policies the org sees.
     stmt = select(OrganizationPolicy).where(
         OrganizationPolicy.organization_id == current_user.organization_id,
-        OrganizationPolicy.policy_id == policy_id
+        OrganizationPolicy.policy_id == policy_id,
     )
     res = await session.exec(stmt)
     org_policy = res.first()
-    
     if not org_policy:
         raise HTTPException(status_code=403, detail="Not authorized to delete this policy")
-        
+
     await session.delete(org_policy)
-    await session.delete(policy)
+
+    # Remove the underlying policy only when no other organization still links
+    # it, so deleting from one org's knowledge base never affects another org.
+    remaining = (
+        await session.exec(
+            select(OrganizationPolicy).where(
+                OrganizationPolicy.policy_id == policy_id,
+                OrganizationPolicy.organization_id != current_user.organization_id,
+            )
+        )
+    ).first()
     org_slug = await _get_org_slug(session, current_user.organization_id)
-    _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, policy_id)
+    if not remaining:
+        policy = (
+            await session.exec(select(CompanyPolicy).where(CompanyPolicy.id == policy_id))
+        ).first()
+        if policy:
+            await session.delete(policy)
+        _delete_document_file(settings.POLICY_DOCS_ROOT, org_slug, POLICY_DOCS_FOLDER, policy_id)
 
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=org_slug)
@@ -527,31 +537,37 @@ async def delete_faq(
     Remove an FAQ article from the organization's knowledge base.
     Only the FAQ's owning organization can delete it.
     """
-    faq_stmt = select(FAQArticle).where(
-        FAQArticle.id == faq_id,
-        FAQArticle.organization_id == current_user.organization_id,
-    )
-    faq_res = await session.exec(faq_stmt)
-    faq = faq_res.first()
-    if not faq:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this FAQ")
-
+    # Authorize via the organization's link (matches list_faqs visibility).
     stmt = select(OrganizationFAQArticle).where(
         OrganizationFAQArticle.organization_id == current_user.organization_id,
-        OrganizationFAQArticle.article_id == faq_id
+        OrganizationFAQArticle.article_id == faq_id,
     )
     res = await session.exec(stmt)
     org_faq = res.first()
-    
     if not org_faq:
         raise HTTPException(status_code=403, detail="Not authorized to delete this FAQ")
-        
+
     await session.delete(org_faq)
-    await session.delete(faq)
+
+    # Delete the underlying article only when no other organization links it.
+    remaining = (
+        await session.exec(
+            select(OrganizationFAQArticle).where(
+                OrganizationFAQArticle.article_id == faq_id,
+                OrganizationFAQArticle.organization_id != current_user.organization_id,
+            )
+        )
+    ).first()
     org_slug = await _get_org_slug(session, current_user.organization_id)
-    _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, SOP_DOCS_FOLDER, faq_id)
-    _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_FAQ_DOCS_FOLDER, faq_id)
-            
+    if not remaining:
+        faq = (
+            await session.exec(select(FAQArticle).where(FAQArticle.id == faq_id))
+        ).first()
+        if faq:
+            await session.delete(faq)
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, SOP_DOCS_FOLDER, faq_id)
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, LEGACY_FAQ_DOCS_FOLDER, faq_id)
+
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=current_user.organization_id)
     return {"status": "success", "message": "FAQ deleted"}
@@ -705,15 +721,7 @@ async def delete_kb_article(
     kb_id: str,
 ):
     """Remove a KB article from the organization. Only the owning org can delete it."""
-    faq_stmt = select(FAQArticle).where(
-        FAQArticle.id == kb_id,
-        FAQArticle.organization_id == current_user.organization_id,
-    )
-    faq_res_search = await session.exec(faq_stmt)
-    faq_entity = faq_res_search.first()
-    if not faq_entity or not _is_kb_article(faq_entity):
-        raise HTTPException(status_code=403, detail="Not authorized to delete this KB article")
-
+    # Authorize via the organization's link (matches list_kb visibility).
     stmt = select(OrganizationFAQArticle).where(
         OrganizationFAQArticle.organization_id == current_user.organization_id,
         OrganizationFAQArticle.article_id == kb_id,
@@ -722,10 +730,28 @@ async def delete_kb_article(
     org_faq = res.first()
     if not org_faq:
         raise HTTPException(status_code=403, detail="Not authorized to delete this KB article")
+
+    faq_entity = (
+        await session.exec(select(FAQArticle).where(FAQArticle.id == kb_id))
+    ).first()
+    if not faq_entity or not _is_kb_article(faq_entity):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this KB article")
+
     await session.delete(org_faq)
-    await session.delete(faq_entity)
+
+    # Delete the underlying article only when no other organization links it.
+    remaining = (
+        await session.exec(
+            select(OrganizationFAQArticle).where(
+                OrganizationFAQArticle.article_id == kb_id,
+                OrganizationFAQArticle.organization_id != current_user.organization_id,
+            )
+        )
+    ).first()
     org_slug = await _get_org_slug(session, current_user.organization_id)
-    _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, kb_id)
+    if not remaining:
+        await session.delete(faq_entity)
+        _delete_document_file(settings.KNOWLEDGE_DOCS_ROOT, org_slug, KB_DOCS_FOLDER, kb_id)
 
     await session.commit()
     await invalidate_llm_trigger_cache(session, org_filter=org_slug)

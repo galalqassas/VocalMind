@@ -173,6 +173,44 @@ def test_cross_org_policy_patch_shared_policy_returns_403(cross_org_client):
     )
 
 
+def test_delete_linked_policy_removes_only_caller_link(cross_org_client):
+    """An org can delete a policy it is linked to (the visibility boundary), and
+    doing so removes only its own junction link — the underlying CompanyPolicy is
+    preserved while another org still links it."""
+    client, test_session, current_user_state = cross_org_client
+
+    # Org A creates and owns the policy.
+    response = client.post(
+        "/api/v1/knowledge/policies",
+        json={"title": "Refund", "category": "Guidelines", "content": "abc"},
+    )
+    assert response.status_code == 200
+    policy_id = response.json()["id"]
+
+    # Org B is granted a link to the same policy (e.g. a shared/seeded policy).
+    test_session.add(
+        OrganizationPolicy(organization_id=ORG_B_ID, policy_id=UUID(policy_id), is_active=True)
+    )
+    test_session.commit()
+
+    # Org B deletes it from its own knowledge base — previously this 403'd.
+    current_user_state["user"] = test_session.exec(
+        select(User).where(User.id == USER_B_ID)
+    ).first()
+    response = client.delete(f"/api/v1/knowledge/policies/{policy_id}")
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+
+    # Org B's link is gone; Org A's link and the policy itself are preserved.
+    test_session.expire_all()
+    links = test_session.exec(
+        select(OrganizationPolicy).where(OrganizationPolicy.policy_id == UUID(policy_id))
+    ).all()
+    assert {link.organization_id for link in links} == {ORG_A_ID}
+    assert test_session.exec(
+        select(CompanyPolicy).where(CompanyPolicy.id == UUID(policy_id))
+    ).first() is not None
+
+
 # ── Audio resolver path traversal ───────────────────────────
 
 @pytest.mark.asyncio
