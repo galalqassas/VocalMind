@@ -31,7 +31,7 @@ from app.core.interaction_processing import (
     reset_interaction_for_reprocess,
     save_audio_upload,
 )
-from app.llm_trigger.service import evaluate_interaction_triggers
+from app.llm_trigger.service import evaluate_interaction_triggers, load_cached_interaction_trigger_report
 from app.models.interaction import Interaction
 from app.models.interaction_score import InteractionScore
 from app.models.organization import Organization
@@ -310,8 +310,32 @@ class ProcessingFailureBriefResponse(APIModel):
     errorMessage: str | None = None
 
 
+class InteractionScoresResponse(APIModel):
+    overallScore: float
+    empathyScore: float
+    policyScore: float
+    resolutionScore: float
+    resolved: bool
+    totalSilenceSeconds: float | None = None
+    avgResponseTimeSeconds: float | None = None
+
+
+def _interaction_scores_payload(row: Any) -> dict[str, Any]:
+    """Map interaction_scores row fields to API camelCase (0–100 scale for score columns)."""
+    return {
+        "overallScore": round(to_percentage(row.overall_score), 0),
+        "empathyScore": round(to_percentage(row.empathy_score), 0),
+        "policyScore": round(to_percentage(row.policy_score), 0),
+        "resolutionScore": round(to_percentage(row.resolution_score), 0),
+        "resolved": row.was_resolved or False,
+        "totalSilenceSeconds": row.total_silence_seconds,
+        "avgResponseTimeSeconds": row.avg_response_time_seconds,
+    }
+
+
 class InteractionDetailResponse(APIModel):
     interaction: InteractionDetailSummaryResponse
+    scores: InteractionScoresResponse
     utterances: list[UtteranceResponse]
     emotionComparison: EmotionComparisonResponse
     ragCompliance: RagComplianceReportResponse | None = None
@@ -452,6 +476,43 @@ async def create_interaction_from_storage(
 
     agent = await _resolve_interaction_agent(session, current_user, payload.agent_id)
 
+    existing_result = await session.exec(
+        select(Interaction).where(
+            Interaction.organization_id == current_user.organization_id,
+            Interaction.audio_file_path == storage_path,
+        )
+    )
+    existing_row = existing_result.first()
+    if existing_row:
+        if existing_row.processing_status in (ProcessingStatus.failed, ProcessingStatus.pending):
+            existing_row.processing_status = ProcessingStatus.pending
+            session.add(existing_row)
+            await session.commit()
+            await session.refresh(existing_row)
+            await enqueue_interaction_processing(existing_row.id)
+
+        jobs_result = await session.exec(
+            select(ProcessingJob).where(ProcessingJob.interaction_id == existing_row.id)
+        )
+        jobs = [
+            {
+                "stage": job.stage.value,
+                "status": job.status.value,
+                "retryCount": job.retry_count,
+                "errorMessage": job.error_message,
+            }
+            for job in jobs_result.all()
+        ]
+        return {
+            "interactionId": str(existing_row.id),
+            "status": existing_row.processing_status.value,
+            "audioFilePath": existing_row.audio_file_path,
+            "agentId": str(agent.id),
+            "uploadedBy": str(current_user.id),
+            "processingJobs": jobs,
+            "reused": True,
+        }
+
     interaction = Interaction(
         organization_id=current_user.organization_id,
         agent_id=agent.id,
@@ -542,6 +603,7 @@ async def reprocess_interaction(
     session: SessionDep,
     current_user: CurrentUser,
     force: bool = False,
+    priority: bool = False,
 ):
     interaction_result = await session.exec(
         select(Interaction).where(
@@ -557,7 +619,7 @@ async def reprocess_interaction(
         raise HTTPException(status_code=409, detail="Interaction is already processing")
 
     await reset_interaction_for_reprocess(session, interaction_id)
-    await enqueue_interaction_processing(interaction_id)
+    await enqueue_interaction_processing(interaction_id, priority=priority)
 
     jobs_result = await session.exec(
         select(ProcessingJob).where(ProcessingJob.interaction_id == interaction_id)
@@ -577,6 +639,7 @@ async def reprocess_interaction(
         "processingJobs": jobs,
         "queued": True,
         "forced": force,
+        "priority": priority,
     }
 
 
@@ -676,6 +739,19 @@ def _compact_distribution(labels: list[str]) -> list[dict[str, float | int | str
 
 
 def _build_emotion_comparison_payload(utterances_rows: list[Utterance]) -> dict:
+    fused_pairs: list[tuple[str, str, str]] = []
+    for u in utterances_rows:
+        acoustic_emotion = u.emotion or "neutral"
+        fused = fuse_emotion_signals(
+            text=u.text or "",
+            acoustic_emotion=acoustic_emotion,
+            acoustic_confidence=u.emotion_confidence or 0.0,
+        )
+        fused_pairs.append((acoustic_emotion, fused.text_emotion, fused.emotion))
+    return _build_emotion_comparison_from_labels(fused_pairs)
+
+
+def _build_emotion_comparison_from_labels(fused_pairs: list[tuple[str, str, str]]) -> dict:
     acoustic_labels: list[str] = []
     text_labels: list[str] = []
     fused_labels: list[str] = []
@@ -684,27 +760,19 @@ def _build_emotion_comparison_payload(utterances_rows: list[Utterance]) -> dict:
     fused_acoustic_agreements = 0
     fused_text_agreements = 0
 
-    for u in utterances_rows:
-        acoustic_emotion = u.emotion or "neutral"
-        acoustic_confidence = u.emotion_confidence or 0.0
-        fused = fuse_emotion_signals(
-            text=u.text or "",
-            acoustic_emotion=acoustic_emotion,
-            acoustic_confidence=acoustic_confidence,
-        )
-
+    for acoustic_emotion, text_emotion, fused_emotion in fused_pairs:
         acoustic_labels.append(acoustic_emotion)
-        text_labels.append(fused.text_emotion)
-        fused_labels.append(fused.emotion)
+        text_labels.append(text_emotion)
+        fused_labels.append(fused_emotion)
 
-        if fused.text_emotion == acoustic_emotion:
+        if text_emotion == acoustic_emotion:
             acoustic_text_agreements += 1
-        if fused.emotion == acoustic_emotion:
+        if fused_emotion == acoustic_emotion:
             fused_acoustic_agreements += 1
-        if fused.emotion == fused.text_emotion:
+        if fused_emotion == text_emotion:
             fused_text_agreements += 1
 
-    total = len(utterances_rows)
+    total = len(fused_pairs)
     if total == 0:
         return {
             "totalUtterances": 0,
@@ -1042,7 +1110,12 @@ async def list_interactions(session: SessionDep, current_user: CurrentUser):
     result = await session.exec(stmt)
     rows = result.all()
 
-    fail_map = await _failed_jobs_by_interaction(session, [row.id for row in rows])
+    fail_ids = [
+        row.id
+        for row in rows
+        if row.processing_status == ProcessingStatus.failed
+    ]
+    fail_map = await _failed_jobs_by_interaction(session, fail_ids) if fail_ids else {}
 
     interactions = []
     for row in rows:
@@ -1100,6 +1173,7 @@ async def get_interaction_detail(
             InteractionScore.policy_score,
             InteractionScore.resolution_score,
             InteractionScore.was_resolved,
+            InteractionScore.total_silence_seconds,
             InteractionScore.avg_response_time_seconds,
         )
         .join(UserModel, UserModel.id == Interaction.agent_id)
@@ -1131,6 +1205,7 @@ async def get_interaction_detail(
     utterances_rows = utt_result.all()
 
     utterances = []
+    fused_pairs: list[tuple[str, str, str]] = []
     for u in utterances_rows:
         acoustic_emotion = u.emotion or "neutral"
         acoustic_confidence = u.emotion_confidence or 0.0
@@ -1139,6 +1214,7 @@ async def get_interaction_detail(
             acoustic_emotion=acoustic_emotion,
             acoustic_confidence=acoustic_confidence,
         )
+        fused_pairs.append((acoustic_emotion, fused.text_emotion, fused.emotion))
         utterances.append(
             {
                 "id": str(u.id),
@@ -1229,7 +1305,7 @@ async def get_interaction_detail(
         for v in viol_rows
     ]
 
-    emotion_comparison = _build_emotion_comparison_payload(utterances_rows)
+    emotion_comparison = _build_emotion_comparison_from_labels(fused_pairs)
     emotion_comparison["evidence"] = _build_evidence_payload(
         utterances_rows=utterances_rows,
         events_rows=events_rows,
@@ -1249,28 +1325,39 @@ async def get_interaction_detail(
                 session=session,
                 interaction_id=interaction_id,
             )
-            # LLM trigger pipeline internally orchestrates:
-            # 1) RAG retrieval context resolution,
-            # 2) transcript-level policy compliance evaluation,
-            # 3) single-claim NLI policy checks.
-            report = await evaluate_interaction_triggers(
-                session=session,
-                interaction_id=interaction_id,
-                org_filter=resolved_org_filter,
-                requester_organization_id=current_user.organization_id,
-                force_rerun=llm_force_rerun,
-                commit_cache=True,
-            )
-            emotion_triggers = _map_emotion_trigger_report(report)
-            rag_compliance = _map_rag_compliance_report(report)
-            emotion_triggers["orgFilter"] = resolved_org_filter
-            emotion_triggers["forcedRerun"] = llm_force_rerun
-            rag_compliance["orgFilter"] = resolved_org_filter
-            rag_compliance["forcedRerun"] = llm_force_rerun
-            rag_compliance["policyViolations"] = policy_violations
-            llm_triggers = _map_llm_trigger_report(report)
-            llm_triggers["orgFilter"] = resolved_org_filter
-            llm_triggers["forcedRerun"] = llm_force_rerun
+            if llm_force_rerun:
+                report = await evaluate_interaction_triggers(
+                    session=session,
+                    interaction_id=interaction_id,
+                    org_filter=resolved_org_filter,
+                    requester_organization_id=current_user.organization_id,
+                    force_rerun=True,
+                    commit_cache=True,
+                )
+            else:
+                report = await load_cached_interaction_trigger_report(
+                    session=session,
+                    interaction_id=interaction_id,
+                    org_filter=resolved_org_filter,
+                )
+            if report is not None:
+                emotion_triggers = _map_emotion_trigger_report(report)
+                rag_compliance = _map_rag_compliance_report(report)
+                emotion_triggers["orgFilter"] = resolved_org_filter
+                emotion_triggers["forcedRerun"] = llm_force_rerun
+                rag_compliance["orgFilter"] = resolved_org_filter
+                rag_compliance["forcedRerun"] = llm_force_rerun
+                rag_compliance["policyViolations"] = policy_violations
+                llm_triggers = _map_llm_trigger_report(report)
+                llm_triggers["orgFilter"] = resolved_org_filter
+                llm_triggers["forcedRerun"] = llm_force_rerun
+            else:
+                cache_message = (
+                    "LLM analysis is not cached yet. Use Run Pipeline to generate it."
+                )
+                emotion_triggers = {"available": False, "error": cache_message}
+                rag_compliance = {"available": False, "error": cache_message}
+                llm_triggers = {"available": False, "error": cache_message}
         except Exception as exc:
             emotion_triggers = {
                 "available": False,
@@ -1301,6 +1388,8 @@ async def get_interaction_detail(
 
     proc_fail_map = await _failed_jobs_by_interaction(session, [interaction_id])
 
+    scores_payload = _interaction_scores_payload(row)
+
     return {
         "interaction": {
             "id": str(row.id),
@@ -1310,17 +1399,18 @@ async def get_interaction_detail(
             "time": row.interaction_date.strftime("%I:%M %p") if row.interaction_date else "",
             "duration": f"{mins}:{secs:02d}",
             "language": row.language_detected or "Unknown",
-            "overallScore": round(to_percentage(row.overall_score), 0),
-            "empathyScore": round(to_percentage(row.empathy_score), 0),
-            "policyScore": round(to_percentage(row.policy_score), 0),
-            "resolutionScore": round(to_percentage(row.resolution_score), 0),
-            "resolved": row.was_resolved or False,
+            "overallScore": scores_payload["overallScore"],
+            "empathyScore": scores_payload["empathyScore"],
+            "policyScore": scores_payload["policyScore"],
+            "resolutionScore": scores_payload["resolutionScore"],
+            "resolved": scores_payload["resolved"],
             "hasViolation": len(policy_violations) > 0,
             "hasOverlap": row.has_overlap,
             "responseTime": f"{row.avg_response_time_seconds:.1f}s" if row.avg_response_time_seconds else "N/A",
             "status": str(row.processing_status.value) if row.processing_status else "pending",
             "audioFilePath": row.audio_file_path or None,
         },
+        "scores": scores_payload,
         "utterances": utterances,
         "emotionComparison": emotion_comparison,
         "ragCompliance": rag_compliance,

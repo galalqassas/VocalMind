@@ -112,6 +112,20 @@ RESOLUTION_GRAPHS: dict[str, list[str]] = {
         "Confirm customer decision",
         "Close: process cancellation OR confirm retention outcome",
     ],
+    "wire_transfer": [
+        "Verify enhanced identity (5-of-5)",
+        "Confirm transfer details (amount, recipient, account)",
+        "Apply compliance check (CTR/BSA threshold)",
+        "Execute or hold transfer per policy",
+        "Confirm outcome and document case",
+    ],
+    "account_signers": [
+        "Verify account control person identity",
+        "Collect authorized signer details",
+        "Confirm signer is not a beneficial owner",
+        "Submit signer update request",
+        "Confirm completion and next steps",
+    ],
 }
 
 
@@ -121,6 +135,238 @@ MAX_PROCESS_WINDOWS = 3
 INSUFFICIENT_EVIDENCE_LABEL = "insufficient evidence"
 POLICY_PRIORITY_BUCKETS: tuple[str, ...] = ("regulatory", "legal")
 DEGRADED_MODE_SUFFIX = " [DEGRADED: LLM unavailable — heuristic fallback used]"
+
+BULLET_PREFIXES = ("•", "-", "–", "▪", "\uf0b7", "*", "·")
+
+STEP_ALIASES: dict[str, list[str]] = {
+    "verify refund eligibility": [
+        "refund timeline",
+        "eligibility check",
+        "refund window",
+        "check eligibility",
+        "confirm eligibility",
+    ],
+    "close with summary": [
+        "root cause summary",
+        "resolution summary",
+        "closing summary",
+        "wrap up",
+        "summary and next steps",
+        "call summary",
+    ],
+    "acknowledge": [
+        "greet",
+        "opening",
+        "introduction",
+        "thank you for calling",
+    ],
+    "verify account": [
+        "pull up account",
+        "account lookup",
+        "check account",
+        "account details",
+        "account verification",
+    ],
+    "validate issue resolution": [
+        "resolution confirmation",
+        "issue confirmation",
+        "confirm resolved",
+        "resolution summary",
+        "validate issue",
+        "issue resolved",
+        "verify fix",
+        "issue classification",
+        "confirm the issue",
+        "resolution confirmed",
+        "confirmed resolution",
+    ],
+    "explain provisional credit timeline": [
+        "provisional credit",
+        "credit timeline",
+        "sla stated",
+        "sla",
+        "follow-up sla",
+        "credit within cap",
+        "within cap",
+        "provisional credit within",
+        "credit cap",
+        "manager approval ticket",
+        "above cap",
+    ],
+    "verify refund eligibility window": [
+        "refund timeline",
+        "eligibility window",
+        "refund eligibility",
+        "refund window",
+        "fin-rule-001",
+        "eligibility check",
+        "refund check",
+        "refund policy check",
+    ],
+    "confirm customer decision": [
+        "strike three",
+        "call termination",
+        "termination with stated reason",
+        "customer decision confirmed",
+        "cancellation confirmed",
+        "retention confirmed",
+    ],
+    "confirm customer understanding": [
+        "customer confirmation",
+        "confirm understanding",
+        "customer acknowledged",
+        "tone adapted",
+    ],
+    "verify account and charge details": [
+        "account and charge",
+        "charge details",
+        "verify charge",
+        "transaction details",
+    ],
+    "acknowledge customer issue": [
+        "greeting",
+        "greet the customer",
+        "opening greeting",
+        "call opening",
+        "introduction",
+        "thank you for calling",
+        "opening",
+        "welcome",
+    ],
+    "acknowledge access issue": [
+        "acknowledge reason for call",
+        "reason for call",
+        "opening acknowledgement",
+        "acknowledge the issue",
+        "understand your concern",
+        "hear you calling about",
+        "greeting",
+        "greet the customer",
+        "opening greeting",
+        "call opening",
+        "introduction",
+        "opening",
+        "welcome",
+        "acknowledge reason",
+    ],
+    "close with prevention advice": [
+        "password-change advice",
+        "password change advice",
+        "prevent future incidents",
+        "prevention tips",
+        "security tips going forward",
+        "prevention advice",
+        "password-change",
+        "prevent future",
+    ],
+}
+
+# More specific topics win when scores are competitive (checked before billing_issue).
+_TOPIC_DETECTION_PRIORITY: tuple[str, ...] = (
+    "fraud_dispute",
+    "aml_review",
+    "wire_transfer",
+    "account_signers",
+    "account_access",
+    "account_opening",
+    "fee_adjustment",
+    "retention",
+    "technical_support",
+    "refund_request",
+    "billing_issue",
+)
+
+
+def _filter_bullet_steps(steps: list[str]) -> list[str]:
+    return [s for s in steps if s.strip() and s.strip()[0] not in BULLET_PREFIXES]
+
+
+MAX_STEP_WORDS = 12  # procedural step names are short; prose is long
+
+
+def _filter_prose_steps(steps: list[str]) -> list[str]:
+    """Remove prose sentences masquerading as SOP step names."""
+    filtered = []
+    for s in steps:
+        stripped = s.strip()
+        if not stripped:
+            continue
+        word_count = len(stripped.split())
+        is_prose = (
+            word_count > MAX_STEP_WORDS
+            or bool(re.search(r"[A-Z]{2,}-[A-Z]+-(?:RULE|REG|LAW)-\d+", stripped))
+            or (
+                stripped.endswith(".")
+                and word_count >= 4
+                and any(
+                    w in stripped.lower()
+                    for w in [
+                        "filed",
+                        "loaded",
+                        "complete",
+                        "confirm",
+                        "airplane",
+                        "disclosure",
+                        "operations",
+                        "business days",
+                        "expedited",
+                        "must be",
+                        "prior to",
+                        "in order to",
+                        "before sending",
+                        "identity verification",
+                        "ctr is",
+                        "sar is",
+                        "mode is",
+                        "sim card",
+                        "restart the",
+                        "reboot the",
+                        "toggle ",
+                        "power cycle",
+                        "unplug the",
+                    ]
+                )
+            )
+        )
+        if not is_prose:
+            filtered.append(s)
+    return filtered
+
+
+def _normalize_step_identity(step: str) -> str:
+    """Canonical key for cross-topic step comparison (handles -, _, /, spacing)."""
+    normalized = re.sub(r"[^a-z0-9 ]", " ", step.lower().strip())
+    return re.sub(r"\s+", " ", normalized).strip().replace(" ", "_")
+
+
+def _filter_cross_topic_steps(steps: list[str], topic_hint: str) -> list[str]:
+    """Remove steps that belong to a different topic's RESOLUTION_GRAPH."""
+    if not topic_hint or topic_hint not in RESOLUTION_GRAPHS:
+        return steps
+    other_topic_steps: set[str] = set()
+    for topic, topic_steps in RESOLUTION_GRAPHS.items():
+        if topic != topic_hint:
+            for step in topic_steps:
+                other_topic_steps.add(_normalize_step_identity(step))
+    filtered: list[str] = []
+    for s in steps:
+        if _normalize_step_identity(s) in other_topic_steps:
+            continue
+        filtered.append(s)
+    return filtered
+
+
+def _alias_match(a: str, b: str) -> bool:
+    # Normalize: lowercase + replace underscores with spaces
+    a_lower = a.lower().replace("_", " ")
+    b_lower = b.lower().replace("_", " ")
+    for canonical, aliases in STEP_ALIASES.items():
+        targets = [canonical] + aliases
+        a_hit = any(t in a_lower for t in targets)
+        b_hit = any(t in b_lower for t in targets)
+        if a_hit and b_hit:
+            return True
+    return False
 
 _FRICTION_TITLES = {
     "interruption": "Agent Interruption",
@@ -321,6 +567,15 @@ _TOPIC_KEYWORDS: dict[str, dict[str, float]] = {
         "recovery code": 2.5,
         "username": 2.0,
         "pin reset": 3.0,
+        "unauthorized access": 3.0,
+        "account locked": 3.0,
+        "fraud alert": 3.0,
+        "suspicious": 2.5,
+        "account recovery": 3.0,
+        "security": 2.0,
+        "identity": 2.5,
+        "verify identity": 3.0,
+        "account compromised": 3.0,
     },
     "account_opening": {
         "open an account": 3.0,
@@ -351,6 +606,12 @@ _TOPIC_KEYWORDS: dict[str, dict[str, float]] = {
         "provisional credit": 2.5,
         "reg e": 3.0,
         "dispute the": 2.5,
+        "dispute": 2.5,
+        "not me": 2.5,
+        "didn't make": 2.5,
+        "someone else": 2.5,
+        "stolen": 2.5,
+        "compromised card": 3.0,
         "elder financial exploitation": 3.0,
         "check fraud": 3.0,
     },
@@ -390,6 +651,32 @@ _TOPIC_KEYWORDS: dict[str, dict[str, float]] = {
         "etf": 2.5,
         "downgrade": 1.5,
     },
+    "wire_transfer": {
+        "wire transfer": 3.0,
+        "outbound wire": 3.0,
+        "domestic wire": 3.0,
+        "international wire": 3.0,
+        "send a wire": 3.0,
+        "wire $": 3.0,
+        "wire five": 2.5,
+        "beneficiary": 2.5,
+        "ofac": 3.0,
+        "enhanced verification": 3.0,
+        "callback to phone": 2.5,
+        "wire disclosure": 2.5,
+        "settlement window": 2.0,
+    },
+    "account_signers": {
+        "authorized signer": 3.0,
+        "signer change": 3.0,
+        "add a signer": 3.0,
+        "add my brother": 2.5,
+        "control person": 3.0,
+        "signer update": 3.0,
+        "not a beneficial owner": 3.0,
+        "branch visit": 2.5,
+        "in-person id": 2.5,
+    },
 }
 
 
@@ -408,10 +695,15 @@ def _score_topic(transcript_text: str, retrieved_sop: str) -> tuple[str | None, 
             if keyword in source:
                 score += weight * source.count(keyword)
         scores[topic] = score
-    best_topic = max(scores, key=scores.get)
-    best_score = scores[best_topic]
+    best_score = max(scores.values())
     if best_score <= 0:
         return None, 0.0
+    competitive_threshold = best_score * 0.85
+    for topic in _TOPIC_DETECTION_PRIORITY:
+        topic_score = scores.get(topic, 0.0)
+        if topic_score >= competitive_threshold:
+            return topic, topic_score
+    best_topic = max(scores, key=scores.get)
     return best_topic, best_score
 
 
@@ -442,6 +734,8 @@ def _detect_topic_from_sop_chunks(chunks: list[RetrievedChunk]) -> str | None:
         ("fraud_dispute", ("sop_03_fraud_investigation", "fraud-investigation", "card fraud", "reg e dispute", "card_fraud", "reg_e_dispute", "reg-e-dispute")),
         ("aml_review", ("sop_05_aml_bsa_reporting", "aml-bsa-reporting", "aml", "bsa", "money laundering")),
         ("account_opening", ("sop_01_account_opening_kyc", "account-opening-kyc", "kyc", "account opening", "account_opening")),
+        ("wire_transfer", ("wire_transfer", "wire transfer", "wire-transfer", "wire_transfer_verification", "enhanced verification wire")),
+        ("account_signers", ("account_signers", "authorized signer", "signer change", "business_account_signers")),
         ("fee_adjustment", ("fee waiver", "fee_waiver", "fee-waiver", "overdraft", "bnk-sop-04")),
         ("retention", ("sop_05_customer_retention_cancellation", "customer-retention-cancellation", "account_closure_retention", "account-closure-retention", "retention", "cancellation")),
         ("account_access", ("sop_04_account_access_recovery", "account-access-recovery", "account access", "account_access", "2fa", "pin reset")),
@@ -471,6 +765,8 @@ _TOPIC_TO_SOP_FILE_TOKENS: dict[str, tuple[str, ...]] = {
     "fraud_dispute": ("fraud_investigation", "reg_e_dispute_resolution"),
     "fee_adjustment": ("account_closure_retention", "billing_issue_resolution"),
     "aml_review": ("aml_bsa_reporting",),
+    "wire_transfer": ("wire_transfer", "wire transfer"),
+    "account_signers": ("authorized signer", "signer change"),
 }
 
 
@@ -531,8 +827,26 @@ def _step_keywords(step: str) -> set[str]:
     return {token for token in _tokenize(step) if len(token) > 3 and token not in stop_words}
 
 
+def _steps_overlap(completed_step: str, expected_step: str) -> bool:
+    """True if the two step descriptions refer to the same action."""
+    stop = {
+        "the", "a", "an", "and", "or", "to", "of", "with",
+        "in", "is", "are", "if", "for", "not", "do", "does",
+        "it", "be", "as", "at", "by", "•", "-", "–",
+    }
+    a_tokens = set(completed_step.lower().replace("_", " ").split()) - stop
+    b_tokens = set(expected_step.lower().replace("_", " ").split()) - stop
+    if not a_tokens or not b_tokens:
+        return False
+    overlap = len(a_tokens & b_tokens) / min(len(a_tokens), len(b_tokens))
+    if overlap >= 0.35:
+        return True
+    return _alias_match(completed_step, expected_step)
+
+
 def _trajectory_missing_steps(transcript_text: str, expected_steps: list[str]) -> list[str]:
     transcript_tokens = set(_tokenize(transcript_text))
+    completed: list[str] = []
     missing: list[str] = []
     for step in expected_steps:
         keywords = _step_keywords(step)
@@ -540,9 +854,17 @@ def _trajectory_missing_steps(transcript_text: str, expected_steps: list[str]) -
             continue
         overlap = len(keywords.intersection(transcript_tokens))
         threshold = max(1, len(keywords) // 3)
-        if overlap < threshold:
+        if overlap >= threshold:
+            completed.append(step)
+        else:
             missing.append(step)
-    return missing
+
+    final_missing: list[str] = []
+    for step in missing:
+        if any(_steps_overlap(completed_step, step) for completed_step in completed):
+            continue
+        final_missing.append(step)
+    return final_missing
 
 
 def _merge_missing_steps(
@@ -2018,7 +2340,19 @@ async def evaluate_process_adherence(
     else:
         expected_steps = RESOLUTION_GRAPHS.get(topic_hint, []).copy()[:8]
 
-    deterministic_missing = _trajectory_missing_steps(transcript_text, expected_steps)
+    expected_steps = _filter_cross_topic_steps(
+        _filter_prose_steps(_filter_bullet_steps(expected_steps)),
+        topic_hint,
+    )
+
+    deterministic_missing = _filter_cross_topic_steps(
+        _filter_prose_steps(
+            _filter_bullet_steps(
+                _trajectory_missing_steps(transcript_text, expected_steps)
+            )
+        ),
+        topic_hint,
+    )
     deterministic_efficiency = _efficiency_score_heuristic(
         transcript_text=transcript_text,
         missing_steps=deterministic_missing,
@@ -2101,15 +2435,98 @@ async def evaluate_process_adherence(
             )
         result.detected_topic = topic_hint
 
-    result.missing_sop_steps = _merge_missing_steps(
-        deterministic_missing=deterministic_missing,
-        llm_missing=result.missing_sop_steps,
+    if result.missing_sop_steps:
+        result.missing_sop_steps = _filter_cross_topic_steps(
+            _filter_prose_steps(
+                _filter_bullet_steps(result.missing_sop_steps)
+            ),
+            topic_hint,
+        )
+
+    result.missing_sop_steps = _filter_cross_topic_steps(
+        _filter_prose_steps(
+            _filter_bullet_steps(
+                _merge_missing_steps(
+                    deterministic_missing=deterministic_missing,
+                    llm_missing=result.missing_sop_steps,
+                )
+            )
+        ),
+        topic_hint,
     )
     result.efficiency_score = max(
         1,
         min(10, int(round((result.efficiency_score + deterministic_efficiency) / 2))),
     )
     result.is_resolved = result.is_resolved and deterministic_resolved
+    if result.is_resolved:
+        missing = result.missing_sop_steps or []
+        if len(missing) > 1:
+            result.is_resolved = False
+            result.justification = (
+                f"{result.justification} Overridden: {len(missing)} SOP steps missing."
+            ).strip()
+    STRONG_UNRESOLVED_SIGNALS = [
+        "escalat",
+        "not resolved",
+        "unresolved",
+        "wrong information",
+        "incorrect information",
+        "misinformation",
+        "policy violation",
+        "failed to",
+        "left the call",
+        "hung up",
+        "terminated the call",
+        "no resolution",
+        "pending investigation",
+    ]
+    transcript_for_resolution = full_transcript_text or transcript_text
+    if result.is_resolved and transcript_for_resolution:
+        transcript_end = transcript_for_resolution[int(len(transcript_for_resolution) * 0.75):]
+        end = transcript_end.lower()
+        if any(sig in end for sig in STRONG_UNRESOLVED_SIGNALS):
+            result.is_resolved = False
+            result.justification = (
+                f"{result.justification} Overridden: strong unresolved signal in call ending."
+            ).strip()
+        elif result.is_resolved:
+            DID_NOT_RESOLUTION_WORDS = [
+                "did not resolve",
+                "did not fix",
+                "did not complete",
+                "did not process",
+                "did not apply",
+                "did not waive",
+                "did not open",
+                "did not escalate",
+            ]
+            if any(phrase in end for phrase in DID_NOT_RESOLUTION_WORDS):
+                result.is_resolved = False
+                result.justification = (
+                    f"{result.justification} Overridden: did-not resolution signal."
+                ).strip()
+            elif result.is_resolved:
+                COMPLAINT_FILED_PHRASES = [
+                    "filed a complaint",
+                    "opening a complaint",
+                    "complaint has been filed",
+                    "formal complaint",
+                ]
+                if any(phrase in end for phrase in COMPLAINT_FILED_PHRASES):
+                    result.is_resolved = False
+                    result.justification = (
+                        f"{result.justification} Overridden: complaint filed signal."
+                    ).strip()
+                elif (
+                    result.is_resolved
+                    and "follow-up required" in end
+                    and "no follow-up required" not in end
+                ):
+                    result.is_resolved = False
+                    result.justification = (
+                        f"{result.justification} Overridden: follow-up required signal."
+                    ).strip()
     if not result.evidence_quotes:
         result.evidence_quotes = _quote_candidates(transcript_text, max_quotes=3)
     if not result.citations:
@@ -2378,6 +2795,15 @@ async def _evaluate_transcript_policy_pipeline(
     except Exception as exc:
         logger.warning("PolicyComplianceEvaluator failed in trigger pipeline: %s", exc)
         return None
+
+
+async def load_cached_interaction_trigger_report(
+    session: AsyncSession,
+    interaction_id: UUID,
+    org_filter: str | None,
+) -> InteractionLLMTriggerReport | None:
+    """Public read helper for cached trigger payloads (no pipeline execution)."""
+    return await _load_cached_trigger_report(session, interaction_id, org_filter)
 
 
 async def _load_cached_trigger_report(

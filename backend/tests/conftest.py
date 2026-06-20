@@ -10,6 +10,10 @@ import os
 
 # RAG service Settings() reads GROQ_API_KEY at import time during contract tests.
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key")
+os.environ.setdefault("OLLAMA_CLOUD_API_KEY", "test_key_for_tests")
+os.environ.setdefault("OLLAMA_API_KEY", "test_key_for_tests")
+os.environ.setdefault("LLM_PROVIDER", "ollama_cloud")
+os.environ.setdefault("SECRET_KEY", "test_secret_key_32_chars_minimum_x")
 
 import pytest
 import importlib
@@ -33,8 +37,19 @@ app_main.stop_audio_folder_watcher = AsyncMock(return_value=None)
 app = app_main.app
 settings.SECRET_KEY = "test-secret-key-minimum-32-bytes-long"
 settings.GROQ_API_KEY = "test-groq-key"
+settings.OLLAMA_CLOUD_API_KEY = "test_key_for_tests"
+settings.LLM_PROVIDER = "ollama_cloud"
 
 # --- Fixtures ---
+
+@pytest.fixture(autouse=True, scope="session")
+def set_test_env():
+    """Set minimum required env vars so validate_startup_settings() doesn't raise."""
+    os.environ.setdefault("OLLAMA_CLOUD_API_KEY", "test_key_for_tests")
+    os.environ.setdefault("OLLAMA_API_KEY", "test_key_for_tests")
+    os.environ.setdefault("LLM_PROVIDER", "ollama_cloud")
+    os.environ.setdefault("SECRET_KEY", "test_secret_key_32_chars_minimum_x")
+    yield
 
 @pytest.fixture(name="session")
 def session_fixture() -> Generator[Session, None, None]:

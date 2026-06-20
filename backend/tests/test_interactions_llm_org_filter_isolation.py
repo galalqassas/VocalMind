@@ -41,6 +41,7 @@ def test_interaction_detail_ignores_client_llm_org_filter_override(client, monke
                     policy_score=None,
                     resolution_score=None,
                     was_resolved=None,
+                    total_silence_seconds=None,
                     avg_response_time_seconds=None,
                 )
                 return _FakeExecResult(first_value=row)

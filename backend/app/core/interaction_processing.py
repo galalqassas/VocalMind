@@ -26,7 +26,14 @@ from app.core.inference_contracts import (
     build_local_full_response,
     is_supported_audio_filename,
 )
+from app.core.policy_violation_mapping import (
+    ViolationMappingInput,
+    derive_violation_specs,
+    ensure_organization_policies_from_source,
+    persist_policy_violations,
+)
 from app.core.speaker_role_infer import relabel_segments_with_speaker_model
+from app.llm_trigger.chains import is_gibberish
 from app.llm_trigger.service import evaluate_interaction_triggers
 from app.models.emotion_event import EmotionEvent
 from app.models.enums import JobStage, JobStatus, NotificationType, ProcessingStatus, SpeakerRole
@@ -44,6 +51,7 @@ from app.models.utterance import Utterance
 logger = logging.getLogger(__name__)
 
 _processing_queue: asyncio.Queue[UUID | None] | None = None
+_priority_queue: asyncio.Queue[UUID] | None = None
 _worker_task: asyncio.Task[None] | None = None
 
 STAGE_ORDER: tuple[JobStage, ...] = (
@@ -326,6 +334,25 @@ _CUSTOMER_PHRASE_WEIGHTS: tuple[tuple[str, int], ...] = (
 )
 
 
+STRONG_AGENT_PHRASES: tuple[str, ...] = (
+    "thank you for calling",
+    "how can i help",
+    "how may i help",
+    "my name is",
+    "i can help you with",
+    "i'll go ahead and",
+    "let me pull up your account",
+    "i do apologize",
+)
+
+
+def _strong_agent_phrase_boost(joined: str) -> float:
+    for phrase in STRONG_AGENT_PHRASES:
+        if phrase in joined:
+            return 15.0
+    return 0.0
+
+
 _lr_model = None
 _lr_vectorizer = None
 
@@ -359,12 +386,23 @@ def assign_cluster_roles_from_text(
     cluster_first_seen: dict[str, float] = {}
     for segment in segments:
         raw = (segment.get("speaker") or "").strip()
-        if not raw or raw.lower() in {"agent", "customer"}:
+        meta = segment.get("speaker_meta") or {}
+        fallback_reason = (meta.get("fallback_reason") or "")
+        diarization_speaker = (meta.get("diarization_speaker") or "").strip()
+        diarization_unavailable = (
+            fallback_reason == "diarization_unavailable"
+            or diarization_speaker.upper() == "UNKNOWN"
+            or (meta.get("source") or "") == "text_cue"
+        )
+        if not raw or (raw.lower() in {"agent", "customer"} and not diarization_unavailable):
             continue
-        cluster_texts.setdefault(raw, []).append((segment.get("text") or "").strip().lower())
+        cluster_key = diarization_speaker if diarization_unavailable and diarization_speaker else raw
+        if not cluster_key:
+            continue
+        cluster_texts.setdefault(cluster_key, []).append((segment.get("text") or "").strip().lower())
         start = float(segment.get("start") or 0.0)
-        if raw not in cluster_first_seen or start < cluster_first_seen[raw]:
-            cluster_first_seen[raw] = start
+        if cluster_key not in cluster_first_seen or start < cluster_first_seen[cluster_key]:
+            cluster_first_seen[cluster_key] = start
 
     if not cluster_texts:
         return {}
@@ -398,8 +436,8 @@ def assign_cluster_roles_from_text(
             if joined:
                 feat = _lr_vectorizer.transform([joined])
                 prob_agent = float(_lr_model.predict_proba(feat)[0][1])
-                a_base += 5.0 * prob_agent
-                c_base += 5.0 * (1.0 - prob_agent)
+                a_base += 3.0 * prob_agent
+                c_base += 3.0 * (1.0 - prob_agent)
 
         # Always add phrase weights as reinforcement
         a_base += float(sum(weight for phrase, weight in _AGENT_PHRASE_WEIGHTS if phrase in joined))
@@ -409,10 +447,15 @@ def assign_cluster_roles_from_text(
         agent_score = a_base
         customer_score = c_base
 
+        agent_score += _strong_agent_phrase_boost(joined)
+
+        if name_norm and name_norm not in {"agent", "customer"} and name_norm in joined:
+            agent_score += 12.0
+
         # Self-introduction with the known agent name is a near-decisive signal.
         if name_norm and name_norm not in {"agent", "customer"}:
             if f"my name is {name_norm}" in joined or f"this is {name_norm}" in joined:
-                agent_score += 15.0
+                agent_score += 6.0
 
         # Whoever opens the call with the scripted greeting is the agent.
         if cluster_first_seen.get(cluster, float("inf")) < 15.0 and (
@@ -420,11 +463,11 @@ def assign_cluster_roles_from_text(
             or "thanks for calling" in joined
             or "welcome to" in joined
         ):
-            agent_score += 10.0
+            agent_score += 4.0
 
         # First-speaker prior — anchors agent role even on mistranscribed greetings.
         if cluster == earliest_cluster:
-            agent_score += 12.0
+            agent_score += 4.0
 
         scores[cluster] = (agent_score, customer_score)
 
@@ -445,6 +488,57 @@ def assign_cluster_roles_from_text(
         cluster: SpeakerRole.customer if cluster == customer_cluster else SpeakerRole.agent
         for cluster in cluster_texts
     }
+
+
+def _count_diarization_clusters(segments: list[dict[str, Any]]) -> int:
+    clusters: set[str] = set()
+    for segment in segments:
+        meta = segment.get("speaker_meta") or {}
+        diarization_speaker = (meta.get("diarization_speaker") or segment.get("speaker") or "").strip()
+        if diarization_speaker.upper().startswith("SPEAKER_"):
+            clusters.add(diarization_speaker)
+    return len(clusters)
+
+
+def classify_segment_speaker_role(
+    text: str,
+    *,
+    agent_name: str | None = None,
+    segment_index: int = 0,
+) -> SpeakerRole:
+    """Per-segment agent/customer classification when diarization collapses to one cluster."""
+    _load_lr_model_and_vectorizer()
+    joined = (text or "").strip().lower()
+    if not joined:
+        return SpeakerRole.agent if segment_index == 0 else SpeakerRole.customer
+
+    agent_score = 0.0
+    customer_score = 0.0
+    if _lr_model is not None and _lr_vectorizer is not None:
+        prob_agent = float(_lr_model.predict_proba(_lr_vectorizer.transform([joined]))[0][1])
+        agent_score += 3.0 * prob_agent
+        customer_score += 3.0 * (1.0 - prob_agent)
+
+    agent_score += float(sum(weight for phrase, weight in _AGENT_PHRASE_WEIGHTS if phrase in joined))
+    customer_score += float(sum(weight for phrase, weight in _CUSTOMER_PHRASE_WEIGHTS if phrase in joined))
+
+    agent_score += _strong_agent_phrase_boost(joined)
+
+    name_norm = (agent_name or "").strip().lower()
+    if name_norm and name_norm not in {"agent", "customer"} and name_norm in joined:
+        agent_score += 12.0
+    if name_norm and name_norm not in {"agent", "customer"}:
+        if f"my name is {name_norm}" in joined or f"this is {name_norm}" in joined:
+            agent_score += 6.0
+
+    if segment_index == 0 and (
+        "thank you for calling" in joined
+        or "thanks for calling" in joined
+        or "welcome to" in joined
+    ):
+        agent_score += 4.0
+
+    return SpeakerRole.agent if agent_score >= customer_score else SpeakerRole.customer
 
 def _speaker_role_from_label(
     label: str | None,
@@ -523,10 +617,13 @@ async def _set_interaction_status(session: AsyncSession, interaction_id: UUID, s
     session.add(interaction)
 
 
-async def enqueue_interaction_processing(interaction_id: UUID) -> None:
-    if _processing_queue is None:
+async def enqueue_interaction_processing(interaction_id: UUID, *, priority: bool = False) -> None:
+    if _processing_queue is None or _priority_queue is None:
         raise RuntimeError("Processing worker has not been started")
-    await _processing_queue.put(interaction_id)
+    if priority:
+        await _priority_queue.put(interaction_id)
+    else:
+        await _processing_queue.put(interaction_id)
 
 
 async def _enqueue_pending_interactions_backlog() -> None:
@@ -534,6 +631,22 @@ async def _enqueue_pending_interactions_backlog() -> None:
     if _processing_queue is None:
         return
     async with AsyncSession(engine, expire_on_commit=False) as session:
+        stuck_result = await session.exec(
+            select(Interaction.id).where(Interaction.processing_status == ProcessingStatus.processing)
+        )
+        stuck_ids = list(stuck_result.all())
+        for iid in stuck_ids:
+            interaction = await session.get(Interaction, iid)
+            if interaction:
+                interaction.processing_status = ProcessingStatus.pending
+                session.add(interaction)
+        if stuck_ids:
+            await session.commit()
+            logger.warning(
+                "Reset %d interaction(s) stuck in processing to pending after worker restart",
+                len(stuck_ids),
+            )
+
         res = await session.exec(
             select(Interaction.id).where(Interaction.processing_status == ProcessingStatus.pending)
         )
@@ -545,16 +658,17 @@ async def _enqueue_pending_interactions_backlog() -> None:
 
 
 async def start_processing_worker() -> None:
-    global _worker_task, _processing_queue
+    global _worker_task, _processing_queue, _priority_queue
     if _worker_task and not _worker_task.done():
         return
     _processing_queue = asyncio.Queue()
+    _priority_queue = asyncio.Queue()
     _worker_task = asyncio.create_task(_worker_loop(), name="interaction-processing-worker")
     await _enqueue_pending_interactions_backlog()
 
 
 async def stop_processing_worker() -> None:
-    global _worker_task, _processing_queue
+    global _worker_task, _processing_queue, _priority_queue
     if not _worker_task or _processing_queue is None:
         return
     await _processing_queue.put(None)
@@ -565,23 +679,40 @@ async def stop_processing_worker() -> None:
     finally:
         _worker_task = None
         _processing_queue = None
+        _priority_queue = None
 
 
 async def _worker_loop() -> None:
-    if _processing_queue is None:
+    if _processing_queue is None or _priority_queue is None:
         return
     while True:
-        interaction_id = await _processing_queue.get()
+        # Always drain priority queue first before blocking on regular queue
+        if not _priority_queue.empty():
+            interaction_id = _priority_queue.get_nowait()
+            from_priority = True
+        else:
+            try:
+                # Block up to 1 second, then re-check priority queue
+                interaction_id = await asyncio.wait_for(
+                    _processing_queue.get(), timeout=1.0
+                )
+                from_priority = False
+                # Sentinel None = shutdown signal
+                if interaction_id is None:
+                    if not _priority_queue.empty():
+                        continue
+                    return
+            except asyncio.TimeoutError:
+                # Woke up — loop back and check priority queue again
+                continue
         try:
-            if interaction_id is None:
-                return
             await process_interaction(interaction_id)
         except Exception as exc:
             logger.exception("Interaction processing worker failed for %s", interaction_id)
-            if interaction_id is not None:
-                await mark_interaction_failed(interaction_id, _format_processing_exception(exc))
+            await mark_interaction_failed(interaction_id, _format_processing_exception(exc))
         finally:
-            _processing_queue.task_done()
+            if not from_priority:
+                _processing_queue.task_done()
 
 
 async def interaction_has_active_jobs(session: AsyncSession, interaction_id: UUID) -> bool:
@@ -664,23 +795,13 @@ async def _analyze_audio_for_interaction(
             )
         except Exception:
             logger.exception(
-                "Transcription fallback failed for %s; using deterministic minimal transcript",
+                "Transcription fallback failed for %s; ASR triple-fallback exhausted",
                 interaction_id,
             )
-            transcription = {
-                "language": "en",
-                "text": "",
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 1.0,
-                        "text": "",
-                        "speaker": "customer",
-                        "overlap": False,
-                    }
-                ],
-                "processing_time_s": 0.0,
-            }
+            raise RuntimeError(
+                "ASR triple-fallback exhausted: all three transcription levels failed. "
+                "Interaction will be marked failed by the worker."
+            ) from None
         return build_local_full_response(
             transcription,
             _deterministic_emotion_analysis(transcription.get("text") or ""),
@@ -717,6 +838,20 @@ async def process_interaction(interaction_id: UUID) -> None:
 
     analysis = await _analyze_audio_for_interaction(interaction_id, audio_bytes, filename)
 
+    transcript_text = (analysis.get("text") or "").strip()
+    if not transcript_text:
+        transcript_text = " ".join(
+            (segment.get("text") or "").strip()
+            for segment in (analysis.get("segments") or [])
+        ).strip()
+    if await is_gibberish(transcript_text):
+        await mark_interaction_failed(
+            interaction_id,
+            "ASR quality gate failed: transcript is empty or gibberish. "
+            "Check audio file format and WhisperX model availability.",
+        )
+        return
+
     async with AsyncSession(engine, expire_on_commit=False) as session:
         interaction = await session.get(Interaction, interaction_id)
         if not interaction:
@@ -743,6 +878,7 @@ async def process_interaction(interaction_id: UUID) -> None:
         agent_user = await session.get(User, interaction.agent_id) if interaction.agent_id else None
         agent_name = agent_user.name if agent_user else None
         cluster_role_map = assign_cluster_roles_from_text(segments, agent_name)
+        single_diarization_cluster = _count_diarization_clusters(segments) <= 1
         transcript_text = (analysis.get("text") or "").strip()
         if not transcript_text:
             transcript_text = " ".join((segment.get("text") or "").strip() for segment in segments).strip()
@@ -754,11 +890,23 @@ async def process_interaction(interaction_id: UUID) -> None:
 
         utterances: list[Utterance] = []
         for index, segment in enumerate(segments):
-            speaker_role = _speaker_role_from_label(
-                segment.get("speaker"),
-                cluster_map=cluster_role_map,
-                default=SpeakerRole.agent if index == 0 else SpeakerRole.customer,
-            )
+            meta = segment.get("speaker_meta") or {}
+            raw_speaker = (segment.get("speaker") or "").strip().lower()
+            if single_diarization_cluster:
+                if meta.get("source") == "text_cue" and raw_speaker in {"agent", "customer"}:
+                    speaker_role = SpeakerRole.agent if raw_speaker == "agent" else SpeakerRole.customer
+                else:
+                    speaker_role = classify_segment_speaker_role(
+                        segment.get("text"),
+                        agent_name=agent_name,
+                        segment_index=index,
+                    )
+            else:
+                speaker_role = _speaker_role_from_label(
+                    segment.get("speaker"),
+                    cluster_map=cluster_role_map,
+                    default=SpeakerRole.agent if index == 0 else SpeakerRole.customer,
+                )
             emotion_scores = segment.get("emotion_scores") or []
             emotion_confidence = 0.0
             if emotion_scores:
@@ -833,10 +981,9 @@ async def process_interaction(interaction_id: UUID) -> None:
                 logger.exception("LLM trigger evaluation failed for interaction %s", interaction_id)
 
         if report:
-            policy = await _resolve_policy_record_for_report(
-                session=session,
-                organization_id=interaction.organization_id,
-                report=report,
+            await ensure_organization_policies_from_source(
+                session,
+                interaction.organization_id,
             )
             compliance_score = max(0.0, min(1.0, float(report.process_adherence.efficiency_score) / 10.0))
             policy_alignment = report.nli_policy.policy_alignment_score
@@ -860,31 +1007,22 @@ async def process_interaction(interaction_id: UUID) -> None:
                 (empathy_score * 0.3) + (policy_score * 0.4) + (resolution_score * 0.3),
                 4,
             )
-            evidence_text = "; ".join(
-                quote for quote in (
-                    report.process_adherence.evidence_quotes[:1] + report.nli_policy.evidence_quotes[:1]
-                )
-                if quote
-            ) or transcript_text[:250]
 
-            if policy:
-                is_compliant = report.nli_policy.nli_category in {"Entailment", "Benign Deviation"}
-                transcript_policy_degraded = bool(
-                    report.nli_policy.insufficient_evidence
-                    or report.process_adherence.insufficient_evidence
-                )
-                session.add(
-                    PolicyCompliance(
-                        interaction_id=interaction_id,
-                        policy_id=policy.id,
-                        is_compliant=is_compliant,
-                        compliance_score=compliance_score,
-                        degraded=transcript_policy_degraded,
-                        llm_reasoning=report.nli_policy.justification or report.process_adherence.justification,
-                        evidence_text=evidence_text,
-                        retrieved_policy_text=policy.policy_text,
-                    )
-                )
+            violation_input = ViolationMappingInput.from_llm_trigger_report(report)
+            violation_specs = derive_violation_specs(violation_input)
+            transcript_policy_degraded = bool(
+                report.nli_policy.insufficient_evidence
+                or report.process_adherence.insufficient_evidence
+            )
+            for spec in violation_specs:
+                spec.degraded = transcript_policy_degraded
+            await persist_policy_violations(
+                session,
+                interaction_id=interaction_id,
+                organization_id=interaction.organization_id,
+                specs=violation_specs,
+                replace_existing=False,
+            )
 
             session.add(
                 InteractionScore(

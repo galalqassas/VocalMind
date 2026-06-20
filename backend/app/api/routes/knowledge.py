@@ -24,6 +24,7 @@ SOP_DOCS_FOLDER = "sop-procedures"
 LEGACY_FAQ_DOCS_FOLDER = "faq-docs"
 KB_DOCS_FOLDER = "knowledge-base"
 LEGACY_KB_DOCS_FOLDER = "kb"
+KB_CATEGORY_PREFIX = "kb:"
 
 # --- Schemas ---
 
@@ -306,7 +307,10 @@ async def list_faqs(session: SessionDep, current_user: CurrentUser):
     result = await session.exec(
         select(FAQArticle, OrganizationFAQArticle)
         .join(OrganizationFAQArticle, OrganizationFAQArticle.article_id == FAQArticle.id)
-        .where(OrganizationFAQArticle.organization_id == current_user.organization_id)
+        .where(
+            OrganizationFAQArticle.organization_id == current_user.organization_id,
+            ~FAQArticle.category.startswith(KB_CATEGORY_PREFIX),  # type: ignore[union-attr]
+        )
         .order_by(FAQArticle.question)
     )
     faqs_data = result.all()
@@ -554,9 +558,6 @@ async def delete_faq(
 
 
 # --- Knowledge Base Endpoints ---
-
-
-KB_CATEGORY_PREFIX = "kb:"
 
 
 def _is_kb_article(faq: FAQArticle) -> bool:

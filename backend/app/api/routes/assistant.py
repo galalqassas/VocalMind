@@ -19,8 +19,6 @@ from uuid import UUID
 from app.core.config import settings
 from app.core.llm_circuit_breaker import CircuitOpenError, get_breaker, is_transient_llm_error
 from app.llm_trigger.chains import get_model_for_stage
-from google import genai
-from google.genai import types
 
 from app.core.database import engine
 from app.api.deps import CurrentUser
@@ -683,6 +681,13 @@ class IntentResolver:
         self, prompt: str, temperature: float, *, raise_on_rate_limit: bool
     ) -> Optional[str]:
         """Try Gemini models/keys; optionally re-raise the last rate-limit error."""
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            logger.warning("google-genai not installed; Gemini provider unavailable")
+            return None
+
         if not self._keys:
             if raise_on_rate_limit:
                 logger.error("No valid Gemini API keys configured.")
@@ -760,23 +765,10 @@ class IntentResolver:
                 self.last_llm_backend = "Gemini"
             return t
 
-        # auto: prefer Gemini -> Groq -> Ollama Cloud -> local Ollama
-        if self._keys:
-            t = await self._gemini_generate(prompt, temperature, raise_on_rate_limit=False)
-            if t:
-                self.last_llm_backend = "Gemini"
-                return t
-        t = await _groq_chat_complete(prompt, temperature)
-        if t:
-            self.last_llm_backend = "Groq"
-            return t
+        # auto: use Ollama Cloud only
         t = await _ollama_cloud_chat_complete(prompt, temperature, stage=stage)
         if t:
             self.last_llm_backend = "Ollama Cloud"
-            return t
-        t = await _ollama_chat_complete(prompt, temperature)
-        if t:
-            self.last_llm_backend = "Ollama"
         return t
 
     async def resolve_sql(

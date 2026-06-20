@@ -18,6 +18,7 @@ from app.models.enums import FeedbackStatus, NotificationType, UserRole
 from app.models.feedback import ComplianceFeedback, EmotionFeedback
 from app.models.interaction import Interaction
 from app.models.policy import PolicyCompliance
+from app.models.utterance import Utterance
 from app.core.notification_service import emit
 
 router = APIRouter()
@@ -69,11 +70,25 @@ async def correct_emotion(
     if not interaction or interaction.organization_id != current_user.organization_id:
         raise HTTPException(status_code=403, detail="Cross-organization access denied")
 
+    corrected = (body.corrected_emotion or "").strip().lower()
+    if not corrected:
+        raise HTTPException(status_code=400, detail="corrected_emotion is required")
+
+    event.new_emotion = corrected
+    if body.corrected_justification:
+        event.llm_justification = body.corrected_justification.strip()
+    session.add(event)
+
+    utterance = await session.get(Utterance, event.utterance_id)
+    if utterance:
+        utterance.emotion = corrected
+        session.add(utterance)
+
     feedback = EmotionFeedback(
         emotion_event_id=event.id,
         provided_by_user_id=current_user.id,
         llm_justification=event.llm_justification,
-        corrected_emotion=body.corrected_emotion,
+        corrected_emotion=corrected,
         corrected_justification=body.corrected_justification,
         correction_reason=body.correction_reason,
         feedback_status=FeedbackStatus.reviewed,

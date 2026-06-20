@@ -121,9 +121,11 @@ def get_model_for_stage(stage: str) -> str:
         return legacy_override
 
     stage_class = _STAGE_MODEL_CLASS[key]
-    if stage_class == _FAST_STAGE:
-        return settings.OLLAMA_CLOUD_FAST_MODEL
-    return settings.OLLAMA_CLOUD_HEAVY_MODEL
+    if settings.LLM_PROVIDER == "ollama_cloud":
+        if stage_class == _FAST_STAGE:
+            return settings.OLLAMA_CLOUD_FAST_MODEL
+        return settings.OLLAMA_CLOUD_HEAVY_MODEL
+    return settings.LLM_MODEL
 
 
 def recognized_stage_names() -> tuple[str, ...]:
@@ -214,3 +216,30 @@ def build_nli_policy_chain(model: BaseChatModel | None = None):
     llm = _with_json_object_mode(_resolve_chain_model("nli_policy", model))
     chain = prompt | llm | parser
     return chain
+
+
+async def is_gibberish(text: str) -> bool:
+    """
+    Returns True if the transcript is gibberish, noise, or contains
+    no meaningful spoken content. Uses ministral-3:8b via fast_classification stage.
+    Empty text always returns True immediately (no LLM call needed).
+    """
+    if not text or not text.strip():
+        return True
+
+    llm = build_llm(stage="fast_classification")
+    prompt = (
+        "You are a transcript quality checker. "
+        "Respond with exactly one word: VALID or GIBBERISH.\n\n"
+        "VALID means: real human speech, even if noisy or imperfect.\n"
+        "GIBBERISH means: random characters, pure noise, blank, repeated filler "
+        "with no real words, or clearly failed ASR output.\n\n"
+        f"Transcript:\n{text[:2000]}\n\nAnswer:"
+    )
+    try:
+        result = await llm.ainvoke(prompt)
+        answer = (result.content if hasattr(result, "content") else str(result)).strip().upper()
+        return "GIBBERISH" in answer
+    except Exception:
+        logger.warning("is_gibberish() LLM call failed; treating as VALID")
+        return False

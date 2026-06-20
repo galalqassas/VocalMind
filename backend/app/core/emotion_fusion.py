@@ -204,14 +204,95 @@ def infer_text_emotion_with_provider(text: str) -> tuple[str, float]:
 
 
 def build_deterministic_emotion_analysis(text: str) -> dict[str, object]:
-    # Deterministic fallback must remain stable and independent of external model behavior.
-    emotion, confidence = infer_text_emotion(text)
-    emotion = _normalize_text_label(emotion)
+    normalized = (text or "").lower()
+    scores: dict[str, float] = {
+        "neutral": 0.30,
+        "happy": 0.0,
+        "frustrated": 0.0,
+        "angry": 0.0,
+        "sad": 0.0,
+        "surprised": 0.0,
+    }
+
+    happy_keywords = (
+        "great", "perfect", "awesome", "wonderful", "thank you so much", "appreciate",
+        "fantastic", "excellent", "glad", "happy", "relieved", "that works",
+    )
+    frustrated_keywords = (
+        "unacceptable", "ridiculous", "this is crazy", "been waiting", "keep getting",
+        "never works", "fed up", "seriously", "come on", "not good enough", "this is not",
+        "every time",
+    )
+    angry_keywords = (
+        "i'm done", "cancel", "this is a joke", "outrageous", "furious", "demand",
+        "immediately", "escalate", "supervisor", "lawyer", "threatening", "abuse", "hang up",
+    )
+    sad_keywords = (
+        "worried", "scared", "afraid", "stressed", "really need", "please help",
+        "desperate", "lost", "don't know what to do",
+    )
+
+    for label, keywords in (
+        ("happy", happy_keywords),
+        ("frustrated", frustrated_keywords),
+        ("angry", angry_keywords),
+        ("sad", sad_keywords),
+    ):
+        hits = sum(1 for kw in keywords if kw in normalized)
+        if hits:
+            scores[label] = min(0.70, 0.35 * hits)
+
+    # Preserve legacy lexicon signal as a small boost.
+    legacy_label, legacy_conf = infer_text_emotion(text)
+    legacy_label = _normalize_text_label(legacy_label)
+    if legacy_label in scores and legacy_label != "neutral":
+        scores[legacy_label] = max(scores[legacy_label], float(legacy_conf) * 0.5)
+
+    emotion = max(scores, key=scores.get)
+    confidence = max(scores.values())
+    if confidence <= 0.30 and emotion == "neutral":
+        confidence = 0.30
     return {
         "top_emotion": emotion,
         "top_score": round(float(confidence), 3),
         "emotions": [{"label": emotion, "score": round(float(confidence), 3)}],
     }
+
+
+NON_NEUTRAL_LABELS = frozenset({"happy", "frustrated", "angry", "sad", "surprised"})
+
+
+def _combined_emotion_scores(
+    text: str,
+    acoustic_emotion: str,
+    acoustic_confidence: float | None,
+    text_emotion: str,
+    text_confidence: float,
+    acoustic_label: str,
+    acoustic_score: float,
+) -> dict[str, float]:
+    text_weight = 0.45
+    acoustic_weight = 0.55
+    scores: dict[str, float] = {label: 0.0 for label in NON_NEUTRAL_LABELS}
+    scores["neutral"] = 0.15
+    scores[text_emotion] = scores.get(text_emotion, 0.0) + text_weight * text_confidence
+    scores[acoustic_label] = scores.get(acoustic_label, 0.0) + acoustic_weight * acoustic_score
+    if not text.strip():
+        scores["neutral"] = max(scores["neutral"], 0.30)
+    return scores
+
+
+def _apply_non_neutral_amplification(scores: dict[str, float]) -> tuple[str, float]:
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    top_label, top_score = ranked[0]
+    if top_label != "neutral" or len(ranked) < 2:
+        return top_label, top_score
+    second_label, second_score = ranked[1]
+    if second_label in NON_NEUTRAL_LABELS and second_score >= 0.38:
+        boosted = min(0.95, second_score * 1.4)
+        if boosted > top_score:
+            return second_label, boosted
+    return top_label, top_score
 
 
 def fuse_emotion_signals(
@@ -235,6 +316,19 @@ def fuse_emotion_signals(
         # Prefer stronger signal but keep confidence conservative when modalities disagree.
         fused_emotion = text_emotion if text_confidence > acoustic_score else acoustic_label
         fused_confidence = max(0.35, (text_confidence * text_weight) + (acoustic_score * acoustic_weight) - 0.12)
+
+    combined_scores = _combined_emotion_scores(
+        text,
+        acoustic_emotion,
+        acoustic_confidence,
+        text_emotion,
+        text_confidence,
+        acoustic_label,
+        acoustic_score,
+    )
+    combined_scores[fused_emotion] = max(combined_scores.get(fused_emotion, 0.0), fused_confidence)
+    if fused_confidence >= 0.45:
+        fused_emotion, fused_confidence = _apply_non_neutral_amplification(combined_scores)
 
     return EmotionFusionResult(
         emotion=fused_emotion,

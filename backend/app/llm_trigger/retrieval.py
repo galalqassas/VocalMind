@@ -157,6 +157,28 @@ class QdrantRetriever:
         self._qdrant = client or _get_shared_qdrant_client()
 
     def _embed_query(self, text: str) -> list[float]:
+        if settings.OLLAMA_CLOUD_EMBED_ENABLED:
+            try:
+                response = httpx.post(
+                    f"{settings.OLLAMA_CLOUD_BASE_URL.rstrip('/')}/embeddings",
+                    json={"model": settings.EMBEDDING_MODEL, "input": text},
+                    headers=embedding_request_headers(),
+                    timeout=settings.EMBEDDING_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("data"):
+                    embedding = data["data"][0].get("embedding")
+                    if embedding:
+                        return embedding
+                vector = data.get("embedding")
+                if vector:
+                    return vector
+            except Exception as exc:
+                raise ValueError(
+                    f"Embedding API did not return vector. Last attempt (/embeddings): {exc}"
+                ) from exc
+
         payloads = (
             ("/api/embed", {"model": settings.EMBEDDING_MODEL, "input": text}),
             ("/api/embeddings", {"model": settings.EMBEDDING_MODEL, "prompt": text}),

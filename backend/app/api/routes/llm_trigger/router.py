@@ -84,21 +84,36 @@ async def llm_trigger_health():
         logger.warning("LLM trigger health qdrant check failed", exc_info=True)
         checks["qdrant"] = "error"
 
-    try:
-        import httpx
-        response = httpx.get(
-            f"{settings.OLLAMA_BASE_URL}/api/tags",
-            timeout=5.0,
-            headers=outbound_request_headers(),
-        )
-        checks["ollama"] = "ok" if response.status_code == 200 else f"status:{response.status_code}"
-    except Exception:
-        logger.warning("LLM trigger health ollama check failed", exc_info=True)
-        checks["ollama"] = "error"
+    # Embeddings health check
+    if settings.OLLAMA_CLOUD_EMBED_ENABLED:
+        try:
+            import httpx
 
-    checks["groq_api_key"] = "configured" if settings.GROQ_API_KEY else "missing"
+            response = httpx.get(
+                settings.OLLAMA_CLOUD_BASE_URL.rstrip("/").replace("/v1", "") + "/api/tags",
+                headers={"Authorization": f"Bearer {settings.OLLAMA_CLOUD_API_KEY}"},
+                timeout=5.0,
+            )
+            checks["ollama"] = "ok" if response.status_code == 200 else f"status:{response.status_code}"
+        except Exception:
+            logger.warning("LLM trigger health ollama cloud check failed", exc_info=True)
+            checks["ollama"] = "error"
+    else:
+        try:
+            import httpx
 
-    overall = "ok" if all(v == "ok" or v == "configured" for v in checks.values()) else "degraded"
+            response = httpx.get(
+                f"{settings.OLLAMA_BASE_URL}/api/tags",
+                timeout=5.0,
+                headers=outbound_request_headers(),
+            )
+            checks["ollama"] = "ok" if response.status_code == 200 else f"status:{response.status_code}"
+        except Exception:
+            logger.warning("LLM trigger health ollama check failed", exc_info=True)
+            checks["ollama"] = "error"
+
+    critical = {k: v for k, v in checks.items() if k != "ollama"}
+    overall = "ok" if all(v == "ok" for v in critical.values()) else "degraded"
     return {"status": overall, "dependencies": checks}
 
 
