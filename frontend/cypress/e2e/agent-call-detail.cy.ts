@@ -1,7 +1,7 @@
 import {
   buildInteractionDetail,
   buildInteractionSummary,
-} from '../support/mockApi';
+} from '../support/e2eApiFixtures';
 
 describe('Agent Call Detail', () => {
   it('renders coaching and llm insights for an unresolved call', () => {

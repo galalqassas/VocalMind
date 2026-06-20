@@ -6,5 +6,5 @@ import '@cypress/code-coverage/support';
 beforeEach(() => {
   cy.clearCookies();
   cy.clearLocalStorage();
-  cy.mockApiScenario();
+  cy.useE2eApiFixtures();
 });

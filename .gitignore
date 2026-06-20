@@ -181,7 +181,9 @@ tools/supabase_windows_amd64.tar.gz
 .claude/
 CLAUDE.md
 code-health-report.md
-data/
+/data/
+!frontend/src/app/data/
+!frontend/src/app/data/**
 
 # ── Pipeline-eval generated artifacts (regenerable via tools/evaluate_pipeline.py) ──
 tools/reports/

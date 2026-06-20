@@ -1,13 +1,19 @@
-describe("Landing Page", () => {
-  beforeEach(() => {
+describe("Universal login entry", () => {
+  it("shows the login form at the root route", () => {
+    cy.useE2eApiFixtures({ auth: false });
     cy.visit("/");
+
+    cy.contains("Welcome to VocalMind").should("be.visible");
+    cy.get('input[type="email"]').should("be.visible");
+    cy.contains("Manager Portal").should("not.exist");
+    cy.contains("Agent Portal").should("not.exist");
   });
 
-  it("links the manager portal card to the manager app", () => {
-    cy.contains("Manager Portal").closest("a").should("have.attr", "href", "/manager");
-  });
+  it("redirects legacy /login to the root login screen", () => {
+    cy.useE2eApiFixtures({ auth: false });
+    cy.visit("/login");
 
-  it("links the agent portal card to the agent app", () => {
-    cy.contains("Agent Portal").closest("a").should("have.attr", "href", "/agent");
+    cy.location("pathname").should("eq", "/");
+    cy.contains("Welcome to VocalMind").should("be.visible");
   });
 });

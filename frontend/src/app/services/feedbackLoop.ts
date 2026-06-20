@@ -1,13 +1,13 @@
 /**
  * API helpers for the notification + HITL feedback feature set.
  *
- * In USE_MOCK_API mode, calls are stubbed against sessionStorage so the demo
- * build keeps working end-to-end without a backend.
+ * When VITE_USE_OFFLINE_DEMO=true, calls are stubbed against sessionStorage so the
+ * SPA can run end-to-end without a backend.
  */
 import { apiFetch } from "./api";
 
 const IS_CYPRESS = typeof window !== "undefined" && !!(window as { Cypress?: unknown }).Cypress;
-const USE_MOCK_API = !IS_CYPRESS && import.meta.env.VITE_USE_MOCK_API !== "false";
+const USE_OFFLINE_DEMO = !IS_CYPRESS && import.meta.env.VITE_USE_OFFLINE_DEMO === "true";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,14 +81,14 @@ export interface ComplianceReviewDecision {
   manager_note?: string;
 }
 
-// ── Mock-mode store ──────────────────────────────────────────────────────────
+// ── Offline demo store ───────────────────────────────────────────────────────
 
-const MOCK_NOTIFS_KEY = "vm_mock_notifications";
-const MOCK_QUEUE_KEY = "vm_mock_review_queue";
+const OFFLINE_NOTIFS_KEY = "vm_offline_notifications";
+const OFFLINE_QUEUE_KEY = "vm_offline_review_queue";
 
-function readMockNotifs(): NotificationItem[] {
+function readOfflineNotifs(): NotificationItem[] {
   if (typeof sessionStorage === "undefined") return [];
-  const raw = sessionStorage.getItem(MOCK_NOTIFS_KEY);
+  const raw = sessionStorage.getItem(OFFLINE_NOTIFS_KEY);
   if (raw) {
     try {
       return JSON.parse(raw) as NotificationItem[];
@@ -96,7 +96,6 @@ function readMockNotifs(): NotificationItem[] {
       /* fall through */
     }
   }
-  // Seed a few demo notifications so the bell looks alive in mock mode.
   const seed: NotificationItem[] = [
     {
       id: "n-1",
@@ -121,18 +120,18 @@ function readMockNotifs(): NotificationItem[] {
       created_at: new Date(Date.now() - 1000 * 60 * 47).toISOString(),
     },
   ];
-  sessionStorage.setItem(MOCK_NOTIFS_KEY, JSON.stringify(seed));
+  sessionStorage.setItem(OFFLINE_NOTIFS_KEY, JSON.stringify(seed));
   return seed;
 }
 
-function writeMockNotifs(items: NotificationItem[]): void {
+function writeOfflineNotifs(items: NotificationItem[]): void {
   if (typeof sessionStorage === "undefined") return;
-  sessionStorage.setItem(MOCK_NOTIFS_KEY, JSON.stringify(items));
+  sessionStorage.setItem(OFFLINE_NOTIFS_KEY, JSON.stringify(items));
 }
 
-function readMockQueue(): ReviewQueue {
+function readOfflineQueue(): ReviewQueue {
   if (typeof sessionStorage === "undefined") return { emotion: [], compliance: [] };
-  const raw = sessionStorage.getItem(MOCK_QUEUE_KEY);
+  const raw = sessionStorage.getItem(OFFLINE_QUEUE_KEY);
   if (raw) {
     try {
       return JSON.parse(raw) as ReviewQueue;
@@ -144,7 +143,7 @@ function readMockQueue(): ReviewQueue {
     emotion: [
       {
         kind: "emotion",
-        review_id: "ev-mock-1",
+        review_id: "ev-offline-1",
         interaction_id: "4821",
         agent_id: "agent-sara",
         agent_name: "Sara Kim",
@@ -160,7 +159,7 @@ function readMockQueue(): ReviewQueue {
     compliance: [
       {
         kind: "compliance",
-        review_id: "pc-mock-1",
+        review_id: "pc-offline-1",
         interaction_id: "4811",
         agent_id: "agent-luis",
         agent_name: "Luis Romero",
@@ -175,20 +174,20 @@ function readMockQueue(): ReviewQueue {
       },
     ],
   };
-  sessionStorage.setItem(MOCK_QUEUE_KEY, JSON.stringify(seed));
+  sessionStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(seed));
   return seed;
 }
 
-function writeMockQueue(queue: ReviewQueue): void {
+function writeOfflineQueue(queue: ReviewQueue): void {
   if (typeof sessionStorage === "undefined") return;
-  sessionStorage.setItem(MOCK_QUEUE_KEY, JSON.stringify(queue));
+  sessionStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
 }
 
 // ── Notifications API ────────────────────────────────────────────────────────
 
 export async function listNotifications(opts?: { unread?: boolean; limit?: number }): Promise<NotificationItem[]> {
-  if (USE_MOCK_API) {
-    const items = readMockNotifs();
+  if (USE_OFFLINE_DEMO) {
+    const items = readOfflineNotifs();
     const filtered = opts?.unread ? items.filter((n) => !n.is_read) : items;
     return filtered.slice(0, opts?.limit ?? 50);
   }
@@ -200,28 +199,28 @@ export async function listNotifications(opts?: { unread?: boolean; limit?: numbe
 }
 
 export async function getUnreadCount(): Promise<number> {
-  if (USE_MOCK_API) {
-    return readMockNotifs().filter((n) => !n.is_read).length;
+  if (USE_OFFLINE_DEMO) {
+    return readOfflineNotifs().filter((n) => !n.is_read).length;
   }
   const res = await apiFetch<{ unread: number }>(`/notifications/unread-count`);
   return res.unread;
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
-  if (USE_MOCK_API) {
-    const items = readMockNotifs().map((n) =>
+  if (USE_OFFLINE_DEMO) {
+    const items = readOfflineNotifs().map((n) =>
       n.id === id ? { ...n, is_read: true, read_at: new Date().toISOString() } : n,
     );
-    writeMockNotifs(items);
+    writeOfflineNotifs(items);
     return;
   }
   await apiFetch(`/notifications/${id}/read`, { method: "POST" });
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const now = new Date().toISOString();
-    writeMockNotifs(readMockNotifs().map((n) => ({ ...n, is_read: true, read_at: n.read_at ?? now })));
+    writeOfflineNotifs(readOfflineNotifs().map((n) => ({ ...n, is_read: true, read_at: n.read_at ?? now })));
     return;
   }
   await apiFetch(`/notifications/read-all`, { method: "POST" });
@@ -230,15 +229,15 @@ export async function markAllNotificationsRead(): Promise<void> {
 // ── Review queue API ─────────────────────────────────────────────────────────
 
 export async function getReviewQueue(): Promise<ReviewQueue> {
-  if (USE_MOCK_API) return readMockQueue();
+  if (USE_OFFLINE_DEMO) return readOfflineQueue();
   return apiFetch<ReviewQueue>(`/reviews/queue`);
 }
 
 export async function reviewEmotionFlag(eventId: string, decision: EmotionReviewDecision): Promise<void> {
-  if (USE_MOCK_API) {
-    const queue = readMockQueue();
+  if (USE_OFFLINE_DEMO) {
+    const queue = readOfflineQueue();
     queue.emotion = queue.emotion.filter((e) => e.review_id !== eventId);
-    writeMockQueue(queue);
+    writeOfflineQueue(queue);
     return;
   }
   await apiFetch(`/reviews/emotion/${eventId}`, {
@@ -248,10 +247,10 @@ export async function reviewEmotionFlag(eventId: string, decision: EmotionReview
 }
 
 export async function reviewComplianceFlag(complianceId: string, decision: ComplianceReviewDecision): Promise<void> {
-  if (USE_MOCK_API) {
-    const queue = readMockQueue();
+  if (USE_OFFLINE_DEMO) {
+    const queue = readOfflineQueue();
     queue.compliance = queue.compliance.filter((c) => c.review_id !== complianceId);
-    writeMockQueue(queue);
+    writeOfflineQueue(queue);
     return;
   }
   await apiFetch(`/reviews/compliance/${complianceId}`, {
@@ -268,7 +267,7 @@ export async function correctEmotion(payload: {
   corrected_justification?: string;
   correction_reason?: string;
 }): Promise<{ feedback_id: string }> {
-  if (USE_MOCK_API) return { feedback_id: `fb-${Date.now()}` };
+  if (USE_OFFLINE_DEMO) return { feedback_id: `fb-${Date.now()}` };
   return apiFetch<{ feedback_id: string }>(`/feedback/emotion`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -281,7 +280,7 @@ export async function correctCompliance(payload: {
   corrected_score?: number;
   correction_reason?: string;
 }): Promise<{ feedback_id: string }> {
-  if (USE_MOCK_API) return { feedback_id: `fb-${Date.now()}` };
+  if (USE_OFFLINE_DEMO) return { feedback_id: `fb-${Date.now()}` };
   return apiFetch<{ feedback_id: string }>(`/feedback/compliance`, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -291,7 +290,7 @@ export async function correctCompliance(payload: {
 // ── Agent-side dispute helpers ───────────────────────────────────────────────
 
 export async function disputeEmotionEvent(eventId: string, note?: string): Promise<void> {
-  if (USE_MOCK_API) return;
+  if (USE_OFFLINE_DEMO) return;
   await apiFetch(`/interactions/emotion-events/${eventId}/dispute`, {
     method: "POST",
     body: JSON.stringify({ agent_flag_note: note ?? null }),
@@ -299,12 +298,12 @@ export async function disputeEmotionEvent(eventId: string, note?: string): Promi
 }
 
 export async function retractEmotionDispute(eventId: string): Promise<void> {
-  if (USE_MOCK_API) return;
+  if (USE_OFFLINE_DEMO) return;
   await apiFetch(`/interactions/emotion-events/${eventId}/dispute`, { method: "DELETE" });
 }
 
 export async function disputeCompliance(complianceId: string, note?: string): Promise<void> {
-  if (USE_MOCK_API) return;
+  if (USE_OFFLINE_DEMO) return;
   await apiFetch(`/policy-compliance/${complianceId}/dispute`, {
     method: "POST",
     body: JSON.stringify({ agent_flag_note: note ?? null }),
@@ -312,6 +311,6 @@ export async function disputeCompliance(complianceId: string, note?: string): Pr
 }
 
 export async function retractComplianceDispute(complianceId: string): Promise<void> {
-  if (USE_MOCK_API) return;
+  if (USE_OFFLINE_DEMO) return;
   await apiFetch(`/policy-compliance/${complianceId}/dispute`, { method: "DELETE" });
 }

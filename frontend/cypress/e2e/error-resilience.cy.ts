@@ -1,19 +1,19 @@
 describe('Error resilience and edge cases', () => {
   it('displays an error message when login credentials fail', () => {
-    cy.mockApiScenario({ auth: false });
+    cy.useE2eApiFixtures({ auth: false });
 
     cy.intercept('POST', '**/api/v1/auth/login/access-token', {
       statusCode: 401,
       body: { detail: 'Incorrect email or password' },
     }).as('loginFail');
 
-    cy.visit('/login');
+    cy.visit('/');
     cy.get('input[type="email"]').type('wrong@example.com');
     cy.get('input[type="password"]').type('badpassword');
     cy.contains('button', 'Sign In').click();
 
     cy.wait('@loginFail');
-    cy.location('pathname').should('eq', '/login');
+    cy.location('pathname').should('eq', '/');
     cy.get('input[type="email"]').should('be.visible');
   });
 
@@ -50,10 +50,10 @@ describe('Error resilience and edge cases', () => {
   });
 
   it('redirects an unauthenticated user from agent routes to login', () => {
-    cy.mockApiScenario({ auth: false });
+    cy.useE2eApiFixtures({ auth: false });
     cy.visit('/agent');
 
-    cy.location('pathname').should('eq', '/login');
+    cy.location('pathname').should('eq', '/');
     cy.contains('Welcome to VocalMind').should('be.visible');
   });
 });

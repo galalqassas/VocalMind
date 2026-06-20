@@ -1,11 +1,10 @@
 /**
- * Mock data for frontend development.
- * Replace with real API calls when backend endpoints are ready.
+ * Sample interaction fixtures for Cypress E2E API stubs.
  */
 
 // ── Manager Dashboard ────────────────────────────────────────────────────────
 
-export const mockWeeklyTrend = [
+export const sampleWeeklyTrend = [
   { day: "Mon", score: 82 },
   { day: "Tue", score: 85 },
   { day: "Wed", score: 79 },
@@ -15,7 +14,7 @@ export const mockWeeklyTrend = [
   { day: "Sun", score: 86 },
 ];
 
-export const mockEmotionDistribution = [
+export const sampleEmotionDistribution = [
   { name: "Neutral", value: 40, color: "#6B7280" },
   { name: "Happy", value: 25, color: "#10B981" },
   { name: "Frustrated", value: 15, color: "#F59E0B" },
@@ -23,7 +22,7 @@ export const mockEmotionDistribution = [
   { name: "Sad", value: 10, color: "#3B82F6" },
 ];
 
-export const mockPolicyCompliance = [
+export const samplePolicyCompliance = [
   { category: "Greeting Protocol", rate: 94, color: "#10B981" },
   { category: "Data Privacy", rate: 88, color: "#3B82F6" },
   { category: "Escalation Policy", rate: 76, color: "#F59E0B" },
@@ -31,7 +30,7 @@ export const mockPolicyCompliance = [
   { category: "Closing Script", rate: 91, color: "#10B981" },
 ];
 
-export const mockAgentPerformance = [
+export const sampleAgentPerformance = [
   { name: "Sarah M.", empathy: 92, policy: 88, resolution: 85, overallScore: 88, trend: "up" as const },
   { name: "John D.", empathy: 78, policy: 95, resolution: 82, overallScore: 85, trend: "up" as const },
   { name: "Emily R.", empathy: 85, policy: 80, resolution: 90, overallScore: 85, trend: "down" as const },
@@ -41,7 +40,7 @@ export const mockAgentPerformance = [
 
 // ── Interactions ──────────────────────────────────────────────────────────────
 
-export const mockInteractions = [
+export const sampleInteractions = [
   {
     id: "int-001",
     agentName: "Sarah M.",
@@ -136,7 +135,7 @@ export const mockInteractions = [
 
 // ── Utterances & Emotion Events ──────────────────────────────────────────────
 
-export const mockUtterances = [
+export const sampleUtterances = [
   {
     id: "utt-001",
     interactionId: "int-001",
@@ -183,7 +182,7 @@ export const mockUtterances = [
   },
 ];
 
-export const mockEmotionEvents = [
+export const sampleEmotionEvents = [
   {
     id: "emo-001",
     interactionId: "int-001",
@@ -216,7 +215,7 @@ export const mockEmotionEvents = [
   },
 ];
 
-export const mockPolicyViolations = [
+export const samplePolicyViolations = [
   {
     id: "vio-001",
     interactionId: "int-002",
@@ -245,7 +244,7 @@ export const mockPolicyViolations = [
 
 // ── Agent Data ───────────────────────────────────────────────────────────────
 
-export const mockAgentPersonalData = {
+export const sampleAgentPersonalData = {
   id: "agent-001",
   name: "Sarah M.",
   role: "Senior Agent",
@@ -276,7 +275,7 @@ export const mockAgentPersonalData = {
 
 // ── Knowledge Base ───────────────────────────────────────────────────────────
 
-export const mockPolicies = [
+export const samplePolicies = [
   {
     id: "pol-001",
     title: "Greeting Protocol",
@@ -306,7 +305,7 @@ export const mockPolicies = [
   },
 ];
 
-export const mockFAQs = [
+export const sampleFAQs = [
   {
     id: "faq-001",
     question: "How do I reset a customer's password?",
@@ -325,7 +324,7 @@ export const mockFAQs = [
   },
 ];
 
-export const mockKBArticles = [
+export const sampleKBArticles = [
   {
     id: "kb-001",
     title: "Technical Specs V2",
@@ -337,7 +336,7 @@ export const mockKBArticles = [
 ];
 // ── Manager Assistant ────────────────────────────────────────────────────────
 
-export const mockAssistantMessages: Array<{
+export const sampleAssistantMessages: Array<{
   id: string;
   type: "assistant" | "user" | "ai";
   content: string;

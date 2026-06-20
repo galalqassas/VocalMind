@@ -1,17 +1,17 @@
 import {
-  mockAgentPerformance,
-  mockAgentPersonalData,
-  mockEmotionDistribution,
-  mockEmotionEvents,
-  mockFAQs,
-  mockInteractions,
-  mockPolicies,
-  mockPolicyCompliance,
-  mockPolicyViolations,
-  mockUtterances,
-  mockWeeklyTrend,
-  mockKBArticles,
-} from '../../src/app/data/mockData';
+  sampleAgentPerformance,
+  sampleAgentPersonalData,
+  sampleEmotionDistribution,
+  sampleEmotionEvents,
+  sampleFAQs,
+  sampleInteractions,
+  samplePolicies,
+  samplePolicyCompliance,
+  samplePolicyViolations,
+  sampleUtterances,
+  sampleWeeklyTrend,
+  sampleKBArticles,
+} from '../../src/app/data/e2eFixtureSamples';
 import type {
   AgentProfile,
   AgentSummary,
@@ -29,7 +29,7 @@ import type {
 
 export type TestRole = 'manager' | 'agent';
 
-export interface MockRouteResponse<T> {
+export interface FixtureRouteResponse<T> {
   body?: T;
   delayMs?: number;
   forceNetworkError?: boolean;
@@ -37,19 +37,19 @@ export interface MockRouteResponse<T> {
 }
 
 export interface AppScenario {
-  agentProfile?: MockRouteResponse<AgentProfile>;
-  agents?: MockRouteResponse<AgentSummary[]>;
-  assistantHistory?: MockRouteResponse<AssistantResponse[]>;
-  assistantQuery?: MockRouteResponse<AssistantResponse>;
+  agentProfile?: FixtureRouteResponse<AgentProfile>;
+  agents?: FixtureRouteResponse<AgentSummary[]>;
+  assistantHistory?: FixtureRouteResponse<AssistantResponse[]>;
+  assistantQuery?: FixtureRouteResponse<AssistantResponse>;
   auth?: { role: TestRole } | false;
-  chat?: MockRouteResponse<{ answer: string; context: string }>;
-  dashboard?: MockRouteResponse<DashboardStats>;
-  faqs?: MockRouteResponse<FAQData[]>;
-  kb?: MockRouteResponse<FAQData[]>;
-  interactionDetails?: Record<string, MockRouteResponse<InteractionDetail>>;
-  interactions?: MockRouteResponse<InteractionSummary[]>;
-  logout?: MockRouteResponse<Record<string, never>>;
-  policies?: MockRouteResponse<PolicyData[]>;
+  chat?: FixtureRouteResponse<{ answer: string; context: string }>;
+  dashboard?: FixtureRouteResponse<DashboardStats>;
+  faqs?: FixtureRouteResponse<FAQData[]>;
+  kb?: FixtureRouteResponse<FAQData[]>;
+  interactionDetails?: Record<string, FixtureRouteResponse<InteractionDetail>>;
+  interactions?: FixtureRouteResponse<InteractionSummary[]>;
+  logout?: FixtureRouteResponse<Record<string, never>>;
+  policies?: FixtureRouteResponse<PolicyData[]>;
 }
 
 const baseInteraction: InteractionSummary = {
@@ -72,7 +72,7 @@ const baseInteraction: InteractionSummary = {
   time: '09:15 AM',
 };
 
-const defaultInteractions = mockInteractions.map((interaction) =>
+const defaultInteractions = sampleInteractions.map((interaction) =>
   buildInteractionSummary({
     ...interaction,
     audioFilePath: `/audio/${interaction.id}.mp3`,
@@ -105,10 +105,10 @@ export function buildDashboardStats(
       resolutionRate: 91,
       violationCount: 12,
     },
-    weeklyTrend: cloneData(mockWeeklyTrend),
-    emotionDistribution: cloneData(mockEmotionDistribution),
-    policyCompliance: cloneData(mockPolicyCompliance),
-    agentPerformance: cloneData(mockAgentPerformance),
+    weeklyTrend: cloneData(sampleWeeklyTrend),
+    emotionDistribution: cloneData(sampleEmotionDistribution),
+    policyCompliance: cloneData(samplePolicyCompliance),
+    agentPerformance: cloneData(sampleAgentPerformance),
     interactions: cloneData(defaultInteractions),
     ...overrides,
   };
@@ -138,7 +138,7 @@ export function buildAgentProfile(
   overrides: Partial<AgentProfile> = {},
 ): AgentProfile {
   return {
-    ...cloneData(mockAgentPersonalData),
+    ...cloneData(sampleAgentPersonalData),
     ...overrides,
   };
 }
@@ -168,7 +168,7 @@ function buildUser(role: TestRole): User {
 
 function buildUtterances(interaction: InteractionSummary): UtteranceData[] {
   const cannedUtterances = cloneData(
-    mockUtterances.filter((utterance) => utterance.interactionId === interaction.id),
+    sampleUtterances.filter((utterance) => utterance.interactionId === interaction.id),
   );
 
   if (cannedUtterances.length > 0) {
@@ -296,7 +296,7 @@ function buildUtterances(interaction: InteractionSummary): UtteranceData[] {
 
 function buildEmotionEvents(interaction: InteractionSummary): EmotionEventData[] {
   const cannedEvents = cloneData(
-    mockEmotionEvents.filter((event) => event.interactionId === interaction.id),
+    sampleEmotionEvents.filter((event) => event.interactionId === interaction.id),
   );
 
   if (cannedEvents.length > 0) {
@@ -363,7 +363,7 @@ function buildPolicyViolations(
   interaction: InteractionSummary,
 ): PolicyViolationData[] {
   const cannedViolations = cloneData(
-    mockPolicyViolations.filter((violation) => violation.interactionId === interaction.id),
+    samplePolicyViolations.filter((violation) => violation.interactionId === interaction.id),
   );
 
   if (cannedViolations.length > 0) {
@@ -484,7 +484,7 @@ export function buildInteractionDetail(
 
 function buildDefaultInteractionDetailMap(
   interactions: InteractionSummary[],
-): Record<string, MockRouteResponse<InteractionDetail>> {
+): Record<string, FixtureRouteResponse<InteractionDetail>> {
   return Object.fromEntries(
     interactions.map((interaction) => [
       interaction.id,
@@ -535,7 +535,7 @@ function inferRoleFromLoginBody(body: unknown): TestRole {
 
 function replyWith<T>(
   req: any,
-  response: MockRouteResponse<T> | undefined,
+  response: FixtureRouteResponse<T> | undefined,
   fallbackBody: T,
   alias?: string,
 ) {
@@ -606,15 +606,15 @@ export function registerApiScenario(scenario: AppScenario = {}) {
   });
 
   cy.intercept('GET', '**/api/v1/knowledge/policies', (req) => {
-    replyWith(req, scenario.policies, cloneData(mockPolicies), 'getPolicies');
+    replyWith(req, scenario.policies, cloneData(samplePolicies), 'getPolicies');
   });
 
   cy.intercept('GET', '**/api/v1/knowledge/faqs', (req) => {
-    replyWith(req, scenario.faqs, cloneData(mockFAQs), 'getFaqs');
+    replyWith(req, scenario.faqs, cloneData(sampleFAQs), 'getFaqs');
   });
 
   cy.intercept('GET', '**/api/v1/knowledge/kb', (req) => {
-    replyWith(req, scenario.kb, cloneData(mockKBArticles), 'getKB');
+    replyWith(req, scenario.kb, cloneData(sampleKBArticles), 'getKB');
   });
 
   cy.intercept('GET', '**/api/v1/agents', (req) => {
@@ -670,7 +670,7 @@ export function registerApiScenario(scenario: AppScenario = {}) {
     req.reply({
       statusCode: 200,
       body: {
-        access_token: `mock-token-${authState.role}`,
+        access_token: `e2e-token-${authState.role}`,
         token_type: 'bearer',
       },
     });

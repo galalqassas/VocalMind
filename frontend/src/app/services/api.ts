@@ -1,20 +1,25 @@
 /**
  * API client for connecting frontend to the FastAPI backend.
- * Support standard REST API calls or a complete frontend-only rich mock mode for client demos.
+ * Default: live backend (Supabase). Optional offline demo via VITE_USE_OFFLINE_DEMO=true.
  */
 
-import * as richMock from "../data/richMockData";
+import * as sessionExport from "../data/sessionExportBundle";
 
-const API_ROOT = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+// Empty string = same-origin (Vite dev proxy → backend). Unset = direct localhost backend.
+const API_ROOT =
+  configuredApiUrl === ""
+    ? ""
+    : configuredApiUrl || "http://localhost:8000";
 const API_BASE = `${API_ROOT.replace(/\/$/, "")}/api/v1`;
 
 /** Mirrors HttpOnly cookie so assistant/history work if the cookie is not sent cross-origin. */
 const VM_ACCESS_TOKEN_KEY = "vm_access_token";
 
-// Config flags: default to true for easy serverless hosting on Vercel
 const IS_CYPRESS = typeof window !== "undefined" && !!(window as any).Cypress;
-const USE_MOCK_API = !IS_CYPRESS && import.meta.env.VITE_USE_MOCK_API !== "false";
-const USE_MOCK_AUTH = !IS_CYPRESS && import.meta.env.VITE_USE_MOCK_AUTH !== "false";
+// Offline demo mode is opt-in only (default: talk to the real API / Supabase-backed backend).
+const USE_OFFLINE_DEMO = !IS_CYPRESS && import.meta.env.VITE_USE_OFFLINE_DEMO === "true";
+const USE_OFFLINE_AUTH = !IS_CYPRESS && import.meta.env.VITE_USE_OFFLINE_AUTH === "true";
 
 function persistAccessToken(accessToken: string | undefined | null) {
   if (typeof sessionStorage === "undefined") return;
@@ -63,7 +68,31 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
   return res.json();
 }
 
-// ── Local In-Memory Mock Store with sessionStorage persistence ───────────────
+/** Fetch binary media (audio) with the same auth headers as apiFetch. */
+export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
+  const headers = new Headers();
+  if (typeof sessionStorage !== "undefined") {
+    try {
+      const token = sessionStorage.getItem(VM_ACCESS_TOKEN_KEY);
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const res = await fetch(url, { credentials: "include", headers });
+  if (!res.ok) {
+    throw new Error(`Media fetch failed (${res.status})`);
+  }
+  const buffer = await res.arrayBuffer();
+  if (!buffer.byteLength) {
+    throw new Error("Media file is empty");
+  }
+  const contentType = (res.headers.get("content-type") || "audio/wav").split(";")[0].trim();
+  return new Blob([buffer], { type: contentType });
+}
+
+// ── Local in-memory offline demo store (sessionStorage persistence) ───────────────
 
 function getStoredItem<T>(key: string, defaultValue: T): T {
   if (typeof window === "undefined" || !window.sessionStorage) return defaultValue;
@@ -84,16 +113,16 @@ function setStoredItem<T>(key: string, value: T): void {
 }
 
 // Global active arrays initialized from exported data
-let mockInteractionsList: any[] = getStoredItem<any[]>("vm_mock_interactions", richMock.richInteractions);
-let mockInteractionDetailsMap: any = getStoredItem<any>("vm_mock_interaction_details", richMock.richInteractionDetails);
-let mockPoliciesList: any[] = getStoredItem<any[]>("vm_mock_policies", richMock.richPolicies);
-let mockFaqsList: any[] = getStoredItem<any[]>("vm_mock_faqs", richMock.richFaqs);
-let mockKbList: any[] = getStoredItem<any[]>("vm_mock_kb", richMock.richKb);
-let mockAgentsList: any[] = getStoredItem<any[]>("vm_mock_agents", richMock.richAgents);
-let mockAssistantHistoryList: any[] = getStoredItem<any[]>("vm_mock_assistant_history", richMock.richAssistantHistory);
+let offlineInteractionsList: any[] = getStoredItem<any[]>("vm_offline_interactions", [...sessionExport.exportedInteractions]);
+let offlineInteractionDetailsMap: any = getStoredItem<any>("vm_offline_interaction_details", sessionExport.exportedInteractionDetails);
+let offlinePoliciesList: any[] = getStoredItem<any[]>("vm_offline_policies", sessionExport.bundlePolicies);
+let offlineFaqsList: any[] = getStoredItem<any[]>("vm_offline_faqs", sessionExport.bundleFaqs);
+let offlineKbList: any[] = getStoredItem<any[]>("vm_offline_kb", sessionExport.bundleKb);
+let offlineAgentsList: any[] = getStoredItem<any[]>("vm_offline_agents", sessionExport.bundleAgents);
+let offlineAssistantHistoryList: any[] = getStoredItem<any[]>("vm_offline_assistant_history", sessionExport.bundleAssistantHistory);
 
 // Dynamic Trigger Backfiller for evidence-anchored explainability
-function enrichInteractionWithMockTriggers(detail: any): any {
+function enrichOfflineInteractionDetail(detail: any): any {
   if (!detail) return detail;
   if (detail.llmTriggers && detail.llmTriggers.available) {
     return detail;
@@ -365,9 +394,9 @@ function enrichInteractionWithMockTriggers(detail: any): any {
   return detail;
 }
 
-function mockDashboardStats(): DashboardStats {
-  const totalCalls = mockInteractionsList.length;
-  const completedCalls = mockInteractionsList.filter(i => i.status === "completed");
+function offlineDashboardStats(): DashboardStats {
+  const totalCalls = offlineInteractionsList.length;
+  const completedCalls = offlineInteractionsList.filter(i => i.status === "completed");
   const avgScore = completedCalls.length > 0
     ? Math.round(completedCalls.reduce((acc, curr) => acc + (curr.overallScore || 0), 0) / completedCalls.length * 10) / 10
     : 0;
@@ -383,11 +412,11 @@ function mockDashboardStats(): DashboardStats {
       resolutionRate,
       violationCount
     },
-    weeklyTrend: richMock.richDashboardStats.weeklyTrend,
-    emotionDistribution: richMock.richDashboardStats.emotionDistribution,
-    policyCompliance: richMock.richDashboardStats.policyCompliance,
-    agentPerformance: richMock.richDashboardStats.agentPerformance as any,
-    interactions: mockInteractionsList
+    weeklyTrend: sessionExport.bundleDashboardStats.weeklyTrend,
+    emotionDistribution: sessionExport.bundleDashboardStats.emotionDistribution,
+    policyCompliance: sessionExport.bundleDashboardStats.policyCompliance,
+    agentPerformance: sessionExport.bundleDashboardStats.agentPerformance as any,
+    interactions: offlineInteractionsList
   };
 }
 
@@ -415,8 +444,8 @@ export interface DashboardStats {
 }
 
 export function getDashboardStats(): Promise<DashboardStats> {
-  if (USE_MOCK_API) {
-    return Promise.resolve(mockDashboardStats());
+  if (USE_OFFLINE_DEMO) {
+    return Promise.resolve(offlineDashboardStats());
   }
   return apiFetch<DashboardStats>("/dashboard/stats");
 }
@@ -450,8 +479,8 @@ export interface InteractionSummary {
 }
 
 export function getInteractions(): Promise<InteractionSummary[]> {
-  if (USE_MOCK_API) {
-    return Promise.resolve(mockInteractionsList);
+  if (USE_OFFLINE_DEMO) {
+    return Promise.resolve(offlineInteractionsList);
   }
   return apiFetch<InteractionSummary[]>("/interactions");
 }
@@ -471,9 +500,9 @@ export interface CreateInteractionResult {
 }
 
 export function createInteraction(file: File, agentId?: string): Promise<CreateInteractionResult> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "d0000000-0000-0000-0000-00000000" + Math.floor(100000 + Math.random() * 900000);
-    const agent = mockAgentsList.find(a => a.id === agentId) || mockAgentsList[0] || { name: "Sara Agent", id: "b0000000-0000-0000-0000-000000000003" };
+    const agent = offlineAgentsList.find(a => a.id === agentId) || offlineAgentsList[0] || { name: "Sara Agent", id: "b0000000-0000-0000-0000-000000000003" };
     
     const newInteraction = {
       id,
@@ -496,8 +525,8 @@ export function createInteraction(file: File, agentId?: string): Promise<CreateI
       processingFailures: []
     };
     
-    mockInteractionsList.unshift(newInteraction);
-    setStoredItem("vm_mock_interactions", mockInteractionsList);
+    offlineInteractionsList.unshift(newInteraction);
+    setStoredItem("vm_offline_interactions", offlineInteractionsList);
     
     const newDetail = {
       interaction: newInteraction,
@@ -584,8 +613,8 @@ export function createInteraction(file: File, agentId?: string): Promise<CreateI
       policyViolations: []
     };
     
-    mockInteractionDetailsMap[id] = newDetail;
-    setStoredItem("vm_mock_interaction_details", mockInteractionDetailsMap);
+    offlineInteractionDetailsMap[id] = newDetail;
+    setStoredItem("vm_offline_interaction_details", offlineInteractionDetailsMap);
     
     return Promise.resolve({
       interactionId: id,
@@ -622,7 +651,7 @@ export interface ProcessingStatusResult {
 }
 
 export function getInteractionProcessingStatus(id: string): Promise<ProcessingStatusResult> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     return Promise.resolve({
       interactionId: id,
       status: "completed",
@@ -878,8 +907,19 @@ export interface RagComplianceReport {
   policyViolations?: PolicyViolationData[];
 }
 
+export interface InteractionScores {
+  overallScore: number;
+  empathyScore: number;
+  policyScore: number;
+  resolutionScore: number;
+  resolved: boolean;
+  totalSilenceSeconds?: number | null;
+  avgResponseTimeSeconds?: number | null;
+}
+
 export interface InteractionDetail {
   interaction: InteractionDetailInfo;
+  scores: InteractionScores;
   utterances: UtteranceData[];
   emotionEvents: EmotionEventData[];
   policyViolations: PolicyViolationData[];
@@ -909,14 +949,14 @@ export function getInteractionDetail(
   id: string,
   options?: InteractionDetailOptions,
 ): Promise<InteractionDetail> {
-  if (USE_MOCK_API) {
-    const baseDetail = mockInteractionDetailsMap[id];
+  if (USE_OFFLINE_DEMO) {
+    const baseDetail = offlineInteractionDetailsMap[id];
     if (!baseDetail) {
       return Promise.reject(new Error(`Interaction detail not found for ID ${id}`));
     }
     // Deep clone to prevent mutations
     const detail = JSON.parse(JSON.stringify(baseDetail));
-    const enriched = enrichInteractionWithMockTriggers(detail);
+    const enriched = enrichOfflineInteractionDetail(detail);
     return Promise.resolve(enriched);
   }
 
@@ -952,7 +992,7 @@ export function getInteractionDetail(
 }
 
 export function getAudioUrl(interactionId: string): string {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     return ""; // Empty string triggers standard dummy wav generator in browser
   }
   return `${API_BASE}/interactions/${interactionId}/audio`;
@@ -971,12 +1011,12 @@ export interface ReprocessResult {
 }
 
 export function reprocessInteraction(id: string, options?: { force?: boolean }): Promise<ReprocessResult> {
-  if (USE_MOCK_API) {
-    const interaction = mockInteractionsList.find(i => i.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const interaction = offlineInteractionsList.find(i => i.id === id);
     if (interaction) {
       interaction.status = "completed";
     }
-    setStoredItem("vm_mock_interactions", mockInteractionsList);
+    setStoredItem("vm_offline_interactions", offlineInteractionsList);
     return Promise.resolve({
       interactionId: id,
       status: "completed",
@@ -992,12 +1032,12 @@ export function reprocessInteraction(id: string, options?: { force?: boolean }):
 }
 
 export function deleteInteraction(id: string): Promise<void> {
-  if (USE_MOCK_API) {
-    mockInteractionsList = mockInteractionsList.filter(i => i.id !== id);
-    setStoredItem("vm_mock_interactions", mockInteractionsList);
-    if (mockInteractionDetailsMap[id]) {
-      delete mockInteractionDetailsMap[id];
-      setStoredItem("vm_mock_interaction_details", mockInteractionDetailsMap);
+  if (USE_OFFLINE_DEMO) {
+    offlineInteractionsList = offlineInteractionsList.filter(i => i.id !== id);
+    setStoredItem("vm_offline_interactions", offlineInteractionsList);
+    if (offlineInteractionDetailsMap[id]) {
+      delete offlineInteractionDetailsMap[id];
+      setStoredItem("vm_offline_interaction_details", offlineInteractionDetailsMap);
     }
     return Promise.resolve();
   }
@@ -1022,12 +1062,12 @@ export interface PolicyData {
 }
 
 export function getPolicies(): Promise<PolicyData[]> {
-  if (USE_MOCK_API) return Promise.resolve(mockPoliciesList as PolicyData[]);
+  if (USE_OFFLINE_DEMO) return Promise.resolve(offlinePoliciesList as PolicyData[]);
   return apiFetch<PolicyData[]>("/knowledge/policies");
 }
 
 export function uploadPolicyDocument(data: { title?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "pol-new-" + Math.floor(1000 + Math.random() * 9000);
     const newPolicy = {
       id,
@@ -1040,8 +1080,8 @@ export function uploadPolicyDocument(data: { title?: string; category?: string; 
       isActive: true,
       usageCount: 0
     };
-    mockPoliciesList.unshift(newPolicy);
-    setStoredItem("vm_mock_policies", mockPoliciesList);
+    offlinePoliciesList.unshift(newPolicy);
+    setStoredItem("vm_offline_policies", offlinePoliciesList);
     return Promise.resolve({ id });
   }
 
@@ -1057,12 +1097,12 @@ export function uploadPolicyDocument(data: { title?: string; category?: string; 
 }
 
 export function replacePolicyDocument(id: string, data: { title?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
-    const policy = mockPoliciesList.find(p => p.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const policy = offlinePoliciesList.find(p => p.id === id);
     if (policy) {
       policy.title = data.title || data.file.name;
       policy.lastUpdated = new Date().toISOString().split("T")[0];
-      setStoredItem("vm_mock_policies", mockPoliciesList);
+      setStoredItem("vm_offline_policies", offlinePoliciesList);
     }
     return Promise.resolve({ id });
   }
@@ -1079,7 +1119,7 @@ export function replacePolicyDocument(id: string, data: { title?: string; catego
 }
 
 export function createPolicy(data: { title: string; category: string; content: string }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "pol-new-" + Math.floor(1000 + Math.random() * 9000);
     const newPolicy = {
       id,
@@ -1092,8 +1132,8 @@ export function createPolicy(data: { title: string; category: string; content: s
       isActive: true,
       usageCount: 0
     };
-    mockPoliciesList.unshift(newPolicy);
-    setStoredItem("vm_mock_policies", mockPoliciesList);
+    offlinePoliciesList.unshift(newPolicy);
+    setStoredItem("vm_offline_policies", offlinePoliciesList);
     return Promise.resolve({ id });
   }
 
@@ -1104,8 +1144,8 @@ export function createPolicy(data: { title: string; category: string; content: s
 }
 
 export function updatePolicy(id: string, data: { title?: string; category?: string; content?: string }): Promise<void> {
-  if (USE_MOCK_API) {
-    const policy = mockPoliciesList.find(p => p.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const policy = offlinePoliciesList.find(p => p.id === id);
     if (policy) {
       if (data.title) policy.title = data.title;
       if (data.category) policy.category = data.category;
@@ -1114,7 +1154,7 @@ export function updatePolicy(id: string, data: { title?: string; category?: stri
         policy.preview = data.content.substring(0, 100) + "...";
       }
       policy.lastUpdated = new Date().toISOString().split("T")[0];
-      setStoredItem("vm_mock_policies", mockPoliciesList);
+      setStoredItem("vm_offline_policies", offlinePoliciesList);
     }
     return Promise.resolve();
   }
@@ -1126,12 +1166,12 @@ export function updatePolicy(id: string, data: { title?: string; category?: stri
 }
 
 export function togglePolicy(id: string): Promise<{ isActive: boolean }> {
-  if (USE_MOCK_API) {
-    const policy = mockPoliciesList.find(p => p.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const policy = offlinePoliciesList.find(p => p.id === id);
     const state = policy ? !policy.isActive : false;
     if (policy) {
       policy.isActive = state;
-      setStoredItem("vm_mock_policies", mockPoliciesList);
+      setStoredItem("vm_offline_policies", offlinePoliciesList);
     }
     return Promise.resolve({ isActive: state });
   }
@@ -1142,9 +1182,9 @@ export function togglePolicy(id: string): Promise<{ isActive: boolean }> {
 }
 
 export function deletePolicy(id: string): Promise<void> {
-  if (USE_MOCK_API) {
-    mockPoliciesList = mockPoliciesList.filter(p => p.id !== id);
-    setStoredItem("vm_mock_policies", mockPoliciesList);
+  if (USE_OFFLINE_DEMO) {
+    offlinePoliciesList = offlinePoliciesList.filter(p => p.id !== id);
+    setStoredItem("vm_offline_policies", offlinePoliciesList);
     return Promise.resolve();
   }
 
@@ -1165,12 +1205,12 @@ export interface FAQData {
 }
 
 export function getFaqs(): Promise<FAQData[]> {
-  if (USE_MOCK_API) return Promise.resolve(mockFaqsList as FAQData[]);
+  if (USE_OFFLINE_DEMO) return Promise.resolve(offlineFaqsList as FAQData[]);
   return apiFetch<FAQData[]>("/knowledge/faqs");
 }
 
 export function uploadFaqDocument(data: { question?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "faq-new-" + Math.floor(1000 + Math.random() * 9000);
     const newFaq = {
       id,
@@ -1182,8 +1222,8 @@ export function uploadFaqDocument(data: { question?: string; category?: string; 
       isActive: true,
       usageCount: 0
     };
-    mockFaqsList.unshift(newFaq);
-    setStoredItem("vm_mock_faqs", mockFaqsList);
+    offlineFaqsList.unshift(newFaq);
+    setStoredItem("vm_offline_faqs", offlineFaqsList);
     return Promise.resolve({ id });
   }
 
@@ -1199,11 +1239,11 @@ export function uploadFaqDocument(data: { question?: string; category?: string; 
 }
 
 export function replaceFaqDocument(id: string, data: { question?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
-    const faq = mockFaqsList.find(f => f.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const faq = offlineFaqsList.find(f => f.id === id);
     if (faq) {
       faq.question = data.question || data.file.name;
-      setStoredItem("vm_mock_faqs", mockFaqsList);
+      setStoredItem("vm_offline_faqs", offlineFaqsList);
     }
     return Promise.resolve({ id });
   }
@@ -1220,7 +1260,7 @@ export function replaceFaqDocument(id: string, data: { question?: string; catego
 }
 
 export function createFaq(data: { question: string; answer: string; category: string }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "faq-new-" + Math.floor(1000 + Math.random() * 9000);
     const newFaq = {
       id,
@@ -1232,8 +1272,8 @@ export function createFaq(data: { question: string; answer: string; category: st
       isActive: true,
       usageCount: 0
     };
-    mockFaqsList.unshift(newFaq);
-    setStoredItem("vm_mock_faqs", mockFaqsList);
+    offlineFaqsList.unshift(newFaq);
+    setStoredItem("vm_offline_faqs", offlineFaqsList);
     return Promise.resolve({ id });
   }
 
@@ -1244,8 +1284,8 @@ export function createFaq(data: { question: string; answer: string; category: st
 }
 
 export function updateFaq(id: string, data: { question?: string; answer?: string; category?: string }): Promise<void> {
-  if (USE_MOCK_API) {
-    const faq = mockFaqsList.find(f => f.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const faq = offlineFaqsList.find(f => f.id === id);
     if (faq) {
       if (data.question) faq.question = data.question;
       if (data.answer) {
@@ -1253,7 +1293,7 @@ export function updateFaq(id: string, data: { question?: string; answer?: string
         faq.preview = data.answer.substring(0, 100) + "...";
       }
       if (data.category) faq.category = data.category;
-      setStoredItem("vm_mock_faqs", mockFaqsList);
+      setStoredItem("vm_offline_faqs", offlineFaqsList);
     }
     return Promise.resolve();
   }
@@ -1265,12 +1305,12 @@ export function updateFaq(id: string, data: { question?: string; answer?: string
 }
 
 export function toggleFaq(id: string): Promise<{ isActive: boolean }> {
-  if (USE_MOCK_API) {
-    const faq = mockFaqsList.find(f => f.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const faq = offlineFaqsList.find(f => f.id === id);
     const state = faq ? !faq.isActive : false;
     if (faq) {
       faq.isActive = state;
-      setStoredItem("vm_mock_faqs", mockFaqsList);
+      setStoredItem("vm_offline_faqs", offlineFaqsList);
     }
     return Promise.resolve({ isActive: state });
   }
@@ -1281,9 +1321,9 @@ export function toggleFaq(id: string): Promise<{ isActive: boolean }> {
 }
 
 export function deleteFaq(id: string): Promise<void> {
-  if (USE_MOCK_API) {
-    mockFaqsList = mockFaqsList.filter(f => f.id !== id);
-    setStoredItem("vm_mock_faqs", mockFaqsList);
+  if (USE_OFFLINE_DEMO) {
+    offlineFaqsList = offlineFaqsList.filter(f => f.id !== id);
+    setStoredItem("vm_offline_faqs", offlineFaqsList);
     return Promise.resolve();
   }
 
@@ -1307,12 +1347,12 @@ export interface KBData {
 }
 
 export function getKBArticles(): Promise<KBData[]> {
-  if (USE_MOCK_API) return Promise.resolve(mockKbList as KBData[]);
+  if (USE_OFFLINE_DEMO) return Promise.resolve(offlineKbList as KBData[]);
   return apiFetch<KBData[]>("/knowledge/kb");
 }
 
 export function uploadKBDocument(data: { title?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     const id = "kb-new-" + Math.floor(1000 + Math.random() * 9000);
     const newKB = {
       id,
@@ -1325,8 +1365,8 @@ export function uploadKBDocument(data: { title?: string; category?: string; file
       isActive: true,
       usageCount: 0
     };
-    mockKbList.unshift(newKB);
-    setStoredItem("vm_mock_kb", mockKbList);
+    offlineKbList.unshift(newKB);
+    setStoredItem("vm_offline_kb", offlineKbList);
     return Promise.resolve({ id });
   }
 
@@ -1342,11 +1382,11 @@ export function uploadKBDocument(data: { title?: string; category?: string; file
 }
 
 export function replaceKBDocument(id: string, data: { title?: string; category?: string; file: File }): Promise<{ id: string }> {
-  if (USE_MOCK_API) {
-    const kb = mockKbList.find(k => k.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const kb = offlineKbList.find(k => k.id === id);
     if (kb) {
       kb.title = data.title || data.file.name;
-      setStoredItem("vm_mock_kb", mockKbList);
+      setStoredItem("vm_offline_kb", offlineKbList);
     }
     return Promise.resolve({ id });
   }
@@ -1363,12 +1403,12 @@ export function replaceKBDocument(id: string, data: { title?: string; category?:
 }
 
 export function toggleKB(id: string): Promise<{ isActive: boolean }> {
-  if (USE_MOCK_API) {
-    const kb = mockKbList.find(k => k.id === id);
+  if (USE_OFFLINE_DEMO) {
+    const kb = offlineKbList.find(k => k.id === id);
     const state = kb ? !kb.isActive : false;
     if (kb) {
       kb.isActive = state;
-      setStoredItem("vm_mock_kb", mockKbList);
+      setStoredItem("vm_offline_kb", offlineKbList);
     }
     return Promise.resolve({ isActive: state });
   }
@@ -1379,9 +1419,9 @@ export function toggleKB(id: string): Promise<{ isActive: boolean }> {
 }
 
 export function deleteKB(id: string): Promise<void> {
-  if (USE_MOCK_API) {
-    mockKbList = mockKbList.filter(k => k.id !== id);
-    setStoredItem("vm_mock_kb", mockKbList);
+  if (USE_OFFLINE_DEMO) {
+    offlineKbList = offlineKbList.filter(k => k.id !== id);
+    setStoredItem("vm_offline_kb", offlineKbList);
     return Promise.resolve();
   }
 
@@ -1399,7 +1439,7 @@ export interface AgentSummary {
 }
 
 export function getAgents(): Promise<AgentSummary[]> {
-  if (USE_MOCK_API) return Promise.resolve(mockAgentsList);
+  if (USE_OFFLINE_DEMO) return Promise.resolve(offlineAgentsList);
   return apiFetch<AgentSummary[]>("/agents");
 }
 
@@ -1410,7 +1450,7 @@ export interface AgentPerformance {
 }
 
 export function getAgentPerformanceList(): Promise<AgentPerformance[]> {
-  if (USE_MOCK_API) return Promise.resolve(mockAgentsList);
+  if (USE_OFFLINE_DEMO) return Promise.resolve(offlineAgentsList);
   return apiFetch<AgentPerformance[]>("/agents");
 }
 
@@ -1443,8 +1483,8 @@ export interface AgentProfile {
 }
 
 export function getAgentProfile(agentId: string): Promise<AgentProfile> {
-  if (USE_MOCK_API) {
-    const agent = mockAgentsList.find(a => a.id === agentId) || mockAgentsList[0] || { name: "Sara Agent", id: "b0000000-0000-0000-0000-000000000003" };
+  if (USE_OFFLINE_DEMO) {
+    const agent = offlineAgentsList.find(a => a.id === agentId) || offlineAgentsList[0] || { name: "Sara Agent", id: "b0000000-0000-0000-0000-000000000003" };
     return Promise.resolve({
       id: agent.id,
       name: agent.name,
@@ -1467,7 +1507,7 @@ export function getAgentProfile(agentId: string): Promise<AgentProfile> {
         { day: "Thu", score: 78 },
         { day: "Fri", score: 85 }
       ],
-      recentCalls: mockInteractionsList
+      recentCalls: offlineInteractionsList
         .filter(i => i.agentName === agent.name)
         .map(i => ({
           id: i.id,
@@ -1509,7 +1549,7 @@ function normalizeAssistantPayload(raw: AssistantResponse): AssistantResponse {
 }
 
 export function sendAssistantQuery(text: string, mode: "chat" | "voice" = "chat"): Promise<AssistantResponse> {
-  if (USE_MOCK_API) {
+  if (USE_OFFLINE_DEMO) {
     let content = "Hello! I am your VocalMind Manager Assistant. I can write read-only queries and help analyze team performance metrics. Ask me about average empathy scores, active policy violations, or individual agent performances.";
     let sql = "SELECT * FROM interactions LIMIT 5;";
     let data: any[] = [];
@@ -1554,14 +1594,14 @@ export function sendAssistantQuery(text: string, mode: "chat" | "voice" = "chat"
       created_at: new Date().toISOString()
     };
     
-    mockAssistantHistoryList.push({
+    offlineAssistantHistoryList.push({
       id: "msg-u-" + Math.floor(1000 + Math.random() * 9000),
       type: "user",
       content: text,
       mode
     } as any);
-    mockAssistantHistoryList.push(newMsg as any);
-    setStoredItem("vm_mock_assistant_history", mockAssistantHistoryList);
+    offlineAssistantHistoryList.push(newMsg as any);
+    setStoredItem("vm_offline_assistant_history", offlineAssistantHistoryList);
     
     return Promise.resolve(newMsg);
   }
@@ -1576,8 +1616,8 @@ export function sendAssistantQuery(text: string, mode: "chat" | "voice" = "chat"
 }
 
 export function getAssistantHistory(): Promise<AssistantResponse[]> {
-  if (USE_MOCK_API) {
-    return Promise.resolve(mockAssistantHistoryList.map(normalizeAssistantPayload) as AssistantResponse[]);
+  if (USE_OFFLINE_DEMO) {
+    return Promise.resolve(offlineAssistantHistoryList.map(normalizeAssistantPayload) as AssistantResponse[]);
   }
   return apiFetch<AssistantResponse[]>("/assistant/history").then((rows) => rows.map(normalizeAssistantPayload));
 }
@@ -1586,8 +1626,8 @@ export function getAssistantHistory(): Promise<AssistantResponse[]> {
 
 const API_BASE_ROOT = API_BASE;
 
-// Mock values for demonstration
-const MOCK_MANAGER: User = {
+// Offline demo credentials for UI previews without backend auth.
+const OFFLINE_DEMO_MANAGER: User = {
   id: "b0000000-0000-0000-0000-000000000001",
   email: "manager@niletech.com",
   name: "Galal Manager",
@@ -1596,7 +1636,7 @@ const MOCK_MANAGER: User = {
   is_active: true
 };
 
-const MOCK_AGENT: User = {
+const OFFLINE_DEMO_AGENT: User = {
   id: "b0000001-0000-0000-0000-000000000002",
   email: "agent@niletech.com",
   name: "Mohsen Agent",
@@ -1609,14 +1649,14 @@ const MOCK_AGENT: User = {
 let currentUser: User | null = null;
 
 export async function loginWithEmail(email: string, password: string): Promise<{ access_token: string }> {
-  // Optional mock mode for UI demos without backend auth.
-  if (USE_MOCK_AUTH && password === "Password*8") {
+  // Optional offline auth for UI demos without backend.
+  if (USE_OFFLINE_AUTH && password === "Password*8") {
     if (email === "manager@niletech.com") {
-      currentUser = MOCK_MANAGER;
-      return { access_token: "mock-token-manager" };
+      currentUser = OFFLINE_DEMO_MANAGER;
+      return { access_token: "offline-demo-token-manager" };
     } else if (email === "agent@niletech.com") {
-      currentUser = MOCK_AGENT;
-      return { access_token: "mock-token-agent" };
+      currentUser = OFFLINE_DEMO_AGENT;
+      return { access_token: "offline-demo-token-agent" };
     }
   }
 
@@ -1642,10 +1682,10 @@ export async function loginWithEmail(email: string, password: string): Promise<{
     persistAccessToken(data.access_token);
     return data;
   } catch (err) {
-    if (USE_MOCK_AUTH && password === "Password*8" && (email === "manager@niletech.com" || email === "agent@niletech.com")) {
-      currentUser = email === "manager@niletech.com" ? MOCK_MANAGER : MOCK_AGENT;
-      persistAccessToken("mock-token-fallback");
-      return { access_token: "mock-token-fallback" };
+    if (USE_OFFLINE_AUTH && password === "Password*8" && (email === "manager@niletech.com" || email === "agent@niletech.com")) {
+      currentUser = email === "manager@niletech.com" ? OFFLINE_DEMO_MANAGER : OFFLINE_DEMO_AGENT;
+      persistAccessToken("offline-demo-token-fallback");
+      return { access_token: "offline-demo-token-fallback" };
     }
     throw err;
   }
@@ -1671,9 +1711,9 @@ export interface User {
 }
 
 export async function getUserMe(): Promise<User> {
-  if (USE_MOCK_AUTH) {
+  if (USE_OFFLINE_AUTH) {
     if (!currentUser) {
-      currentUser = MOCK_MANAGER; // Default to manager if none is logged in
+      currentUser = OFFLINE_DEMO_MANAGER; // Default to manager if none is logged in
     }
     return currentUser;
   }
@@ -1681,9 +1721,9 @@ export async function getUserMe(): Promise<User> {
 }
 
 export async function updateProfile(payload: { name?: string; avatar_url?: string | null }): Promise<User> {
-  if (USE_MOCK_AUTH) {
+  if (USE_OFFLINE_AUTH) {
     if (currentUser) currentUser = { ...currentUser, ...payload };
-    return currentUser ?? MOCK_MANAGER;
+    return currentUser ?? OFFLINE_DEMO_MANAGER;
   }
   return apiFetch<User>("/users/me", {
     method: "PATCH",
@@ -1692,7 +1732,7 @@ export async function updateProfile(payload: { name?: string; avatar_url?: strin
 }
 
 export async function changePassword(payload: { current_password?: string; new_password: string }): Promise<void> {
-  if (USE_MOCK_AUTH) return;
+  if (USE_OFFLINE_AUTH) return;
   await apiFetch<{ status: string }>("/users/me/change-password", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -1700,7 +1740,7 @@ export async function changePassword(payload: { current_password?: string; new_p
 }
 
 export async function logoutUser(): Promise<void> {
-  if (USE_MOCK_AUTH) {
+  if (USE_OFFLINE_AUTH) {
     currentUser = null;
     clearPersistedAccessToken();
     return Promise.resolve();

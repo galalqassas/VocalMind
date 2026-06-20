@@ -1,4 +1,4 @@
-import { buildInteractionDetail, buildInteractionSummary } from '../support/mockApi';
+import { buildInteractionDetail, buildInteractionSummary } from '../support/e2eApiFixtures';
 
 describe("Session Detail", () => {
   beforeEach(() => {
@@ -89,7 +89,7 @@ describe("Session Detail", () => {
   });
 
   it("renders Evidence-Anchored Explainability with tabs and badges", () => {
-    // Visit with mock data containing explainability
+    // Visit with E2E fixture data containing explainability
     cy.visitAs("manager", "/manager/inspector/int-002", {
       interactionDetails: {
         'int-002': {

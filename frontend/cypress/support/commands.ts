@@ -2,9 +2,9 @@ import {
   registerApiScenario,
   type AppScenario,
   type TestRole,
-} from './mockApi';
+} from './e2eApiFixtures';
 
-Cypress.Commands.add('mockApiScenario', (scenario: AppScenario = {}) => {
+Cypress.Commands.add('useE2eApiFixtures', (scenario: AppScenario = {}) => {
   registerApiScenario(scenario);
 });
 
@@ -13,7 +13,7 @@ Cypress.Commands.add(
   (role: TestRole, path: string, scenario: AppScenario = {}) => {
     cy.clearCookies();
     cy.clearLocalStorage();
-    cy.mockApiScenario({
+    cy.useE2eApiFixtures({
       ...scenario,
       auth: { role },
     });
@@ -37,7 +37,7 @@ declare global {
   namespace Cypress {
     interface Chainable {
       loginAs(role: TestRole, scenario?: AppScenario): Chainable<void>;
-      mockApiScenario(scenario?: AppScenario): Chainable<void>;
+      useE2eApiFixtures(scenario?: AppScenario): Chainable<void>;
       visitAs(
         role: TestRole,
         path: string,
