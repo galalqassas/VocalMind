@@ -132,7 +132,7 @@ class RAGQueryEngine:
         """Configure LLM for response synthesis via LlamaIndex.
 
         Uses a local OpenAI-compatible endpoint (LM Studio) when
-        SYNTHESIS_BASE_URL is set, otherwise falls back to Groq.
+        SYNTHESIS_BASE_URL is set, otherwise Groq or Ollama Cloud.
         """
         from llama_index.core import PromptTemplate
 
@@ -152,13 +152,26 @@ class RAGQueryEngine:
             logger.info("Synthesis LLM: %s @ %s", synthesis_model, settings.SYNTHESIS_BASE_URL)
         else:
             synthesis_model = rag_synthesis_model()
-            self.llm = LlamaGroq(
-                model=synthesis_model,
-                api_key=settings.groq.api_key.get_secret_value(),
-                temperature=settings.groq.temperature,
-                max_tokens=settings.groq.max_tokens,
-                context_window=settings.groq.context_window,
-            )
+            if settings.LLM_PROVIDER == "ollama_cloud":
+                from llama_index.llms.openai_like import OpenAILike
+
+                self.llm = OpenAILike(
+                    model=synthesis_model,
+                    api_base=settings.OLLAMA_CLOUD_BASE_URL,
+                    api_key=settings.OLLAMA_CLOUD_API_KEY or "ollama",
+                    is_chat_model=True,
+                    temperature=settings.groq.temperature,
+                    max_tokens=settings.groq.max_tokens,
+                    context_window=settings.groq.context_window,
+                )
+            else:
+                self.llm = LlamaGroq(
+                    model=synthesis_model,
+                    api_key=settings.groq.api_key.get_secret_value(),
+                    temperature=settings.groq.temperature,
+                    max_tokens=settings.groq.max_tokens,
+                    context_window=settings.groq.context_window,
+                )
 
         qa_prompt_tmpl = PromptTemplate(self._build_qa_prompt())
 
@@ -167,13 +180,35 @@ class RAGQueryEngine:
             text_qa_template=qa_prompt_tmpl,
             response_mode=settings.response_mode,
         )
-        # Raw OpenAI-compatible client for structured prompts (evaluator uses it)
         self.groq_client = build_rag_llm_client()
 
     # ── Embedding ─────────────────────────────────────────────────────────
 
     def _embed_query(self, text: str) -> list[float]:
         """Embed a query string via Ollama."""
+        if settings.OLLAMA_CLOUD_EMBED_ENABLED:
+            try:
+                response = httpx.post(
+                    f"{settings.OLLAMA_CLOUD_BASE_URL.rstrip('/')}/embeddings",
+                    json={"model": settings.embedding.model, "input": text},
+                    headers=embedding_http_headers(),
+                    timeout=settings.embedding.request_timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("data"):
+                    embedding = data["data"][0].get("embedding")
+                    if embedding:
+                        return embedding
+                vector = data.get("embedding")
+                if vector:
+                    return vector
+            except Exception as exc:
+                raise ConnectionError(
+                    f"Cannot reach Ollama embeddings API at {settings.OLLAMA_CLOUD_BASE_URL} "
+                    f"(last attempted endpoint: /embeddings): {exc}"
+                ) from exc
+
         breaker = get_breaker("embedding")
         retry_delays = (0.4, 1.0, 2.0)
         payloads = (

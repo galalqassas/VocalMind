@@ -157,6 +157,7 @@ class TestEmbeddingCircuitBreaker:
             engine = RAGQueryEngine()
 
         with patch("query_engine.settings") as mock_settings:
+            mock_settings.OLLAMA_CLOUD_EMBED_ENABLED = False
             mock_settings.embedding.model = "embed-model"
             mock_settings.embedding.request_timeout = 5.0
             mock_settings.embedding.base_url = "http://localhost:11434"

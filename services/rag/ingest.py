@@ -142,6 +142,28 @@ class DocumentIngestionPipeline:
 
     def _get_embedding(self, text: str) -> list[float]:
         """Request an embedding vector from the local Ollama instance."""
+        if settings.OLLAMA_CLOUD_EMBED_ENABLED:
+            try:
+                response = httpx.post(
+                    f"{settings.OLLAMA_CLOUD_BASE_URL.rstrip('/')}/embeddings",
+                    json={"model": settings.embedding.model, "input": text},
+                    headers=embedding_http_headers(),
+                    timeout=settings.embedding.request_timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("data"):
+                    embedding = data["data"][0].get("embedding")
+                    if embedding:
+                        return embedding
+                if "embedding" in data:
+                    return data["embedding"]
+            except Exception as exc:
+                raise ConnectionError(
+                    f"Cannot reach Ollama embeddings API at {settings.OLLAMA_CLOUD_BASE_URL} "
+                    f"(last attempted endpoint: /embeddings): {exc}"
+                ) from exc
+
         retry_delays = (0.4, 1.0, 2.0)
         payloads = (
             ("/api/embed", {"model": settings.embedding.model, "input": text}),

@@ -295,8 +295,9 @@ def resolve_model_for_stage(stage: str) -> str:
         return stage_override
 
     if key == "rag_synthesis":
-        # No benchmark evidence for classifying synthesis as fast/heavy yet.
-        # Preserve current behavior exactly when unset.
+        if settings.LLM_PROVIDER == "ollama_cloud":
+            override = (new_overrides.get("rag_synthesis") or "").strip()
+            return override or settings.OLLAMA_CLOUD_FAST_MODEL
         return settings.groq.model
 
     legacy_override = (legacy_overrides.get(key) or "").strip()

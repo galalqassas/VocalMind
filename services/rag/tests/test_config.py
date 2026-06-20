@@ -125,13 +125,19 @@ def test_resolve_model_for_stage_class_fallbacks(monkeypatch):
     assert resolve_model_for_stage("text_to_sql") == "heavy-default"
 
 
-def test_resolve_model_for_stage_rag_synthesis_preserves_legacy_default(monkeypatch):
-    monkeypatch.setattr("config.settings.LLM_PROVIDER", "ollama_cloud")
+def test_resolve_model_for_stage_rag_synthesis_preserves_legacy_default_for_groq(monkeypatch):
+    monkeypatch.setattr("config.settings.LLM_PROVIDER", "groq")
     monkeypatch.setattr("config.settings.OLLAMA_MODEL_RAG_SYNTHESIS", "")
     monkeypatch.setattr("config.settings.groq.model", "llama-3.3-70b-versatile")
+    assert resolve_model_for_stage("rag_synthesis") == "llama-3.3-70b-versatile"
+
+
+def test_resolve_model_for_stage_rag_synthesis_uses_fast_model_for_ollama_cloud(monkeypatch):
+    monkeypatch.setattr("config.settings.LLM_PROVIDER", "ollama_cloud")
+    monkeypatch.setattr("config.settings.OLLAMA_MODEL_RAG_SYNTHESIS", "")
     monkeypatch.setattr("config.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-default")
     monkeypatch.setattr("config.settings.OLLAMA_CLOUD_HEAVY_MODEL", "heavy-default")
-    assert resolve_model_for_stage("rag_synthesis") == "llama-3.3-70b-versatile"
+    assert resolve_model_for_stage("rag_synthesis") == "fast-default"
 
 
 def test_resolve_model_for_stage_rejects_unknown():
