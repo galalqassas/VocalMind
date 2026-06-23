@@ -116,7 +116,7 @@ function EmotionFlagCard({
           <Button size="sm" onClick={() => setMode("accept")} className="bg-emerald-600 hover:bg-emerald-700">
             <Check className="w-3.5 h-3.5 mr-1" /> Accept flag
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setMode("reject")}>
+          <Button size="sm" variant="destructive" onClick={() => setMode("reject")}>
             <X className="w-3.5 h-3.5 mr-1" /> Reject
           </Button>
         </div>
@@ -248,7 +248,7 @@ function ComplianceFlagCard({
           <Button size="sm" onClick={() => setMode("accept")} className="bg-emerald-600 hover:bg-emerald-700">
             <Check className="w-3.5 h-3.5 mr-1" /> Accept flag
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setMode("reject")}>
+          <Button size="sm" variant="destructive" onClick={() => setMode("reject")}>
             <X className="w-3.5 h-3.5 mr-1" /> Reject
           </Button>
         </div>
