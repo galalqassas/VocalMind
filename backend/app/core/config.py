@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     OLLAMA_PROCESS_ADHERENCE_MODEL: str = ""
     OLLAMA_NLI_MODEL: str = ""
     OLLAMA_CLOUD_EMBED_ENABLED: bool = False
+    # Where RAG models run (query embeddings here; ingestion uses the same switch):
+    # "local" = Ollama container, "kaggle" = Kaggle GPU server (services/kaggle).
+    RAG_MODELS_HOST: str = "local"
 
     # ── Vertex AI (Gemini) ──
     # Service-account auth via GOOGLE_APPLICATION_CREDENTIALS (path to the JSON key).

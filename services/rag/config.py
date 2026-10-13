@@ -149,6 +149,11 @@ class Settings(BaseSettings):
         default=False,
         alias="OLLAMA_CLOUD_EMBED_ENABLED",
     )
+    # Where RAG models run (embeddings, Docling parsing, reranking):
+    #   local  — Ollama container + in-process Docling / cross-encoder
+    #   kaggle — the Kaggle GPU server (services/kaggle) at KAGGLE_SERVER_URL
+    RAG_MODELS_HOST: Literal["local", "kaggle"] = Field(default="local", alias="RAG_MODELS_HOST")
+    KAGGLE_SERVER_URL: str = Field(default="", alias="KAGGLE_SERVER_URL")
 
     # Sub-configs
     groq: GroqConfig = Field(default_factory=GroqConfig)

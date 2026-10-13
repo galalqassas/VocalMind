@@ -4,9 +4,6 @@ FROM python:3.12-slim@sha256:c2d8472b831337ab296a8ce652e1ba786e9e3034fc445dc58b5
 
 WORKDIR /app
 
-# Set HF_HOME for caching models during build
-ENV HF_HOME=/app/hf_cache
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
@@ -16,10 +13,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Copy dependency files first for caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (torch installed separately so uv.lock stays stable without a huge lock refresh)
-RUN uv sync --no-dev \
-	&& uv pip install --python /app/.venv/bin/python pypdf \
-	&& uv pip install --python /app/.venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+# Install dependencies (no ML frameworks: models run in the inference services / Kaggle)
+RUN uv sync --no-dev
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 # pinned: python:3.12-slim (2026-06-16)
@@ -30,10 +25,7 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Ensure we use the same HF_HOME in runtime
-ENV HF_HOME=/app/hf_cache
-
-# Copy virtual environment and model cache from builder
+# Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
