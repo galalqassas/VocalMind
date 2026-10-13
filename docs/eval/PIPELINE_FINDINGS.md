@@ -1,160 +1,80 @@
-# Pipeline Evaluation vs Ground Truth — Final Report
+# Pipeline Evaluation vs Ground Truth (results record, 2026-05-25)
 
-## Metrics (6 calls: 3 nexalink + 3 meridian)
+This records two evaluation runs and the changes they drove. The numbers are as measured on 2026-05-25. The "Current location" notes point to where each mechanism lives now. Harness and axis definitions: [tools/README.md](../../tools/README.md).
 
-| Axis | Baseline | Final | Δ |
+**Caveat for both runs:** the Groq daily token quota ran out during the runs, so most LLM-trigger verdicts came from the deterministic fallback path rather than full LLM grading.
+
+## Run 1: 6 calls (nexalink CALL_01/07/15, meridian CALL_21/24/30)
+
+| Axis | Baseline | After | Δ |
 |---|---|---|---|
-| **agent_match** | 100% | 100% | flat ✓ |
-| **topic_match** | 33.3% | **100.0%** | +66.7pp ✅ |
-| **resolution_match** | 33.3% | **83.3%** | +50.0pp ✅ |
-| **sop_retrieval_match** | 33.3% | **100.0%** | +66.7pp ✅ |
-| **avg_turn_ratio** (1.0 ideal) | 2.17 | **0.94** | −1.23 ✅ |
-| **avg_emotion_cosine_fused** (1 ideal) | 0.894 | **0.948** | +0.054 ✅ |
-| **avg_diar_share_delta** (0 ideal) | 0.28 | 0.26 | −0.02 (small win) |
-| **avg_coverage_recall** (1 ideal) | 0.32 | 0.43 | +0.11 |
+| agent_match | 100% | 100% | 0 |
+| topic_match | 33.3% | 100.0% | +66.7pp |
+| resolution_match | 33.3% | 83.3% | +50.0pp |
+| sop_retrieval_match | 33.3% | 100.0% | +66.7pp |
+| avg_turn_ratio (1.0 ideal) | 2.17 | 0.94 | −1.23 |
+| avg_emotion_cosine_fused (1 ideal) | 0.894 | 0.948 | +0.054 |
+| avg_diar_share_delta (0 ideal) | 0.28 | 0.26 | −0.02 |
+| avg_coverage_recall (1 ideal) | 0.32 | 0.43 | +0.11 |
 
-The one remaining mismatch on `resolution_match` (CALL_07) is a GT-side wording mismatch in my evaluator's `infer_gt_resolved` heuristic, not a pipeline failure — the pipeline correctly marks the plan-upgrade call as resolved.
+The remaining resolution miss (CALL_07) came from the evaluator's `infer_gt_resolved` wording heuristic, not from the pipeline. It was fixed in Run 2.
 
-## What changed in `backend/app/llm_trigger/service.py`
+## Run 2: 9 calls (adds nexalink CALL_06, meridian CALL_22/35)
 
-### Topic detection (was the root cause of 4/6 misclassifications)
-- Added 5 new topic buckets to `_TOPIC_KEYWORDS`: `account_opening`, `fraud_dispute`, `fee_adjustment`, `aml_review`, `retention`. Previous code only knew refund/billing/tech/access and defaulted everything else to billing.
-- Added matching `RESOLUTION_GRAPHS` entries so each topic has an expected step list.
-- Rewrote `_detect_topic_from_sop_chunks` hint map to match the actual SOP source_file names (`sop_03_fraud_investigation`, `sop_05_aml_bsa_reporting`, etc.) — the old hint map used invented prefixes that never matched anything.
-- New `_score_topic` returns `(topic, score)` so callers can distinguish a real keyword hit from the fallback default.
-- Topic now detected from the **full transcript** rather than the rolling-window slice (the slice was too small for reliable keyword density).
-- When the deterministic detector has a strong signal (`score ≥ 6`), it **overrides the LLM's `detected_topic`** — the LLM was observed to default everything that mentioned money to `refund_request` / `billing_issue`.
+| Axis | Run 1 | Run 2 |
+|---|---|---|
+| agent_match | 100.0% | 100.0% |
+| topic_match | 100.0% | 100.0% |
+| resolution_match | 83.3% | 100.0% |
+| sop_retrieval_match | 100.0% | 100.0% |
+| avg_turn_ratio | 0.94 | 0.93 |
+| avg_emotion_cosine_fused | 0.948 | 0.957 |
+| avg_diar_share_delta | 0.26 | 0.272 |
+| avg_coverage_recall | 0.43 | 0.434 |
 
-### SOP retrieval (was 33% because the dense retriever picked off-topic chunks)
-- New `_TOPIC_TO_SOP_FILE_TOKENS` map ties each topic to expected `source_file` substrings.
-- In `evaluate_interaction_triggers`, after `resolve_retrieved_sop_context` returns chunks:
-  - If a strong-signal topic exists but none of the top-k chunks match it, do a **targeted Qdrant re-retrieval** for the topic's source file.
-  - **Hard-filter** the chunk list to on-topic only when the topic signal is strong, so both the LLM prompt and the trigger-attribution citations stay grounded on the correct SOP.
-- `_filter_chunks_by_topic` helper drops off-topic chunks but falls back to the original list if no on-topic chunk exists (no-op safety).
+`evaluate_pipeline.py` still uses this 9-call set.
 
-### Resolution heuristic (was 17%, now 83%)
-- `_is_resolved_heuristic` rewritten with three tiers:
-  - Hard NEGATIVE markers (escalation / "we cannot" / "manager approval ticket" / fraud-investigation handoff / "freeze the account") → `False` regardless of other signals.
-  - Strong POSITIVE markers (concrete outcomes: "credit has been applied/approved", "credit of $", "your plan has been upgraded", "successfully reset", "applied a $", "appear on your next" etc.) → `True`.
-  - Soft signals tied with a small-majority rule.
-- Heuristic runs against the **full transcript**, not the rolling-window slice.
-- Previous version returned `True` for any polite call ending in "thank you"; new version requires a concrete outcome marker.
+## Changes behind the numbers
 
-### Policy-reference label (was leaking raw markdown)
-- Reference field now reads `f"{source_file} — {section_header}"` (e.g. `SOP_01_refund_request_processing — Step 3: Validate the Claim`) instead of falling back to the chunk's first line, which used to surface raw markdown like `| Field | Value |` for table-heavy SOPs.
+**LLM trigger (`backend/app/llm_trigger/service.py`)**
+- Topic detection: `_TOPIC_KEYWORDS` and `RESOLUTION_GRAPHS` gained topics beyond refund/billing/tech/access, e.g. `account_opening`, `fraud_dispute`, `fee_adjustment`, `aml_review`, `retention`. `_score_topic` returns `(topic, score)`. Topics are detected from the full transcript, and a strong keyword hit (score ≥ 6) overrides the LLM's `detected_topic`.
+- SOP retrieval: `_TOPIC_TO_SOP_FILE_TOKENS` maps each topic to SOP file names. When a strong-signal topic has no matching chunk, a targeted Qdrant re-retrieval runs, and `_filter_chunks_by_topic` drops off-topic chunks (keeping the original list if nothing matches).
+- Resolution: `_is_resolved_heuristic` runs on the full transcript. Hard-negative markers (escalation, freeze, fraud hand-off) always win. Otherwise a concrete strong-positive outcome marker is required, and a polite closing alone no longer counts as resolved.
+- Citations: policy references read `"<source_file> — <section>"`, and process adherence always carries a `[Reference SOP] <file> — <section>` citation.
 
-### "Reference SOP" citation (NEW — makes retrieval source visible)
-- After `evaluate_process_adherence`, if the LLM-returned citations don't already name a source SOP, inject a synthetic `EvidenceCitation(source="sop", quote="[Reference SOP] <filename> — <section>")` so the UI explainability panel and downstream evaluation can always see WHICH SOP grounded the verdict. Applied in both the LLM-success and degraded-fallback paths.
+**Segmentation and diarization (`services/whisperx/app.py`)**
+- `merge_short_same_speaker_segments()` merges same-speaker segments with gaps ≤ 1.2 s and absorbs fragments < 1.5 s. Turn ratio went from 2.17 to 0.94, and fused emotion cosine improved because emotion runs on longer segments.
+- Stereo channel diarization: `detect_stereo_layout()` and `assign_speakers_by_channel()` label genuine 2-channel audio by channel energy and bypass PyAnnote. Controlled by `CHANNEL_DIARIZATION_ENABLED` (default true) and `CHANNEL_DIARIZATION_MAX_CORR` (default 0.92). Responses include `diarization_strategy` (`channel`/`cluster`). This is a no-op on the mono eval set.
 
-## What changed in `services/whisperx/`
+**Emotion and speaker roles (`backend/app/core/interaction_processing.py`)**
+- `apply_emotion_min_duration_gate()`: segments shorter than `EMOTION_MIN_SEGMENT_SECS` (default 1.0) inherit the previous segment's emotion.
+- Speaker roles: `assign_cluster_roles_from_text()` scores each diarization cluster. The score combines the LR+TF-IDF classifier (`backend/app/core/model.pkl` + `vectorizer.pkl`), the `_AGENT_PHRASE_WEIGHTS` / `_CUSTOMER_PHRASE_WEIGHTS` phrase lists, agent-name and greeting boosts, and a first-speaker prior (+4 for the cluster that speaks first within 8 s). When diarization collapses to a single cluster, `classify_segment_speaker_role()` labels each segment instead. The earlier `speaker_role_classifier.py` cue lists no longer exist.
 
-### Segment merge (was over-segmenting 2.17×)
-- New `merge_short_same_speaker_segments()` in `app.py` collapses contiguous same-speaker segments separated by short gaps (≤ 1.2s) and absorbs sub-1.5-second micro-fragments into the surrounding turn. Result: turn_ratio went from **2.17 → 0.94** (close to GT 1.0).
-- Side effect: emotion cosine improved (0.89 → 0.95) because the emotion model now sees longer audio chunks per turn instead of dozens of confidence-deprived fragments.
+**Evaluator (`tools/evaluate_pipeline.py`)**
+- `infer_gt_resolved` uses hard-negative and strong-positive phrase lists. `resolution_match` prefers `processAdherence.isResolved`. SOP matching accepts several expected tokens for calls that cover two SOPs. Coverage recall counts a verbatim GT rule ID as covered.
 
-### Speaker cues (was tagging agent's polite closing as customer)
-- Removed `"thank you"` / `"thanks"` from `_CUSTOMER_TEXT_CUES` in `speaker_role_classifier.py` — the agent says these constantly and they were flipping half the agent turns to customer.
-- Tripled `_AGENT_TEXT_CUES` with high-precision agent-only phrases (`"could you please confirm"`, `"i'll need to verify"`, `"i have applied"`, `"have a great rest of your day"`).
-- Narrowed `_CUSTOMER_TEXT_CUES` to phrases only a customer says (`"i was charged"`, `"i want a credit"`, `"my internet was"`, `"i didn't make"`).
+## Open gaps (as of this record)
 
-## What changed in `tools/evaluate_pipeline.py`
-
-- New harness `evaluate_pipeline.py` reads `tools/reports/<org>/<CALL>_detail.json` and the ground-truth file from `storage/audio/<org>/evaluation/`, then computes:
-  - `agent_match` (binary)
-  - `turn_ratio` PR utts / GT turns
-  - `diar_share_delta` |PR agent_share − GT agent_share|
-  - `emotion_cosine_fused` / `_acoustic` (cosine over canonical 7-label distribution)
-  - `topic_match`
-  - `resolution_match`
-  - `sop_retrieval_match` (multi-token OR for calls covering two SOPs)
-  - `coverage_recall` (loose token overlap + rule-ID short-circuit)
-- `infer_gt_resolved` rewritten with hard-negative + strong-positive lists so escalated calls are correctly marked `not resolved` even when the outcome text mentions "opens a ticket".
-- `pr_resolved` now prefers the fresh `llmTriggers.processAdherence.isResolved` over the stale `interaction.resolved` (which only updates on full audio reprocess, not on LLM-only re-run).
-- SOP-retrieval matcher accepts **multiple expected tokens** so calls that legitimately cover two SOPs (e.g. card fraud → Reg E + Fraud Investigation) are scored correctly.
-- Coverage_recall short-circuits to "covered" when a GT rule ID (`CS-RULE-001` etc.) appears verbatim in the transcript.
-
-## Remaining gaps (low priority)
-
-- **`diar_share_delta` 0.26** — pipeline still over-labels speakers as agent. The cue-list change helped (CALL_24 went from 0.38 → 0.12; CALL_07 from 0.19 → 0.17) but PyAnnote's cluster assignment still drifts on long calls. Real fix: bring up the optional DistilBERT speaker_role classifier (currently `speaker_role_model_available: false`) or fine-tune the cluster phrase weights.
-- **`avg_emotion_acoustic` ≈ avg_emotion_fused = 0.948** — fusion isn't actually adding value because the text emotion path normalizes to the same canonical label as acoustic in most cases. A higher-fidelity emotion model (e.g. running on long merged segments only, dropping sub-1s emotion samples) would help further.
-- **CALL_07 resolved=False in GT inference** — the GT outcome text doesn't match any of my strong positives because it describes the plan upgrade with non-template wording. Pipeline correctly says True.
-- **Groq TPD 100k quota** — heavy reprocessing exhausts the daily token budget and pushes the pipeline into deterministic fallback. Numbers above are largely from fallback runs; on full LLM grading they should hold or improve.
-
----
-
-# Follow-up: diarization & emotion polish (2026-05-25)
-
-Expanded eval set to 9 calls (added CALL_06 pin_reset, CALL_22 wire_transfer_verification, CALL_35 abuse_3_strike_termination) to test the strong-positive, verification-phrase, and escalation paths against ground truth.
-
-## Metrics (9 calls: 4 nexalink + 5 meridian)
-
-| Axis | Prior PR (6-call) | This run (9-call) | Notes |
-|---|---|---|---|
-| **agent_match** | 100.0% | **100.0%** | flat ✓ |
-| **topic_match** | 100.0% | **100.0%** | flat ✓ |
-| **resolution_match** | 83.3% | **100.0%** | +16.7pp ✅ |
-| **sop_retrieval_match** | 100.0% | **100.0%** | flat ✓ |
-| **avg_turn_ratio** (1.0 ideal) | 0.94 | **0.93** | flat |
-| **avg_emotion_cosine_fused** (1 ideal) | 0.948 | **0.957** | +0.009 ✅ |
-| **avg_diar_share_delta** (0 ideal) | 0.26 | 0.272 | flat (greeting prior is a no-op on synthetic mono calls; production value covered below) |
-| **avg_coverage_recall** (1 ideal) | 0.43 | 0.434 | flat |
-
-## What changed
-
-### `tools/evaluate_pipeline.py` (evaluator-side)
-- `infer_gt_resolved` now matches the CALL_07 plan-upgrade wording (`"plan upgraded"`, `"effective immediately"`, `"no ticket required"`) and the CALL_22 wire-transfer wording (`"processes the wire"`). Verified against 37 evaluation files for false-positive risk before adding.
-- 9-call eval set: nexalink CALL_01/06/07/15 + meridian CALL_21/22/24/30/35.
-
-### `backend/app/llm_trigger/service.py` (pipeline-side resolution heuristic)
-- Added two specific markers to `_is_resolved_heuristic` strong-positive list: `"is live on your account"` and `"i upgraded your"`. These match the CALL_07 transcript wording so that deterministic-fallback runs (Groq rate-limited days) still correctly return `True`. Verified against CALL_22 / CALL_35 for false-positive risk.
-
-### `backend/app/core/interaction_processing.py` (emotion + diarization)
-- New `apply_emotion_min_duration_gate(segments, min_secs=EMOTION_MIN_SEGMENT_SECS)` — segments shorter than 1.0s (env-configurable) inherit the previous segment's emotion instead of getting an independent low-confidence prediction. emotion2vec on sub-1s clips returns low-confidence "neutral" that drags the fused distribution toward neutral; the gate fixes this without touching the underlying model.
-- `assign_cluster_roles_from_text` now applies a **first-speaker greeting prior**: the cluster owning the earliest segment within the first 8s of audio gets a strong agent score (+12) regardless of what it transcribed. Pins cluster assignment even when WhisperX mistranscribes the scripted opening. Validated to fall back gracefully on a clear-customer-first cluster.
-- Tuned `_AGENT_PHRASE_WEIGHTS` (verification phrases like `"could you confirm the"`, `"for security purposes"` bumped to 7-8) and `_CUSTOMER_PHRASE_WEIGHTS` (refund/dispute openers like `"i'd like a refund"`, `"i was overcharged"`, `"i didn't authorize"`).
-
-### `services/whisperx/app.py` (Track B1 — stereo-channel diarization, production primitive)
-- New `detect_stereo_layout()` + `assign_speakers_by_channel()`: when ingest audio is genuine stereo (2 channels with low cross-correlation, typical of PBX/SBC recordings), bypass PyAnnote entirely and assign roles by per-segment channel-energy dominance. Mono and mono-duplicated-to-stereo audio fall through to the standard cluster path (no behaviour change on the synthetic eval).
-- Response now carries `diarization_strategy: "channel" | "cluster"` for observability, plus a `stereo_layout` summary.
-- Skips the text-based speaker_role relabel pass when in channel mode — the channel signal is ground-truth-grade and shouldn't be second-guessed.
-- Env-configurable: `CHANNEL_DIARIZATION_ENABLED` (default true), `CHANNEL_DIARIZATION_MAX_CORR` (default 0.92).
-
-## Why diar_share_delta didn't move
-
-The synthetic eval is all mono TTS, so the stereo-channel path is a no-op here. The greeting prior is also a no-op on these calls — every synthetic call opens with a high-signal `"thank you for calling …"` that the existing phrase weights already pin to agent. The residual 0.27 delta is PyAnnote's tendency to split a single agent voice across multiple clusters on longer calls; the greeting prior anchors the **first** cluster but doesn't merge fragmented clusters of the same voice.
-
-Real production audio (real call-center recordings) is where both changes earn their value:
-1. Stereo telephony → channel mode → near-100% role accuracy, PyAnnote bypassed.
-2. Mono recordings with garbled greetings → greeting prior anchors the agent cluster even when the opener doesn't lexically match the scripted-greeting list.
-
-## Honest remaining gaps
-
-- **Trained role classifier deferred** — the right next step (a small logistic regression on bag-of-words + acoustic features) needs a few hundred labeled real-call turns. Synthetic data alone would overfit to TTS phrasing. Will tackle when real labeled data is available.
-- **Telephony-quality eval gap** — eval set is clean 16 kHz mono PCM. Real call audio is 8 kHz μ-law with codec artifacts and packet loss. Need an 8 kHz resampled eval split before claiming production-grade emotion/STT accuracy.
-- **PII redaction not addressed** — transcripts contain card numbers, addresses, partial SSNs from the GT scripts. Needs a redaction pass before persistence; out of scope for this PR.
-- **Multi-party / transfers / holds** — code assumes 2 speakers. Real calls have warm transfers, supervisor joins, IVR fragments. The 3-cluster test (warm transfer) is exercised in `test_assign_cluster_roles_handles_three_clusters_warm_transfer`; broader multi-party support is future work.
-- **Groq TPD 100k quota** — this eval run was largely deterministic fallback (Groq quota exhausted mid-run). The 8/9 → 9/9 jump on resolution_match was achieved by also making the **pipeline-side** heuristic match the GT wording, so the deterministic fallback path is now safe.
+- **diar_share_delta about 0.27.** PyAnnote splits one agent voice across clusters on long calls. The first-speaker prior anchors one cluster but does not merge the fragments.
+- **Fused emotion is about equal to acoustic** (both 0.948 in Run 1). The text path mostly agrees with acoustic, so fusion adds little on this set.
+- **Eval audio is clean 16 kHz mono TTS.** There is no 8 kHz telephony split yet.
+- **No PII redaction** before persistence.
+- **Two-speaker assumption.** Warm transfers are covered only by `test_assign_cluster_roles_handles_three_clusters_warm_transfer` in `backend/tests/test_interaction_processing_quality.py`.
 
 ## Reproducing
 
+Run infra in Docker and the GPU services plus the backend natively. The conda env needs CUDA torch, `whisperx`, `pyannote`, `funasr`, `silero_vad` and the backend deps.
+
 ```bash
-# infra (db on host 5434 — see docker-compose.yml db ports)
-docker compose up -d db qdrant ollama frontend
-
-# native GPU services (each in its own shell)
-cd services/vad     && python -m uvicorn app:app --port 8002
-cd services/emotion && python -m uvicorn app:app --port 8001
+docker compose up -d db qdrant ollama        # not `frontend`: it depends on the compose backend
+cd services/vad      && python -m uvicorn app:app --port 8002
+cd services/emotion  && python -m uvicorn app:app --port 8001
 cd services/whisperx && WHISPER_MODEL_SIZE=medium WHISPER_COMPUTE_TYPE=float16 python -m uvicorn app:app --port 8003
-
-# backend (from <worktree>/backend)
-EXTRA_AUDIO_ROOTS="C:/.../VocalMind/storage/audio" \
-AUDIO_FOLDER_WATCHER_ENABLED=false \
-QDRANT_COLLECTION_PARENTS=vocalmind_parents \
-QDRANT_COLLECTION_SOP_PARENTS=vocalmind_sop_parents \
-python -m uvicorn app.main:app --port 8000
-
-# reprocess + score
-python tools/reprocess_and_compare.py --org nexalink --calls CALL_01,CALL_07,CALL_15
-python tools/reprocess_and_compare.py --org meridian --calls CALL_21,CALL_24,CALL_30
-python tools/evaluate_pipeline.py   # → tools/reports/EVAL_REPORT.{md,json}
+cd backend && IS_LOCAL=true AUDIO_FOLDER_WATCHER_ENABLED=false python -m uvicorn app.main:app --port 8000
+make fe-dev                                   # optional UI; VITE_API_URL unset → http://localhost:8000
+python tools/reprocess_and_compare.py --org nexalink --calls CALL_01,CALL_06,CALL_07,CALL_15
+python tools/reprocess_and_compare.py --org meridian --calls CALL_21,CALL_22,CALL_24,CALL_30,CALL_35
+python tools/evaluate_pipeline.py
 ```
+
+Set `EXTRA_AUDIO_ROOTS` if the backend's checkout does not contain `storage/audio`. `WHISPER_MODEL_SIZE` defaults to `large-v2`; this recipe overrides it to `medium`.

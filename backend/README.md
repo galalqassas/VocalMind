@@ -1,76 +1,33 @@
 # Backend
 
-## Setup
+FastAPI API gateway and processing worker (Python 3.12, [uv](https://github.com/astral-sh/uv)).
 
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
-
-### Installation
-
-1. Install `uv`:
-
-   ```bash
-   pip install uv
-   # or
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-2. Install dependencies:
-   ```bash
-   uv sync
-   ```
-
-### Running the Server
+## Run natively
 
 ```bash
-uv run uvicorn app.main:app --reload --port 8000
+cp .env.example .env          # set SECRET_KEY and OLLAMA_API_KEY (or GROQ_API_KEY)
+uv sync
+uv run uvicorn app.main:app --reload --port 8000   # same as `make be-dev`
 ```
 
-### Development
+The default `.env` expects Postgres on `localhost:5434`, Qdrant on `:6333` and Ollama on `:11434`. Start them with `docker compose up -d db qdrant ollama`.
 
-- Add a package:
-  ```bash
-  uv add <package>
-  ```
-- Run tests (if any):
-  ```bash
-  uv run pytest tests/ -v
-  ```
+`.env.example` sets `IS_LOCAL=false`, which sends inference to the Kaggle server so no ML models have to be downloaded locally. To use local containers instead, run `make support-up` and set `IS_LOCAL=true`. Settings and how they are layered: [docs/backend/CONFIGURATION.md](../docs/backend/CONFIGURATION.md).
 
-### Project Layout
+## Test and lint
 
-- `app/` - FastAPI application code.
-- `tests/` - automated pytest suite.
-- `scripts/` - repeatable maintenance and seed scripts.
-- `scripts/manual/` - ad hoc local probes that are not collected by pytest.
+```bash
+uv run pytest tests/ -v       # make be-test
+uv run ruff check .           # make be-lint
+```
 
-- **[Evidence-Anchored Explainability Layer](../docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)**
-- **[LLM Trigger Feature Guide](../docs/llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)**
-- **[RAG Overview](../docs/rag/RAG_OVERVIEW.md)**
+More detail in [docs/backend/TESTING.md](../docs/backend/TESTING.md).
 
-## Speaker Classification Setup
+## Layout
 
-The backend uses a hybrid speaker role classifier that identifies the roles (`agent` vs `customer`) of raw speaker clusters.
+- `app/`: application code; module map in [docs/architecture/BACKEND_ARCHITECTURE.md](../docs/architecture/BACKEND_ARCHITECTURE.md)
+- `tests/`: pytest suite (SQLite in-memory)
+- `alembic/`: schema migrations; see [alembic/README.md](alembic/README.md)
+- `scripts/`: seeders and maintenance; `scripts/manual/` holds ad-hoc probes that pytest does not collect
 
-### Dependencies
-The model requires `scikit-learn` which has been added to `pyproject.toml`.
-- **Docker**: Handled automatically. The container automatically installs it.
-- **Local Dev**: Run `uv sync` to update your local virtualenv.
-
-### Model Artifacts
-Teammates must place the following binary files in the `app/core/` directory:
-- `backend/app/core/model.pkl` (Logistic Regression weights)
-- `backend/app/core/vectorizer.pkl` (Fitted TF-IDF vectorizer)
-
-These files are ignored by Git. They can be obtained as follows:
-1. **Download `model.pkl` from MLflow**:
-   Ensure `MLFLOW_TRACKING_PASSWORD` is configured, then run:
-   ```bash
-   python tools/download_mlflow_model.py --run-id 85c2377290ee459a8232c8136d0721c5 --output-dir backend/app/core/
-   python -c "import shutil; shutil.move('backend/app/core/model/model.pkl', 'backend/app/core/model.pkl'); shutil.rmtree('backend/app/core/model')"
-   ```
-2. **Obtain `vectorizer.pkl`**:
-   The TF-IDF vectorizer was not logged in the MLflow run and must be copied from the team's shared storage directly to `backend/app/core/vectorizer.pkl` to prevent vocabulary shift alignment issues.
-
-If not present, the pipeline falls back gracefully to rule-based heuristic phrase matching.
-
-
+The speaker-role model files `app/core/model.pkl` and `app/core/vectorizer.pkl` are committed. `tools/download_mlflow_model.py` can pull model artifacts from the DagsHub MLflow server (needs `MLFLOW_TRACKING_PASSWORD`).

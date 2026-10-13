@@ -1,59 +1,19 @@
-# VAD Preprocessing Microservice
+# VAD Service
 
-This service is a thin voice activity detection (VAD) server wrapping the **Silero VAD** PyTorch model. It isolates speech intervals from raw `.wav` audio files.
+`services/vad/app.py` — FastAPI wrapper around Silero VAD with pydub slicing. Compose service `vad`, port 8002 (host and container); backend uses `VAD_API_URL`.
 
----
+The model is loaded lazily via `torch.hub.load("snakers4/silero-vad", "silero_vad")` on the first `/split` request (cached in the `vad_torch_cache` volume), so startup and `/health` do not need network access.
 
-## 1. Operations Details
+## Endpoints
 
-*   **Port**: `:8002`
-*   **Technology Stack**: Python, FastAPI, PyTorch, Snakers4 Silero VAD, Pydub (for slice editing)
-*   **Startup Lifecycle**: The PyTorch VAD model is loaded dynamically from the hub during FastAPI's lifespan setup hook.
+| Method | Path | Behaviour |
+|---|---|---|
+| POST | `/split` | Multipart `file`, `.wav` only (400 otherwise). Reads at 16 kHz, runs `get_speech_timestamps`, and returns `{total_segments, segments: [{index, start_time, end_time, audio_base64}]}` (each clip is a WAV). No speech → empty list. 503 if the model cannot load. |
+| GET | `/health` | `{status, model_loaded}` |
 
----
+## Backend use
 
-## 2. API Specifications
+The main processing worker does not call VAD. It is used by:
 
-### `POST /split`
-Accepts a raw `.wav` audio upload and slices it into segments where speech is active:
-*   **Content-Type**: `multipart/form-data`
-*   **Request Body**:
-    *   `file`: Binary `.wav` file (must end in `.wav`).
-*   **Response**:
-    ```json
-    {
-      "total_segments": 2,
-      "segments": [
-        {
-          "index": 0,
-          "start_time": 0.32,
-          "end_time": 3.45,
-          "audio_base64": "UklGRiS..."
-        },
-        {
-          "index": 1,
-          "start_time": 4.12,
-          "end_time": 9.87,
-          "audio_base64": "UklGRiS..."
-        }
-      ]
-    }
-    ```
-
-### `GET /health`
-Liveness check to verify the PyTorch model has loaded successfully:
-*   **Response**:
-    ```json
-    {
-      "status": "ok",
-      "model_loaded": true
-    }
-    ```
-
----
-
-## 3. Integration & Configuration
-
-The service is configured in backend environments using the `VAD_API_URL` setting.
-If a `.wav` file fails to load or contain speech, `/split` returns an empty `segments` list rather than crashing. 
-If VAD fails entirely, the backend catcher logs a traceback error and skips speech slicing.
+- `POST /api/v1/vad/analyze` and `POST /api/v1/vad/analyze-local` (proxies, `backend/app/api/routes/vad/`; no auth dependency).
+- `POST /api/v1/emotion/process` in local mode (`backend/app/api/routes/emotion/pipeline.py`): split with VAD, then call Emotion `/predict` per clip. A VAD connection error returns 503, a non-200 response 502.

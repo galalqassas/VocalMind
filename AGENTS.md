@@ -1,429 +1,188 @@
-# VocalMind — Repository Context
+# VocalMind — Agent Guide
 
-> AI agent & contributor onboarding. Read fully before working on the codebase.
+Call-center QA platform: **upload call audio → transcribe + diarize → emotion → LLM compliance reasoning → scores → manager/agent dashboards.** Multi-tenant: every `Organization` has manager and agent `User`s, and all data is org-scoped.
 
----
+## Rules
 
-## Code Quality Rules
-
-1. Ensure the code you write is concise and clear.
-2. Ensure your changes are minimal and don't miss any component inside the codebase.
-3. After finishing a task, verify the changes are correct and the task is completed successfully (e.g., run relevant tests, lint, or type checks).
-
-## What VocalMind Does
-
-Call-center AI platform: **upload audio → transcribe → diarize → emotion-analyze → LLM-reason → score → dashboard**. Multi-tenant — every `Organization` has manager and agent `User`s; all data is org-scoped.
-
-Key capabilities:
-
-- **Evidence-anchored explainability** — every LLM trigger verdict traces back to transcript spans + retrieved policy/SOP evidence (no hallucinated claims)
-- **Dual-emotion fusion** — acoustic (speech) + text emotion signals combined per-utterance
-- **RAG-grounded compliance** — policy/SOP docs ingested into Qdrant, retrieved during trigger evaluation
-- **AI Manager Assistant** — natural-language → SQL → answer (Gemini → Groq → Ollama fallback)
-- **Emotion dispute workflow** — agents flag emotion events; managers review
-
----
+1. Keep code concise and match the surrounding style.
+2. Make minimal changes, but update every affected component, including the docs in this file.
+3. Verify before finishing by running the relevant tests, lint and type checks (see [Commands](#commands)).
+4. **Merging to `main` deploys the backend to production** (see [Production](#production)). Work on a branch.
 
 ## Architecture
 
 ```
-  Frontend (:3000) ──/api/v1──▶ Backend (:8000) ──▶ PostgreSQL (host :5434 → container :5432)
-       │  Vite proxy              │
-       │  (same-origin)           ├──────────┬──────────┬──────────┐
-       │                          ▼          ▼          ▼          ▼
-       │                     VAD (:8002) WhisperX Emotion (:8001) Ingestion
-       │                     Silero   (:8003)  FunASR      Docling watch
-       │                              ASR+Diarize emotion2vec   mode
-       │                                   │
-       └───────────────────────────────────┼──────────────────────┐
-                                           ▼                      ▼
-                                       Qdrant (:6333)         Ollama (:11434)
-                                       vocalmind_* cols       snowflake-arctic-embed2
-                                                                │
-                                           LLM triggers ◀───────┴── Ollama Cloud API
-                                           (kimi-k2.6 / ministral-3)   (default in compose)
-                                           or Groq (LLM_PROVIDER=groq)
+frontend :3000 (Vite proxy /api) ─▶ backend :8000 (FastAPI) ─▶ Postgres (host :5434 → :5432)
+                                        │
+            IS_LOCAL=true ──────────────┼──────────── IS_LOCAL=false
+   whisperx :8003 · emotion :8001 · (vad :8002)      Kaggle GPU notebook via ngrok
+                                        │             (backend/app/core/kaggle_client.py)
+                                        ├─▶ Qdrant :6333 ◀─ ingestion (services/rag, watches storage/docs)
+                                        ├─▶ Ollama :11434 (embeddings: snowflake-arctic-embed2)
+                                        └─▶ LLM: Ollama Cloud (default) or Groq
 ```
 
-**Docker Compose services (9):** `db`, `backend`, `frontend`, `ollama`, `qdrant`, `ingestion`, `vad`, `emotion`, `whisperx`. GPU overlay: `docker-compose.gpu.yml` (`make up-gpu`).
+`docker-compose.yml` defines 9 services: db, backend, frontend, ollama, qdrant, ingestion, vad, emotion and whisperx. VAD is only reachable through `/api/v1/vad/*`; the processing pipeline doesn't call it. There are two overlays:
+- `docker-compose.gpu.yml`: GPU for whisperx/emotion.
+- `docker-compose.native.yml`: frontend-only container proxying to a backend running on the host.
 
-**`IS_LOCAL` switch** — `true` = inference hits Docker containers; `false` = hits remote Kaggle server via `BaseKaggleClient`. Docker Compose sets `IS_LOCAL=true`; local dev with `make support-up` also uses `true`.
+## Processing pipeline (the core flow)
 
----
+1. Audio arrives through one of three paths:
+   - `POST /api/v1/interactions` (upload)
+   - `POST /api/v1/interactions/from-storage`
+   - the folder watcher (`storage/audio/<org_slug>/CALL_<NN>_<agent>_<scenario>.wav`)
+2. That creates an `Interaction` (status `pending`) and 6 `ProcessingJob`s: diarization → stt → emotion → reasoning → scoring → rag_eval.
+3. The worker in `backend/app/core/interaction_processing.py` runs everything else:
+   1. Fetches audio (local disk or Supabase Storage, `AUDIO_STORAGE_BACKEND`).
+   2. Runs inference through `full_client` (`api/routes/full/service.py`). With `IS_LOCAL=false` this is the Kaggle `/full` endpoint. Locally it is:
+      - WhisperX `/transcribe` (ASR + pyannote, or a channel split for stereo);
+      - one **clip-level** emotion2vec call (the first 30 s).
+      - The VAD service is **not** used by this pipeline.
+   3. Normalizes the response (`inference_contracts.py`). Locally, per-segment emotion comes from the keyword text heuristic (`build_deterministic_emotion_analysis`); the clip label is used only when the text gives none.
+   4. Assigns speaker roles: **hand-weighted phrase scores plus an LR+TF-IDF model** (`model.pkl`, `vectorizer.pkl`), where the LR adds at most 3 points. Single-cluster diarization falls back to per-segment labeling.
+   5. Persists Transcript → Utterances → EmotionEvents.
+   6. Evaluates LLM triggers (`backend/app/llm_trigger/service.py`, ~3.4k lines):
+      - Rolling 8-turn windows, stride 4.
+      - Three LangChain chains: emotion shift, process adherence (SOP steps), and NLI policy check.
+      - SOP/policy evidence comes from org files in `storage/docs/` and Qdrant (order is in the [trigger guide](docs/llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)).
+      - The result is cached in `interaction_llm_trigger_cache`.
+   7. Writes policy violations (`policy_violation_mapping.py`) and scores (`llm_trigger/scoring.py`, `core/score_utils.py`).
 
-## Directory Structure
+**Emotion fusion** (`emotion_fusion.fuse_emotion_signals`): acoustic ×0.55 + text ×0.45, +0.08 when they agree, −0.12 when they disagree. It is computed on read (the emotion-comparison endpoint and the emotion-shift trigger) and is not persisted.
+4. `GET /api/v1/interactions/{id}` serves the result. Reprocess with `POST .../{id}/reprocess?priority=true`.
 
-```
-VocalMind/
-├── docker-compose.yml         9-service stack (CPU defaults)
-├── docker-compose.gpu.yml     GPU overlay for whisperx + emotion (+ optional ollama GPU)
-├── Makefile                   up, up-gpu, support-up, ollama-pull-embed, be-*, fe-*, rag-*, seed, migrate
-├── .env.example               Root secrets passed into compose (GROQ, HF, Ollama Cloud, etc.)
-├── start-gpu.ps1              Windows helper to launch GPU stack
-│
-├── backend/                   FastAPI API gateway
-│   ├── app/main.py            Lifespan: tables → Nexalink/Meridian seed → worker → audio watcher
-│   ├── app/api/
-│   │   ├── main.py            Router aggregator — 18+ domain routers
-│   │   ├── deps.py            DI: get_db, get_current_user, get_supabase
-│   │   └── routes/
-│   │       ├── interactions.py  Upload/list/detail/reprocess/scores/emotion-comparison
-│   │       ├── dashboard.py     8 concurrent DB queries + 5-min TTL cache
-│   │       ├── assistant.py     Text-to-SQL (Gemini → Groq → Ollama fallback)
-│   │       ├── knowledge.py       Policy/FAQ/KB CRUD + PDF upload
-│   │       ├── rag.py           RAG proxy (health + query)
-│   │       ├── auth/            Password + Google OAuth, HttpOnly cookie sessions
-│   │       ├── emotion/         Analyze, fuse, dispute
-│   │       ├── full/            Combined VAD → ASR → emotion pipeline
-│   │       ├── llm_trigger/     emotion-shift, process-adherence, nli-policy-check
-│   │       ├── agents.py, users.py, notifications.py, reviews.py, feedback.py
-│   │       ├── compliance_disputes.py, internal.py, diarization.py, transcription.py, vad.py
-│   ├── app/core/
-│   │   ├── config.py            Settings(BaseSettings) — all env config + startup validation
-│   │   ├── interaction_processing.py  Pipeline worker + priority reprocess queue (CORE)
-│   │   ├── model.pkl, vectorizer.pkl  Retrained LR+TF-IDF speaker-role classifier
-│   │   ├── audio_folder_watcher.py    Auto-ingest storage/audio/<org_slug>/
-│   │   ├── audio_resolver.py          Local FS / Supabase Storage resolution
-│   │   ├── inference_contracts.py     Normalize microservice responses
-│   │   ├── emotion_fusion.py          Acoustic×0.55 + text×0.45 fusion
-│   │   ├── kaggle_client.py           Remote inference when IS_LOCAL=false
-│   │   ├── llm_circuit_breaker.py, notification_service.py, score_utils.py, …
-│   ├── app/llm_trigger/
-│   │   ├── service.py           Judging/reasoning engine (MOST COMPLEX)
-│   │   ├── retrieval.py         Qdrant SOP/Policy/KB retrievers
-│   │   ├── chains.py            Groq or Ollama Cloud LangChain chains
-│   │   ├── prompts.py           Templates with _INJECTION_GUARD
-│   │   └── schemas.py           Evidence/Attribution/Provenance models
-│   ├── app/models/              SQLModel tables + enums
-│   ├── alembic/versions/        Schema migrations (baseline + notifications/disputes/avatar)
-│   ├── scripts/
-│   │   ├── seed_nexalink.py     NexaLink org + 5 agents (Priya, Daniel, Marcus, Aisha, Hannah)
-│   │   └── seed_meridian.py     Meridian org + 5 agents (Sarah, Tyler, Andre, Jasmine, Karen)
-│   ├── pyproject.toml           Python 3.12, FastAPI, SQLModel, langchain-groq
-│   ├── .env.example             ~150-line template (Ollama Cloud stage models, RAG, Supabase)
-│   └── tests/                   35 pytest files (SQLite in-memory)
-│
-├── frontend/                  React dashboard
-│   ├── src/app/
-│   │   ├── App.tsx, routes.tsx  /login, /manager/*, /agent/*
-│   │   ├── services/api.ts      Typed fetch wrapper; empty VITE_API_URL → same-origin /api/v1
-│   │   ├── contexts/            AuthContext, ThemeContext
-│   │   ├── components/manager/  ManagerDashboard, SessionInspector, SessionDetail,
-│   │   │                        ManagerAssistant, KnowledgeBase, ReviewQueue,
-│   │   │                        EmotionComparisonPanel, EvidenceAnchoredExplainabilityPanel, …
-│   │   ├── components/agent/    AgentDashboard, AgentCalls, AgentCallDetail
-│   │   ├── components/layouts/  ManagerLayout, AgentLayout, UserNav
-│   │   └── components/ui/       shadcn/ui Radix wrappers
-│   ├── vite.config.ts           Dev proxy /api → backend; allowedHosts for ngrok
-│   ├── package.json             React 18, Vite 6, Tailwind 4, MUI 7, pnpm
-│   └── cypress/e2e/             14 E2E spec files
-│
-├── services/
-│   ├── vad/app.py               Silero VAD (host :8002)
-│   ├── emotion/app.py           FunASR emotion2vec (host :8001 → container :8000)
-│   ├── whisperx/
-│   │   └── app.py                 POST /transcribe: transcribe → align → diarize
-│   └── rag/                     Ingestion container (vocalmind-ingestion)
-│       ├── main.py              CLI: --ingest, --watch, -q, --compliance
-│       ├── ingest.py            Docling → parent/child chunks → Ollama embed → Qdrant
-│       ├── query_engine.py      Dual-collection RAG retrieval
-│       ├── evaluator.py         Policy compliance + answer correctness judges
-│       └── config.py            QDRANT + OLLAMA settings (mounted read-only in compose)
-│
-├── storage/                   Bind-mounted into backend + ingestion (large files gitignored)
-│   ├── audio/nexalink/        CALL_<NN>_<agent>_<scenario>.wav — auto-ingested
-│   ├── audio/meridian/        Meridian batch recordings + evaluation/manifest.json
-│   ├── docs/nexalink/         Policy/SOP/KB PDFs for RAG
-│   ├── docs/meridian/
-│   └── uploads/               Manual upload staging
-│
-├── infra/
-│   ├── db/                    01_schema.sql + migrations 04–06; 02_seed.sql (legacy NileTech/CairoConnect)
-│   ├── scripts/               migrate.py, e2e_local_audio.py, ingest_audio_folder.py,
-│   │                          benchmark/eval harness (many)
-│   ├── benchmarks/            thresholds.json, expected/, overnight reports/
-│   └── fixtures/audio/        Test fixtures (gitignored)
-│
-├── research/                  Notebooks + training/ (speaker LR export, batch_ids.csv)
-├── tools/                     reprocess_and_compare.py, evaluate_pipeline.py, …
-├── docs/                      explainability, LLM trigger, RAG, design spec, eval findings
-└── .github/workflows/         ci.yml, backend.yml, frontend.yml, rag_ci.yml, quality-benchmarks.yml
-```
+**Explainability:** every trigger verdict carries `TriggerAttribution` + `ClaimProvenance`, linking transcript spans to the retrieved policy/SOP chunk (`llm_trigger/schemas.py`).
 
-### Demo orgs & UI login
+**Manager assistant** (`api/routes/assistant.py`): natural language → SQL → read-only execution (`ASSISTANT_DATABASE_URL` read-only role) → answer. With `ASSISTANT_LLM_PROVIDER=auto` it tries Gemini → Groq → Ollama Cloud; compose sets `ollama_cloud`.
 
-Backend startup seeds **NexaLink** and **Meridian** when `SEED_DEMO_DATA=true` (compose default). Password for all seeded accounts: **`password123`**.
+**RAG** (`services/rag/`): Docling → parent/child chunks → Ollama embeddings → Qdrant. It writes three collections:
 
-| Org | Manager login | Agents (sample) |
-|-----|---------------|-----------------|
-| NexaLink | `manager@nexalink.com` | `agent.aisha@nexalink.com`, `agent.priya@nexalink.com`, … |
-| Meridian | `manager@meridian.com` | `agent.jasmine@meridian.com`, `agent.andre@meridian.com`, … |
+| Collection | Contents | Used for |
+|---|---|---|
+| `vocalmind_parents` | Policy sections | NLI/compliance |
+| `vocalmind_children` | 400-char policy chunks (80 overlap) | Q&A |
+| `vocalmind_sop_parents` | SOP + KB sections | Process adherence |
 
-Legacy SQL init (`infra/db/02_seed.sql`) also creates **NileTech** / **CairoConnect** users (`manager@niletech.com`, etc.) — separate from the NexaLink/Meridian eval batch.
+Point IDs are content hashes, so re-ingesting is idempotent.
 
-**UI:** http://localhost:3000 · **API docs:** http://localhost:8000/docs
+## Repo map
 
----
-
-## Core Data Flow — Audio Processing Pipeline
-
-This is the system's primary workflow. All code paths lead through here.
-
-```
-POST /api/v1/interactions              POST /.../from-storage
-   │ (multipart audio)                    │ (Supabase path)
-   └──────────────┬───────────────────────┘
-                  ▼
-   Create Interaction (status=pending) + 6 ProcessingJobs
-   (stages: diarization → stt → emotion → reasoning → scoring → rag_eval)
-                  │
-                  ▼
-   interaction_processing.py  —  _worker_loop
-   ┌──────────────────────────────────────────────────┐
-   │ 1. Claim interaction, release pool during I/O    │
-   │ 2. fetch_audio_bytes() — local FS or Supabase    │
-   │ 3. Call /full/analyze (local or Kaggle)          │
-   │    → VAD splits → WhisperX transcribe+diarize   │
-   │    → Emotion per segment → build_local_full_resp │
-   │ 4. inference_contracts.py normalizes response     │
-   │ 5. Speaker roles (backend interaction_processing):│
-   │    - Multi-cluster: LR+TF-IDF (model.pkl) on     │
-   │      cluster text + rebalanced text-cue priors   │
-   │    - Single-cluster diarization collapse: per-   │
-   │      segment classify_segment_speaker_role()     │
-   │ 6. Persist: Transcript → Utterances → EmotionEvents│
-   │ 7. emotion_fusion.py fuses per-utterance:         │
-   │    acoustic×0.55 + text×0.45                     │
-   │    +0.08 agreement, −0.12 disagreement penalty    │
-   │ 8. evaluate_interaction_triggers() [with timeout] │
-   │ 9. Resolve policies → compute scores             │
-   │ 10. Mark ProcessingJobs completed                │
-   └──────────────────────────────────────────────────┘
-                  │
-                  ▼
-   GET /api/v1/interactions/{id}  →  Dashboard
-        (includes top-level `scores` wrapper + legacy overallScore fields)
-   POST /api/v1/interactions/{id}/reprocess?priority=true  →  priority queue
-   GET /.../{id}/emotion-comparison
-```
-
-### LLM Trigger Evaluation (step 7 above, `llm_trigger/service.py`)
-
-The ~2000-line reasoning engine. For each interaction:
-
-1. **Detect topic** — keyword classification (refund/billing/tech/account_access)
-2. **Chunk transcript** — rolling 8-turn windows, stride 4
-3. **Run 3 LangChain chains** (provider from `LLM_PROVIDER` — **`ollama_cloud` default in compose**, or `groq`):
-   - Heavy stages → `OLLAMA_CLOUD_HEAVY_MODEL` (default `kimi-k2.6:cloud`)
-   - Fast stages → `OLLAMA_CLOUD_FAST_MODEL` (default `ministral-3:8b`)
-   - Per-stage overrides: `OLLAMA_EMOTION_SHIFT_MODEL`, `OLLAMA_PROCESS_ADHERENCE_MODEL`, `OLLAMA_NLI_MODEL`, …
-   - **Emotion shift** — sarcasm, passive-aggression, cross-modal contradictions
-   - **Process adherence** — compare transcript vs `RESOLUTION_GRAPHS` (expected SOP steps per topic)
-   - **NLI policy** — classify as Entailment / Benign Deviation / Contradiction / Policy Hallucination
-4. **Cross-modal dissonance** — text vs acoustic polarity mismatch
-5. **Trajectory analysis** — `_trajectory_missing_steps()` tracks SOP step coverage
-6. **Resolution heuristic** — positive/negative ending markers
-7. **Resolve policy context** — 3-tier fallback: ground truth overrides → manual org files → Qdrant retrieval
-8. **Build explainability** — assemble `EvidenceAnchoredExplainability` with `TriggerAttribution` (links triggers to evidence + verdict) and `ClaimProvenance` (traces retrieval source → document → chunk)
-9. **Persist** to `interaction_llm_trigger_cache`
-
-All prompts include `_INJECTION_GUARD` — treats every piece of user data as untrusted. **Never remove this.**
-
----
-
-## RAG System — Dual Collections
-
-| Collection | Env var | Granularity | Used for |
-|---|---|---|---|
-| `vocalmind_parents` | `QDRANT_COLLECTION_PARENTS` | H1/H2/H3 header splits of policy docs | NLI policy check, policy compliance |
-| `vocalmind_children` | `QDRANT_COLLECTION_CHILDREN` | 400-char recursive, 80 overlap | Manager-assistant answer synthesis (Q&A) |
-| `vocalmind_sop_parents` | `QDRANT_COLLECTION_SOP_PARENTS` | H1/H2/H3 splits of SOP + KB docs | Process adherence, KB claim validation |
-
-> Policy documents are indexed at both parent and child granularity. SOP and KB documents are indexed at parent granularity only (no separate children collection).
->
-> Selection rule: **parents = compliance / SOP / KB** (the consumer needs the whole rule, with all conditions and exceptions), **children = Q&A answer synthesis** (the consumer needs a precise span to quote). See `docs/rag/RAG_OVERVIEW.md` for the full matrix.
-
-**Ingestion flow**: `storage/docs/{org}/` PDFs → Docling parse → ftfy clean → parent+child chunks → **compose Ollama** embed (`snowflake-arctic-embed2`, 1024-dim) → Qdrant upload with deterministic content-hash UUIDs. **`vocalmind-ingestion`** runs `main.py --watch` and depends on `ollama` + `qdrant` being healthy.
-
-**Embeddings:** local Ollama in compose (`OLLAMA_BASE_URL=http://ollama:11434`). Set `OLLAMA_CLOUD_EMBED_ENABLED=true` to use Ollama Cloud embeddings instead. Pull model once: `make ollama-pull-embed`.
-
-**Retrieval adapters** (`llm_trigger/retrieval.py`): `SOPRetriever`, `PolicyRetriever`, `KBRetriever` — all subclass `QdrantRetriever` which embeds via Ollama and queries with org+doc_type payload filters.
-
----
-
-## Manager Assistant — Text-to-SQL
-
-`assistant.py` `IntentResolver` chain: natural language → SQL → read-only execution → answer synthesis.
-
-- Fallback: **Gemini → Groq → Ollama qwen2.5:7b** (controlled by `ASSISTANT_LLM_PROVIDER`; compose default **`ollama_cloud`**)
-- Supports ordinal follow-ups ("show me the second one"), SQL repair on parse failure
-- All SQL execution is **read-only** (no INSERT/UPDATE/DELETE)
-- Conversation history carried per session
-
----
-
-## Frontend Architecture
-
-**SPA**, React 18 + react-router v7. Two role-based route trees:
-
-| Manager routes | Agent routes |
+| Path | What |
 |---|---|
-| `/manager` → Dashboard (KPIs, charts, leaderboard) | `/agent` → Dashboard (personal KPIs, trend) |
-| `/manager/sessions` → SessionInspector (search/sort/paginate) | `/agent/calls` → personal call list |
-| `/manager/sessions/:id` → SessionDetail (audio, transcript, triggers, explainability) | `/agent/calls/:id` → coaching view |
-| `/manager/assistant` → AI chat | `/agent/settings` |
-| `/manager/knowledge` → KnowledgeBase CRUD | |
-| `/manager/settings` | |
+| `backend/app/main.py` | Lifespan, in order: validate settings → `create_all` → seed demo orgs → start worker → start audio watcher |
+| `backend/app/api/main.py` | Router registry. Prefixes: auth, emotion, interactions, dashboard, knowledge, agents, assistant, users, llm-trigger, rag, diarization, transcription, vad, full, internal, notifications, reviews, feedback, policy-compliance |
+| `backend/app/api/deps.py` | DI: DB session, current user |
+| `backend/app/core/` | Config, pipeline worker, fusion, audio resolver/watcher, Kaggle client, knowledge versioning, rate limit, circuit breaker |
+| `backend/app/llm_trigger/` | Trigger engine: `service.py`, `chains.py`, `prompts.py`, `prompt_constants.py` (incl. `INJECTION_GUARD`), `retrieval.py`, `schemas.py`, `scoring.py` |
+| `backend/app/models/` | SQLModel tables + enums |
+| `backend/alembic/versions/` | 5 migrations |
+| `backend/scripts/` | `seed_nexalink.py`, `seed_meridian.py` (run at startup), `reset_local_db.py`, misc ops |
+| `backend/tests/` | 38 pytest files (SQLite in-memory) |
+| `frontend/src/app/` | React 18 SPA: `routes.tsx`, `services/api.ts`, `contexts/`, `components/{manager,agent,layouts,ui}` |
+| `services/{vad,whisperx,emotion}/app.py` | Inference microservices |
+| `services/rag/` | Ingestion + query engine + evaluators + RAGAS |
+| `infra/db/` | SQL mounted into Postgres initdb: `01_schema.sql`, `03`–`06` incremental (`04` = assistant read-only role), legacy seeds `02_seed.sql` (NileTech) + `seed_benchmark_data.sql` |
+| `infra/scripts/` | `eval/` (quality gates), `seed/`, `migrate.py`, `e2e_local_audio.py`, `ingest_audio_folder.py`, `build_session_export.py` |
+| `infra/benchmarks/` | Gold labels (`expected/`), `fixtures/`, `schema/thresholds.json` |
+| `storage/` | Bind-mounted `audio/<org>/`, `docs/<org>/` (RAG sources), `uploads/` |
+| `tools/` | Pipeline-vs-ground-truth eval harness, `sync_remote_supabase.sql` |
+| `research/` | Notebooks only; not used at runtime |
 
-**API client** (`api.ts`): typed fetch wrapper. In Docker compose, `VITE_API_URL=""` → same-origin `/api/v1` via **Vite dev proxy** (`VITE_DEV_PROXY_TARGET=http://backend:8000`). This also works with **ngrok** on port 3000 (tunnel the frontend, not the backend). Token in `sessionStorage` + HttpOnly cookie. Detail responses include a top-level `scores` object.
-
-**Styling**: MUI ThemeProvider + Tailwind v4 CSS. shadcn/ui Radix wrappers in `components/ui/`.
-
----
-
-## Database Schema (v5.2)
-
-17 DDL tables + 1 runtime table (interaction_llm_trigger_cache), 10 enum types, 14 indexes. Full DDL in `infra/db/01_schema.sql`.
-
-**Core data chain**: `Organization` → `User` → `Interaction` → `ProcessingJob` (6 stages) → `Transcript` ↔ `Utterance` → `EmotionEvent` → `InteractionScore` + `InteractionLLMTriggerCache`
-
-**Policy chain**: `CompanyPolicy` → `OrganizationPolicy` (org-scoped toggle) → `PolicyCompliance` (per-interaction)
-
-**Feedback (RLHF)**: `EmotionFeedback`, `ComplianceFeedback` — agents dispute, managers review
-
-**Key types**: `processing_status` (pending/processing/completed/failed), `job_stage` (diarization/stt/emotion/reasoning/scoring/rag_eval), `speaker_role` (agent/customer), `user_role` (manager/agent)
-
----
-
-## Setup
+## Commands
 
 ```bash
 cp .env.example .env && cp backend/.env.example backend/.env   # fill OLLAMA_API_KEY, HF_TOKEN, SECRET_KEY
-make build                  # Build all Docker images (use make build-retry on Windows)
-make up                     # Full stack: db+backend+frontend+ollama+qdrant+ingestion+vad+emotion+whisperx
-make ollama-pull-embed      # Pull snowflake-arctic-embed2 into compose Ollama
-# Backend auto-seeds Nexalink + Meridian on first startup (SEED_DEMO_DATA=true)
-# OR Supabase remote seed:
-make seed                   # Requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in backend/.env
-# GPU (Windows/Linux with NVIDIA Container Toolkit):
-make up-gpu                 # docker-compose.yml + docker-compose.gpu.yml
-# Local dev (backend/frontend on host):
-make support-up             # db, ollama, qdrant, vad, emotion, whisperx only
-make ollama-pull-embed
-make be-install && make be-dev   # Backend :8000 (IS_LOCAL=true in backend/.env)
-make fe-install && make fe-dev   # Frontend :3000
-make migrate                # Alembic migrations via infra/scripts/migrate.py
+make up                 # full stack (CPU); make up-gpu for NVIDIA
+make ollama-pull-embed  # once, pulls the embedding model
+make support-up         # infra + inference containers only, then: make be-dev / make fe-dev
+make be-test be-lint    # pytest / ruff
+make fe-lint            # tsc --noEmit;  cd frontend && pnpm run test  (vitest, 13 files)
+make fe-test            # Cypress (14 specs) against build + preview, never the dev server
+make rag-test rag-lint
+make quality-eval-all   # component quality gates vs infra/benchmarks/expected (fails on regression)
+make llm-trigger-test
 ```
 
----
+Demo data: when `SEED_DEMO_DATA=true`, startup seeds **NexaLink** (`manager@nexalink.com`) and **Meridian** (`manager@meridian.com`), each with 5 agents (`agent.<name>@<org>.com`). The password is `password123`. UI: http://localhost:3000 · API docs: http://localhost:8000/docs
 
-## Testing & Linting
+## Configuration
 
-| Suite | Command | Framework | Details |
-|---|---|---|---|
-| Backend | `make be-test` | pytest + SQLite in-memory | 35 test files |
-| Backend lint | `make be-lint` | Ruff | |
-| Frontend unit | `cd frontend && pnpm run test` | Vitest + jsdom | 11 test files (core components + utils) |
-| Frontend lint | `make fe-lint` | `tsc --noEmit` | |
-| Frontend E2E | `make fe-test` | Cypress | 14 specs; runs against `pnpm build` + preview, not dev server |
-| RAG | `make rag-test` | pytest | config, ingest, query, evaluator |
-| RAG lint | `make rag-lint` | Ruff | |
-| Quality eval | `make quality-eval-all` | eval scripts | Compares outputs vs gold standards in `infra/benchmarks/expected/`; fails on regression |
-| Full LLM trigger | `make llm-trigger-test` | pytest+vitest | Backend trigger tests + RAG ingest + frontend AgentCallDetail |
+Source of truth: `backend/app/core/config.py`. Values are layered, and the later one wins: **config.py default → `backend/.env` → `docker-compose.yml` `environment:`**. Details are in [docs/backend/CONFIGURATION.md](docs/backend/CONFIGURATION.md).
 
----
+- `IS_LOCAL`: `true` uses the Docker inference services; `false` uses the Kaggle notebook (`KAGGLE_SERVER_URL`). On startup the notebook calls `POST /internal/set-kaggle-url` (no auth, by design), which sets the URL and flips `IS_LOCAL=false` in memory.
+  - `backend/.env.example` uses `false`, which is recommended for native dev because it avoids downloading the models.
+  - Compose hardcodes `true`.
+- `LLM_PROVIDER`: `ollama_cloud` (compose default; heavy `kimi-k2.6:cloud`, fast `ministral-3:8b`) or `groq`. Gemini code exists but is unused.
+- `TEXT_EMOTION_PROVIDER`: `hf_transformers` (compose) or `rule_based` (config.py default, keyword-based).
+- `AUDIO_STORAGE_BACKEND`: `local` or `supabase` (production). `AUDIO_FOLDER_WATCHER_ENABLED` defaults to false in config.py and true in `.env.example`.
 
-## CI/CD (GitHub Actions)
+## Production
 
-| Workflow | Paths | Runs |
-|---|---|---|
-| `ci.yml` | main | Gitleaks security audit |
-| `backend.yml` | `backend/**` | ruff → pytest → quality benchmarks → pip-licenses |
-| `frontend.yml` | `frontend/**` | tsc --noEmit → build → Cypress E2E |
-| `rag_ci.yml` | `services/rag/**` | ruff → pytest |
-| `quality-benchmarks.yml` | manual | eval_all.py → upload reports |
+`.github/workflows/deploy-backend.yml` runs after **Backend CI passes on `main`**. It SSHes to an Azure VM (`/opt/vocalmind`), `git reset --hard`s to the commit, sets `AUDIO_STORAGE_BACKEND=supabase` + `SUPABASE_*` in `backend/.env`, and runs `docker compose up -d --build backend`.
+- The DB is Supabase Postgres via `DATABASE_URL`.
+- Set `SEED_DEMO_DATA=false` there.
+- Bootstrap steps: [docs/operations/DEPLOYMENT.md](docs/operations/DEPLOYMENT.md).
 
----
+CI (`.github/workflows/`):
+- `ci.yml`: Gitleaks.
+- `backend.yml`: ruff → pytest → quality evals.
+- `frontend.yml`: tsc → build → Cypress.
+- `rag_ci.yml`: ruff → pytest.
+- `quality-benchmarks.yml`: runs when benchmarks change, or manually.
+- `deploy-backend.yml`: the deploy described above.
 
-## Critical Gotchas
+## Gotchas
 
-1. **Speaker-role classifier is LR+TF-IDF** — the backend assigns agent/customer roles with the logistic-regression model (`model.pkl` + `vectorizer.pkl` in `backend/app/core/`) plus rule-based text-cue priors, in `interaction_processing.py`. There is no DistilBERT relabel pass.
-2. **`IS_LOCAL` routing** — single boolean routes all inference. `true` = Docker containers, `false` = Kaggle remote. Mismatch = all inference calls fail.
-3. **Single-cluster diarization** — PyAnnote sometimes returns one speaker cluster; backend falls back to per-segment LR labeling. Reprocess with `?priority=true` after model/heuristic changes.
-4. **Emotion fusion weights** — acoustic 0.55 / text 0.45 are tuned; changing them requires re-running `make quality-eval-emotion` against gold standards.
-5. **`_INJECTION_GUARD`** — appended to every LLM prompt; treats user data as untrusted. Never remove.
-6. **3-tier SOP fallback** — Qdrant down degrades to manual org files in `storage/docs/`, not a hard failure.
-7. **Deterministic RAG UUIDs** — content-hash-based; re-ingesting = same Qdrant points (idempotent).
-8. **SQLite ≠ PostgreSQL** — tests use SQLite in-memory; JSONB, specific indexes are Postgres-only.
-9. **Dashboard cache** — 5-min TTL; stale data after seeding/reprocessing is expected.
-10. **Audio normalization** — Emotion service caps at mono 16kHz / 30s; longer clips truncated.
-11. **LLM rate limits** — 3-chain trigger evaluation uses backoff; sustained rate-limiting = minutes per interaction (Groq or Ollama Cloud).
-12. **Cypress requires build** — E2E runs against `pnpm run build` + `vite preview`, never the dev server.
-13. **Docker on Windows** — use `make build-retry` or `docker_compose_retry.ps1` for transient daemon errors.
-14. **`uv.lock` gitignored** — run `uv sync` locally; lock file is not committed.
-15. **Model artifacts gitignored** — `*.pt`, `*.safetensors`. The LR speaker model (`model.pkl`, `vectorizer.pkl`) lives in `backend/app/core/` and is committed (force-included in `.gitignore`).
-16. **WhisperX alignment** — corrupted checkpoint auto-re-downloads; first attempt may fail.
-17. **Assistant SQL is read-only** — no INSERT/UPDATE/DELETE allowed in generated SQL execution.
-18. **ngrok / public demos** — tunnel **port 3000** (frontend), not 8000. Compose uses Vite proxy so API calls stay same-origin. Avoid running host Ollama and compose Ollama both on `:11434`.
-19. **Postgres host port** — Docker maps **`5434:5432`**; use `localhost:5434` from the host, `db:5432` inside containers.
-20. **Ollama in compose** — `vocalmind-ollama` must be healthy before backend/ingestion start; run `make ollama-pull-embed` on fresh installs.
+- **Never remove `INJECTION_GUARD`**: it is appended to every trigger prompt (`llm_trigger/prompts.py`) and treats transcript/user text as untrusted.
+- **Assistant SQL must stay read-only**: `_validate_sql_structure` in `assistant.py`, plus the read-only DB role.
+- **Fusion weights (0.55/0.45) are tuned.** Re-run `make quality-eval-emotion` if you change them.
+- **Schema has three sources that drift**:
+  - `infra/db/01_schema.sql` (initdb and `make migrate`, which is *not* Alembic) lacks `assistant_sessions` and `knowledge_versions`, and columns such as `users.avatar_url`.
+  - Startup `create_all` adds missing *tables* but never *columns*.
+  - Alembic is not run by compose and isn't in the backend image.
+  - Add every schema change to all three.
+- **`make seed` is a legacy Supabase seeder** (`SUPABASE_SERVICE_KEY`) and writes to whatever Supabase it points at. Local demo data comes from startup seeding instead.
+- **Tests use SQLite.** JSONB and Postgres-only indexes are not exercised.
+- **Dashboard cache TTL is 5 min**, so data looks stale right after reprocessing.
+- **Emotion service truncates audio** to 30 s mono 16 kHz (`EMOTION_MAX_AUDIO_SECONDS`).
+- **Postgres from the host is `localhost:5434`**; inside compose it is `db:5432`. `backend/.env` overrides the root `.env` in the backend container, so its `DATABASE_URL` must use `db:5432` (or Supabase) when the backend runs in Docker.
+- **For ngrok/public demos, tunnel port 3000** (the frontend proxies `/api`), not 8000.
+- **Offline UI demo:** `VITE_USE_OFFLINE_DEMO=true` serves bundled NexaLink data (`frontend/src/app/data/`), with no backend needed.
+- **Committed artifacts:** `backend/uv.lock`, `model.pkl` and `vectorizer.pkl` are committed. Run `uv sync` after pulling.
+- **On Windows**, use `make build-retry` or `start-gpu.ps1`.
 
----
+## Known issues (tracked cleanup)
 
-## Coding Conventions
+- **Security:**
+  - Public routes:
+    - inference passthroughs (`/full/*`, including `analyze-local`, which reads server file paths);
+    - `/vad/*` and `/transcription/*`;
+    - the single-stage `/llm-trigger/*` routes;
+    - `/metrics` and `/health/circuit-breakers`.
+  - Knowledge CRUD only requires login, not the manager role.
+  - The auth rate limit described in `core/rate_limit.py` is never applied.
 
-**Python** (backend: 3.12, services: 3.11): Ruff linter, uv package manager, FastAPI async handlers, SQLModel ORM, Pydantic for all schemas, `Depends()` DI via `deps.py`, `Settings(BaseSettings)` from env vars, snake_case/PascalCase naming.
+- `RESOLUTION_GRAPHS` is defined in both `llm_trigger/service.py` and `prompt_constants.py`. The prompt's step catalog lacks `account_signers`, `aml_review`, `retention` and `wire_transfer`.
+- **"Dual-emotion fusion" is mostly text vs. text in local mode.** Per-utterance labels come from keywords, and the acoustic model only gives one label per clip.
+- Keyword heuristics override or outweigh models:
+  - Speaker-role phrase weights outweigh the LR model.
+  - `_is_resolved_heuristic` overrides the LLM's `is_resolved`.
+  - The topic is chosen by keyword score, defaulting to `billing_issue`.
+- Dead code: `core/feedback_export.py`, `deps.get_supabase`, `_detect_topic`/`_detect_cross_modal_dissonance` (tests only), about 30 unused `components/ui/*`.
+- The offline-demo dataset (`processedSessionExport.ts`, 27k lines) is statically imported, so it is always bundled. Its generator `infra/scripts/build_session_export.py` imports a missing module (`diag_5call_probe`).
+- `infra/scripts/eval/extract_pipeline_predictions.py` calls `/api/interactions` (missing `/v1`).
 
-**TypeScript** (frontend): `tsc --noEmit` lint, pnpm, React 18 + Vite 6, Tailwind v4 + MUI, shadcn/ui Radix wrappers, react-router v7, React Context state, `@/` import alias, PascalCase components / camelCase functions.
+## Conventions
 
-**Docker**: multi-stage backend build, health checks on all services, named volumes (postgres, ollama, qdrant), bind mounts for dev hot-reload.
+- **Python** (backend 3.12, services 3.11): Ruff, uv, async FastAPI, SQLModel, Pydantic schemas, `Depends()` DI, settings via `Settings(BaseSettings)`.
+- **TypeScript**: pnpm, React 18 + Vite 6, Tailwind v4 + MUI, shadcn/Radix in `components/ui/`, react-router v7, React Context, `@/` alias.
 
----
+## Docs
 
-## Key Env Variables
-
-| Variable | Purpose | Default (compose) |
-|---|---|---|
-| `IS_LOCAL` | Docker or Kaggle inference | `true` |
-| `LLM_PROVIDER` | Trigger chains: `groq` or `ollama_cloud` | `ollama_cloud` |
-| `OLLAMA_API_KEY` / `OLLAMA_CLOUD_API_KEY` | Ollama Cloud LLM (+ optional cloud embed) | — |
-| `GROQ_API_KEY` | LLM chains when `LLM_PROVIDER=groq` | — |
-| `HF_TOKEN` | pyannote diarization (required for WhisperX) | — |
-| `SECRET_KEY` | JWT signing | dev placeholder in compose |
-| `DATABASE_URL` | Postgres (in container) | `postgresql+asyncpg://vocalmind:vocalmind_dev@db:5432/vocalmind` |
-| `ASSISTANT_LLM_PROVIDER` | gemini / groq / ollama_cloud / ollama / auto | `ollama_cloud` |
-| `SEED_DEMO_DATA` | Auto-seed Nexalink + Meridian on backend startup | `true` |
-| `EMOTION/VAD/WHISPERX_API_URL` | Microservice endpoints | Docker service names |
-| `OLLAMA_BASE_URL` | Local embeddings | `http://ollama:11434` (compose); `http://localhost:11434` (host dev) |
-| `EMBEDDING_MODEL` | RAG embedding model | `snowflake-arctic-embed2` |
-| `QDRANT_URL` | Vector DB | `http://qdrant:6333` |
-| `QDRANT_COLLECTION_PARENTS` | Policy parent chunks | `vocalmind_parents` |
-| `QDRANT_COLLECTION_CHILDREN` | Policy child chunks | `vocalmind_children` |
-| `QDRANT_COLLECTION_SOP_PARENTS` | SOP + KB parent chunks | `vocalmind_sop_parents` |
-| `EXTRA_AUDIO_ROOTS` | Extra allow-listed audio search roots (`;`-separated) | `/app/storage/audio_import` |
-| `AUDIO_FOLDER_WATCHER_ENABLED` | Auto-ingest from `storage/audio/<org>/` | `true` |
-| `VITE_API_URL` | Frontend API base; empty = same-origin proxy | `""` in compose |
-| `VITE_DEV_PROXY_TARGET` | Vite proxy target for `/api` | `http://backend:8000` |
-
-Full templates: `.env.example` (root), `backend/.env.example` (~150 lines). Local native dev: service URLs → `http://localhost:{port}`; Postgres host port **5434**.
-
-### Running natively with GPU (CUDA) instead of Docker
-
-For local CUDA inference, keep only **postgres + qdrant + ollama + frontend** in Docker (the infra layer) and run the GPU-needy services + backend on the host with a conda env that has `torch + cu*`, `whisperx`, `pyannote`, `funasr`, `silero_vad`, and the backend deps. See `docs/eval/PIPELINE_FINDINGS.md` (`Reproducing` section) for the exact start commands. Throughput improves ~15× (e.g. CALL_15 takes ~2 min on a 4060 vs 30+ min in the Docker CPU image).
-
----
-
-## Key Documentation
-
-| Path | What it covers |
-|---|---|
-| `docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md` | Claim→evidence→verdict architecture, API fields, UI cards |
-| `docs/llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md` | 3-chain pipeline, retrieval priority, payload behavior, testing |
-| `docs/rag/RAG_OVERVIEW.md` | Dual collections, provenance flow, runtime components |
-| `docs/rag/INGESTION_PIPELINE.md` | 8-stage ingestion, Qdrant routing |
-| `docs/design/vocalmind-design-spec.md` | Complete Figma spec (932 lines) |
-| `docs/eval/PIPELINE_FINDINGS.md` | Pipeline-vs-GT evaluation, per-axis baseline → final scores, what was fixed and what remains |
-| `tools/README.md` | Reproducible evaluation harness (`reprocess_and_compare.py`, `evaluate_pipeline.py`, `compare_summary.py`) |
-| `infra/db/01_schema.sql` | v5.2 PostgreSQL DDL |
-
----
+Index: [docs/README.md](docs/README.md). Start with:
+- [Pipeline](docs/architecture/AUDIO_PROCESSING_PIPELINE.md)
+- [LLM triggers](docs/llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md)
+- [RAG](docs/rag/RAG_OVERVIEW.md)
+- [API routes](docs/api/REST_API_REFERENCE.md)
+- [Configuration](docs/backend/CONFIGURATION.md)

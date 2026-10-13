@@ -1,105 +1,56 @@
-# ADR-001 — Hybrid: Monolithic Backend + ML Microservices
+# ADR-001: Monolithic Backend + ML Microservices
 
 **Status:** Accepted
 **Date:** 2026-06-15
-**Decision drivers:** graduation project scope, GPU isolation, deploy simplicity, defendability.
 
 ## Context
 
-VocalMind ingests call audio and runs it through five distinct ML stages
-(VAD, ASR + alignment, diarization, acoustic emotion, text emotion + LLM
-reasoning) before exposing scored interactions to a manager / agent web UI.
-
-Each ML stage has different runtime needs:
-
-| Stage | Heavy dep | GPU? | Memory | Restart cost |
-|---|---|---|---|---|
-| VAD (Silero) | torch | optional | small | seconds |
-| WhisperX (ASR + align + diar) | torch, ctranslate2, pyannote | yes | ~6 GB | minutes |
-| Emotion (acoustic + text) | transformers | optional | ~2 GB | tens of seconds |
-| LLM trigger | ollama_cloud/langchain (Groq fallback) | none | small | seconds |
-| RAG | qdrant, ollama embeddings, llm | none | medium | seconds |
-
-The business layer — auth, RBAC, dashboards, evaluation persistence, the
-manager assistant, the HITL feedback loop — is comparatively cheap: pure
-async FastAPI + Postgres.
+Each call goes through VAD, ASR + alignment + diarization, acoustic emotion, text emotion, LLM reasoning and scoring. The heavy model stages need different runtimes (torch/CUDA, pyannote, FunASR). The business layer (auth, RBAC, dashboards, review queue, notifications, Manager Assistant) is plain async FastAPI on Postgres.
 
 ## Decision
 
-**One business-logic monolith (FastAPI + Postgres + SQLModel) plus four
-ML microservices behind HTTP boundaries** (VAD, WhisperX, Emotion, RAG).
-Compose orchestrates them; the backend fans out via async HTTP.
+One FastAPI + SQLModel + Postgres backend, with the GPU-heavy stages split out as HTTP services. Docker Compose (`docker-compose.yml`) runs all of them.
 
-```
-                ┌────────────────────────────────────────┐
-                │   FastAPI backend (monolith)           │
-                │   auth, RBAC, persistence, scoring,    │
-                │   review queue, notifications, RAG     │
-                │   client, manager assistant            │
-                └─────────────┬──────────────────────────┘
-                              │  async HTTP fan-out
-        ┌──────────┬──────────┼──────────┬──────────┐
-        ▼          ▼          ▼          ▼          ▼
-       VAD     WhisperX     Emotion     RAG      Ollama
-     (Silero) (GPU svc)   (text+acoustic) (qdrant+gen)
-```
+| Component | How the backend uses it |
+|---|---|
+| `services/vad` (Silero), `services/whisperx` (ASR + align + PyAnnote), `services/emotion` (FunASR emotion2vec, acoustic only) | Async HTTP. Routing is chosen by `IS_LOCAL` (compose containers, or the Kaggle server via `backend/app/core/kaggle_client.py`). |
+| Text emotion + fusion | In-process: `backend/app/core/emotion_fusion.py` |
+| RAG query code (`services/rag`) | Imported in-process. Bind-mounted at `/app/rag`, loaded by `backend/app/api/routes/rag.py` and `llm_trigger/service.py`. |
+| RAG ingestion | Separate container (`ingestion`) running `services/rag/main.py --watch` |
+| Qdrant, Ollama (embeddings) | Infra containers |
+| LLMs | External APIs: Ollama Cloud, Groq or Gemini, selected by `LLM_PROVIDER` / `ASSISTANT_LLM_PROVIDER` |
 
-## Why not microservices everywhere?
+## Rationale
 
-- **No team to operate them.** Two-person undergrad team. A genuine
-  microservice topology (one bounded context per service, each with its
-  own DB) doubles the deploy and observability surface while we still
-  share *one* Postgres conceptually.
-- **Business contexts barely change shape.** Interactions, scores,
-  policies, feedback, notifications all share the interaction lifecycle —
-  splitting them across services would mean a lot of cross-service joins
-  or duplicated state.
-- **The split that *does* matter is runtime, not domain.** GPU /
-  large-model isolation is the actual reason to split, and that's
-  exactly where we drew the line.
-
-## Why not a pure monolith?
-
-- **WhisperX needs CUDA and ~6 GB of GPU memory** during transcription
-  but is idle most of the time. Embedding it in the backend pins those
-  resources to every backend replica.
-- **Restart blast radius.** A torch / CUDA crash inside the backend
-  process kills the whole API. Isolating WhisperX behind HTTP turns it
-  into a recoverable upstream.
-- **Independent scaling.** WhisperX can scale to N GPU workers without
-  scaling FastAPI replicas, and vice versa.
-- **Language flexibility.** The RAG service was easier to write against
-  llama-index + qdrant in its own venv than to drag those deps into the
-  backend's resolution.
+- **Split by runtime, not domain.** Interactions, scores, policies, feedback and notifications share one lifecycle and one database. Splitting them would add cross-service joins without benefit.
+- **Isolate GPU and model crashes.** A CUDA or torch failure in WhisperX fails one HTTP call and marks the job `failed`; it does not kill the API.
+- **Scale independently.** Model services can scale without scaling the API, and vice versa.
 
 ## Trade-offs accepted
 
-| Trade-off | Why we accept it |
+| Trade-off | Consequence |
 |---|---|
-| Cross-service HTTP latency (~10–30 ms / hop) | Negligible vs. WhisperX itself (tens of seconds) |
-| No service mesh / circuit breaker yet | LLM trigger has retry + degraded fallback; ML services have timeouts; good enough for the load we serve |
-| One Postgres for everything | Simplifies transactions, FK integrity, manager dashboards; revisit when traffic forces a split |
-| `audio_folder_watcher` + `processing_worker` are in-process | Limits backend to 1 replica today. Migration path: move queue to Redis / Postgres `LISTEN/NOTIFY` when we need to scale horizontally — model layer already supports it |
-| ~~No Alembic~~ → **Alembic adopted** | Schema bootstraps from [`infra/db/01_schema.sql`](../infra/db/01_schema.sql) (source of truth for fresh installs). Alembic migrations in `backend/alembic/` (3 versions: `0001_baseline`, `0002_notif_and_dispute`, `0003_user_avatar`) handle incremental upgrades on existing databases. Run `alembic upgrade head` before starting the backend when upgrading an existing deployment. |
+| Processing worker and audio folder watcher run in-process (`interaction_processing.py`, `audio_folder_watcher.py`) | Only one backend replica can run. The proposed fix is [ADR-002](ADR-002-job-queue.md). |
+| One Postgres for everything | Simple transactions and FKs. No per-service data ownership. |
+| No circuit breaker on model-service calls | Model services rely on HTTP timeouts. `llm_circuit_breaker.py` guards only the Manager Assistant's LLM providers (state at `GET /health/circuit-breakers`). |
 
-## Failure modes & responses
+## Failure handling (current)
 
-| Failure | Current handling | Future improvement |
-|---|---|---|
-| LLM trigger timeout | tenacity retry → degraded deterministic verdict | budget caching per interaction |
-| LLM produces malformed JSON | Pydantic rejects → degraded fallback | structured-output mode (when supported by SDK) |
-| WhisperX down | pipeline halts, `processing_jobs.status=failed` surfaced in UI | fallback queue + manual replay button |
-| Qdrant empty / missing | file-system SOP fallback in `retrieval.py` | warm-up health probe at lifespan startup |
-| Backend pod restart mid-job | next worker tick picks up `pending` rows | move to Postgres `SKIP LOCKED` queue |
+| Failure | Handling |
+|---|---|
+| Transient LLM error (rate limit, timeout) | `_invoke_chain_with_retry` in `llm_trigger/chains.py`: 3 attempts with exponential backoff, then the deterministic fallback verdict |
+| WhisperX / VAD / emotion down | The stage fails, and `processing_jobs` errors appear in the Session Inspector. Retry with **Reprocess**. |
+| Qdrant empty or down | `llm_trigger/retrieval.py` falls back to manual org files under `storage/docs/` |
+| Backend restart mid-job | On startup, `_enqueue_pending_interactions_backlog()` resets `processing` interactions to `pending` and re-enqueues every pending one |
+
+## Schema management
+
+- Fresh Postgres: `infra/db/` is mounted as `/docker-entrypoint-initdb.d`, so every `*.sql` there runs on first init: `01_schema.sql`, the legacy `02_seed.sql`, SQL migrations `03`–`06`, and `seed_benchmark_data.sql`.
+- At backend startup, `create_db_and_tables()` runs `SQLModel.metadata.create_all`.
+- Existing databases: Alembic revisions in `backend/alembic/versions/`.
+- A schema change must update the SQLModel model, `infra/db/01_schema.sql`, and add an Alembic revision.
 
 ## Consequences for new work
 
-- **New domain features stay in the monolith** unless they introduce a
-  new heavy dependency. The notifications + HITL feedback work landed
-  in-process for this reason.
-- **New ML / heavy work gets a new service** with its own venv and
-  Dockerfile; backend talks to it over HTTP.
-- **Schema changes:** until Alembic lands, update
-  [`infra/db/01_schema.sql`](../infra/db/01_schema.sql) *and* register
-  the new model in `app/models/__init__.py` *and*
-  `create_db_and_tables()` so dev-mode auto-create stays in sync.
+- New domain features go in the backend unless they bring a heavy ML dependency.
+- New heavy model work becomes its own service under `services/`, with its own Dockerfile, called over HTTP.

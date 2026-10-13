@@ -1,79 +1,43 @@
-# VocalMind Verification & Testing Guide
+# Testing
 
-This guide details the test suites, execution commands, and verification benchmarks used to validate VocalMind's stability and correctness.
+All commands come from the root `Makefile` unless noted. For what CI runs, see `.github/workflows/`.
 
----
+## Suites
 
-## 1. Backend API Test Suite (pytest)
+| Suite | Location | Command | Notes |
+|---|---|---|---|
+| Backend unit/API | `backend/tests/` (38 `test_*.py` + `conftest.py`) | `make be-test` (`uv run pytest tests/ -v`) | SQLite in-memory via `conftest.py`. `make be-test-cov` adds coverage. |
+| Backend lint | `backend/` | `make be-lint` | Ruff |
+| Frontend unit | `frontend/src/tests/` (13 Vitest files) | `cd frontend && pnpm run test` | jsdom; `make fe-test-cov` adds coverage |
+| Frontend typecheck | `frontend/` | `make fe-lint` | `tsc --noEmit` |
+| Frontend E2E | `frontend/cypress/e2e/` (14 specs) | `make fe-test` | Builds, then runs `vite preview` on :3000 (never the dev server). API calls are stubbed by `cy.useE2eApiFixtures()` in `cypress/support/e2e.ts`, so no backend is needed. |
+| RAG service | `services/rag/tests/` | `make rag-test`, `make rag-lint` | |
+| LLM-trigger slice | backend, RAG and frontend | `make llm-trigger-test` | Runs `test_llm_trigger_service.py`, `test_interactions_llm_triggers.py`, `test_sop_retrieval.py`, the RAG `test_ingest.py` and `AgentCallDetail.test.tsx` |
+| Quality benchmarks | `infra/scripts/eval/` | `make quality-eval-all` (or `quality-eval-{transcript,emotion,policy,rag,resolution}`) | By default scores the fixture `infra/benchmarks/fixtures/baseline_predictions.json` (not a live run; pass `--predictions` to score your own) against `infra/benchmarks/expected/` using `infra/benchmarks/schema/thresholds.json`. Exits non-zero on regression. |
+| Live local E2E | `infra/scripts/e2e_local_audio.py` | `make e2e-local-audio` | Needs the running stack: login, ingest, poll, assert |
 
-The backend gateway contains 36 test files (35 test_*.py files + 1 conftest.py) built with `pytest` using an asynchronous driver (`pytest-asyncio`) and an in-memory SQLite database.
+`make test-all` runs backend lint+test, frontend lint/build/unit/E2E, RAG lint+test and `quality-eval-all`, then `make clean`.
 
-### 1.1 Core Test Files
+## Backend test areas (`backend/tests/`)
 
-*   **Authentication & User**:
-    *   `test_auth.py`: Tests login, logout, and token expiration controller endpoints.
-    *   `test_auth_service.py`: Service-level token generation and verification logic.
-*   **Security & Hardening**:
-    *   `test_p0_security.py` / `test_security.py` / `test_security_headers.py`: Tests CORS headers, frame DENY headers, and secure access restrictions.
-    *   `test_unauthorized_access.py`: Asserts that unauthenticated calls receive `401 Unauthorized`.
-*   **Audio Pipeline**:
-    *   `test_pipeline.py`: Tests the execution flow of the async processing queue.
-    *   `test_interaction_ingestion.py` / `test_interaction_processing_quality.py`: Validates audio parsing, ingestion contracts, and job status transitions.
-*   **Emotion & Fusion**:
-    *   `test_emotion.py` / `test_emotion_service.py`: Evaluates proxy endpoints.
-    *   `test_emotion_fusion.py`: Validates fusion mathematics (agreement bonuses and disagreement penalties).
-*   **LLM Triggers & RAG**:
-    *   `test_llm_trigger_service.py` / `test_sop_retrieval.py`: Tests SOP step graph resolution and LLM judging logic.
-    *   `test_assistant.py`: Asserts that Text-to-SQL returns valid data and rejects non-read-only queries.
-*   **Dashboard & Infrastructure**:
-    *   `test_dashboard.py`: Evaluates cached stats generation.
-    *   `test_model_validation.py` / `test_main.py`: Checks DB schema validations and API startup health.
+- **Auth and security:** `test_auth*.py`, `test_security*.py`, `test_p0_security.py`, `test_unauthorized_access.py`, `test_error_sanitization.py`, `test_config_startup_validation.py`
+- **Tenant isolation:** `test_agents_isolation.py`, `test_*_isolation.py`, `test_assistant_tenant_guard.py`
+- **Assistant SQL guards:** `test_assistant*.py`, including the read-only DB permissions and SQL-structure validator tests
+- **Pipeline and inference:** `test_pipeline.py`, `test_interaction_*.py`, `test_inference_*.py`, `test_audio_folder_watcher.py`
+- **Emotion:** `test_emotion*.py`
+- **LLM triggers and RAG:** `test_llm_trigger_*.py`, `test_llm_circuit_breaker.py`, `test_sop_retrieval.py`
+- **Knowledge versioning:** `test_knowledge_versioning.py`
+- **App and dashboard:** `test_main.py`, `test_dashboard.py`
 
-### 1.2 Execution Command
-```bash
-make be-test
-# OR inside the backend folder:
-uv run pytest
-```
+## CI
 
----
+| Workflow | Trigger paths | Steps |
+|---|---|---|
+| `backend.yml` ("Backend CI") | `backend/**` | `ruff check`, `pytest`, `infra/scripts/eval/eval_all.py`, license audit. A pass on `main` triggers the deploy; see [DEPLOYMENT.md](../operations/DEPLOYMENT.md). |
+| `frontend.yml` | `frontend/**` | `pnpm run lint`, `pnpm run build`, Cypress against `pnpm run preview`. Vitest does not run in CI. |
+| `rag_ci.yml` | `services/rag/**` | `ruff check`, `pytest` |
+| `ci.yml` | every push/PR | Gitleaks |
 
-## 2. Frontend Test Suites
+## Caveat
 
-The frontend utilizes two verification mechanisms:
-
-### 2.1 Vitest Unit Tests
-Verifies React component rendering, state contexts, and sidebar layouts in isolation:
-*   **Path**: `frontend/src/tests/`
-*   **Command**:
-    ```bash
-    cd frontend && pnpm run test
-    ```
-
-### 2.2 Cypress End-to-End (E2E)
-Spins up a headless Chrome browser to walk through login, call reviews, AI Assistant chat, and dispute submissions.
-*   **Path**: `frontend/cypress/e2e/`
-*   **Requirement**: The frontend must be built and run in preview mode (dev server is not supported).
-*   **Command**:
-    ```bash
-    make fe-test
-    ```
-
----
-
-## 3. Ingestion & Quality Benchmarks
-
-*   **RAG Tests**: Located under `services/rag/tests/`, running pytest against Docling parsers, chunking strategies, and Qdrant retrieval queries.
-*   **Quality benchmarks**: Compares current backend audio processing results against expected gold-standard outputs.
-    *   **Command**:
-        ```bash
-        make quality-eval-all
-        ```
-    *   **Metric Report**: Generates `tools/reports/EVAL_REPORT.md` analyzing topic matching, turn ratio correctness, diarization delta, and emotion cosine similarity.
-
----
-
-## 4. SQLite vs. PostgreSQL Caveats
-
-> [!WARNING]
-> While backend unit tests execute against an in-memory SQLite database for speed, production runs utilize PostgreSQL. Some PostgreSQL-specific operations (such as JSONB fields or indexing formats) behave differently in SQLite. Always perform manual verification against a running PostgreSQL container before production deployments.
+Tests use SQLite, so Postgres-only behaviour (JSONB, partial indexes, enum types, the `vocalmind_readonly` grants) is not covered. Verify schema-sensitive changes against the compose Postgres.

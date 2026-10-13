@@ -1,51 +1,61 @@
-# Knowledge Base & Policy Management
+# Knowledge Base Management
 
-This operations guide explains how to add, ingest, and manage compliance policies, Standard Operating Procedures (SOPs), and FAQ documents within the VocalMind RAG system.
+Policies, SOPs, and KB articles exist in two places that are maintained separately:
 
----
+| Store | Written by | Read by |
+|---|---|---|
+| Qdrant (`vocalmind_parents`, `vocalmind_children`, `vocalmind_sop_parents`) | `services/rag` ingestion of PDFs under `storage/docs/{org_slug}/` | LLM trigger retrieval (SOP and policy context, claim cards) |
+| PostgreSQL (`company_policies` + `organization_policies`, `faq_articles` + `organization_faq_articles`, `knowledge_versions`) | Knowledge Base UI → `/api/v1/knowledge/*` (`backend/app/api/routes/knowledge.py`) | Policy fallback when Qdrant returns nothing, policy-violation mapping, knowledge versions |
 
-## 1. Document Directories & Paths
+SOPs and KB articles are both `faq_articles`; KB rows have a `kb:` category prefix.
 
-To ground the retrieval systems, documents are organized by tenant organization within the `storage/docs/{org_slug}/` directory:
+## Adding documents
 
-| Category | Storage Folder | Description |
-| :--- | :--- | :--- |
-| **Policies** | `policy-docs/` | Organization compliance rules (e.g. *Refund Eligibility*). checked during NLI compliance runs. |
-| **SOP Procedures** | `sop-procedures/` | Step-by-step resolution scripts (e.g. *Billing Dispute SOP*). Used to evaluate agent process adherence. |
-| **Knowledge Base** | `knowledge-base/` | General reference guides and FAQs used by the AI Assistant to synthesize responses. |
+**PDF folders** (picked up by the ingestion container's watch loop, default every 60 s, or `cd services/rag && uv run python main.py --ingest`):
 
-> [!IMPORTANT]
-> All source files added to these folders **must be in PDF format**. Other formats (such as `.txt`, `.docx`, or `.md`) will be ignored by the ingestion scanner.
+| Folder | Indexed as |
+|---|---|
+| `storage/docs/{org_slug}/policy-docs/` | `policy` |
+| `storage/docs/{org_slug}/sop-procedures/` | `sop` |
+| `storage/docs/{org_slug}/knowledge-base/` | `kb` |
 
----
+Only `.pdf` files are ingested. The folder name must equal the organization slug. Details: [INGESTION_PIPELINE.md](../rag/INGESTION_PIPELINE.md).
 
-## 2. Ingestion Workflow
+**UI uploads** (`POST /knowledge/policies/upload`, `/knowledge/faqs/upload`, `/knowledge/kb/upload` and the `PATCH …/{id}/upload` replacements) store the PDF as `{id}.pdf` in the matching folder above (roots `POLICY_DOCS_ROOT` / `KNOWLEDGE_DOCS_ROOT`) and save its text (pypdf) in the DB row, so it reaches Qdrant on the next ingestion pass. Text-only creates (`POST /knowledge/policies`, `POST /knowledge/faqs`) and `PATCH` text edits update the DB only.
 
-When new PDFs are added to the storage folders, they must be parsed and uploaded to the Qdrant vector database:
+**Toggle** (`POST …/{id}/toggle`) flips the org link's `is_active`. **Delete** removes the org link, and the row plus its PDF when no other org links it. Neither changes Qdrant: ingestion never removes points for deleted PDFs, and retrieval does not consult DB flags. To purge a document from retrieval, delete the PDF and run `main.py --ingest --force`.
 
-1.  **Add Document**: Drop the PDF file into the appropriate directory.
-2.  **Execute Ingestion**: Run the ingestion CLI in the RAG service directory:
-    ```bash
-    cd services/rag
-    python main.py --ingest
-    ```
-    This triggers the Docling parser, cleans formatting, generates embeddings via Ollama, and inserts vector points into Qdrant.
-3.  **Force Reindexing**: If a file was updated or collection schemas changed, wipe collections and re-ingest all files using the `--force` flag:
-    ```bash
-    python main.py --ingest --force
-    ```
-4.  **Verification**: Confirm that parsed markdown outputs were created in `storage/docs/{org_slug}/parsed-docs/`.
+## Knowledge versioning
 
----
+Implementation: `backend/app/core/knowledge_versioning.py`; model `KnowledgeVersion` (`knowledge_versions` table, Alembic `20260623_1200_a1b2c3d4e5f6`); UI `frontend/src/app/components/manager/KnowledgeVersions.tsx`.
 
-## 3. UI Management & Troubleshooting
+- A version is an immutable JSON snapshot of the org's **owned** policies and FAQ/KB rows (content + `is_active`) and its link rows. Exactly one version per org is active.
+- Every mutating knowledge endpoint calls `create_version` after committing (`version_number = max + 1`, previous active demoted).
+- `ensure_baseline_version` lazily creates v1 ("Initial knowledge baseline") the first time an org's active version is requested.
+- Each LLM trigger cache row is tagged with the active version number (`interaction_llm_trigger_cache.knowledge_version`). Editing knowledge does not invalidate cached analyses; interaction detail responses include `knowledgeVersion`, `activeKnowledgeVersion`, and `isStale` (`tag < active`).
 
-### 3.1 Policy & FAQ Toggles
-Managers do not need to run terminal commands to enable or disable policies:
-*   Navigate to the **Knowledge Base** screen in the Manager Portal.
-*   Toggle the rule's active switch. Disabled policies remain in the database but are excluded from active retrieval operations at runtime.
+Endpoints (manager role; others 403):
 
-### 3.2 Troubleshooting Common RAG Issues
-*   **Empty Retrievals**: Verify that the document organization slug matches the interaction's tenant slug. Check if `audio_folder_watcher.py` mapped the call to the correct org.
-*   **Connection Refused**: Asserts that Qdrant (`:6333`) and Ollama (`:11434`) containers are running and reachable.
-*   **Dimension Mismatch**: If you change the Ollama embedding model, wipe Qdrant collections completely using `--ingest --force` to prevent dimension mismatch errors.
+| Method | Path | Behaviour |
+|---|---|---|
+| GET | `/api/v1/knowledge/versions` | All versions, newest first: `id`, `versionNumber`, `summary`, `createdBy`, `createdAt`, `isActive`, `isLatest` |
+| GET | `/api/v1/knowledge/versions/active` | The active version |
+| POST | `/api/v1/knowledge/versions/{id}/activate` | `activate_version`: restore the snapshot into the live tables (upsert owned rows, delete owned rows not in the snapshot, restore link flags) and make it active. Rows owned by another org keep their content; only this org's link flags are restored. Existing analyses keep their tags. |
+| POST | `/api/v1/knowledge/versions/reprocess` | Body: `interaction_ids` or `scope: "stale"`, and `target` |
+
+Reprocess targets:
+
+- `target: "active"` (default): `reset_interaction_for_reprocess` + enqueue the full pipeline for each interaction; results are tagged with the active version.
+- `target: "original"`: for each interaction with a tag, rebuild grounding from that version's snapshot (`snapshot_to_grounding`: active policy texts → `ground_truth_policy`, active FAQ/KB answers → SOP override), re-run `evaluate_interaction_triggers` with those overrides, and persist the cache with the original tag. Only the trigger report is recomputed; scores and violations are not.
+- `scope: "stale"` selects cached interactions whose tag is below the active version. No targets → 422.
+
+## Troubleshooting
+
+- **Empty retrieval**: the `storage/docs/` folder name must match `organizations.slug`; check Qdrant points for that `org`.
+- **Ingestion cannot connect**: Qdrant `:6333` and Ollama `:11434` must be reachable; run `make ollama-pull-embed`.
+- **Dimension mismatch** after changing `EMBEDDING_MODEL`: run `main.py --ingest --force`.
+
+## Known issues
+
+- The policy/FAQ/KB CRUD endpoints (everything except `/versions*`) check only authentication, not the manager role.
+- A disabled or deleted policy can still be retrieved from Qdrant and used as NLI policy context.
