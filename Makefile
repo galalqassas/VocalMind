@@ -9,10 +9,10 @@ up: ## Start the app stack; models run on the Kaggle GPU server (services/kaggle
 	docker compose up -d
 
 up-local: ## Start the app stack plus local model containers (ollama/vad/emotion/whisperx, CPU)
-	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose --profile local-ml up -d
+	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose --profile local-ml up -d --build
 
 up-gpu: ## Same as up-local with NVIDIA GPU acceleration
-	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ml up -d
+	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ml up -d --build
 
 down: ## Stop all services
 	docker compose --profile local-ml down

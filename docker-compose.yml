@@ -46,8 +46,8 @@ services:
       - SECRET_KEY=${SECRET_KEY:-vocalmind_local_dev_secret_change_in_env}
       # false = Kaggle GPU server (default); true = local-ml profile containers
       - IS_LOCAL=${IS_LOCAL:-false}
-      - KAGGLE_SERVER_URL=${KAGGLE_SERVER_URL:-}
       - RAG_MODELS_HOST=${RAG_MODELS_HOST:-kaggle}
+      # KAGGLE_SERVER_URL comes from .env / backend/.env (the notebook also registers itself)
       - EMOTION_API_URL=http://emotion:8000
       - VAD_API_URL=http://vad:8002
       - WHISPERX_API_URL=http://whisperx:8000

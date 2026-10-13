@@ -9,21 +9,24 @@ Each call goes through VAD, ASR + alignment + diarization, acoustic emotion, tex
 
 ## Decision
 
-One FastAPI + SQLModel + Postgres backend, with the GPU-heavy stages split out as HTTP services. Docker Compose (`docker-compose.yml`) runs all of them.
+One FastAPI + SQLModel + Postgres backend, with every heavy model behind HTTP. By default the models run on the Kaggle GPU server (`services/kaggle/server.py`); the equivalent local containers are the compose profile `local-ml`. The backend itself installs no deep-learning framework.
 
 | Component | How the backend uses it |
 |---|---|
-| `services/vad` (Silero), `services/whisperx` (ASR + align + PyAnnote), `services/emotion` (FunASR emotion2vec, acoustic only) | Async HTTP. Routing is chosen by `IS_LOCAL` (compose containers, or the Kaggle server via `backend/app/core/kaggle_client.py`). |
-| Text emotion + fusion | In-process: `backend/app/core/emotion_fusion.py` |
+| Speech models: Kaggle `/full` etc., or `services/vad` (Silero), `services/whisperx` (ASR + align + PyAnnote), `services/emotion` (emotion2vec) | Async HTTP, routed by `IS_LOCAL` (`backend/app/core/kaggle_client.py`) |
+| Text emotion | HTTP `/predict_text` (Kaggle or `services/emotion`); fusion in-process in `backend/app/core/emotion_fusion.py` |
+| Embeddings, PDF parsing, reranking | Kaggle `/embed`, `/parse`, `/rerank`, or Ollama + in-process Docling/cross-encoder, routed by `RAG_MODELS_HOST` |
+| Speaker roles | In-process scikit-learn LR + TF-IDF (`backend/app/core/model.pkl`) |
 | RAG query code (`services/rag`) | Imported in-process. Bind-mounted at `/app/rag`, loaded by `backend/app/api/routes/rag.py` and `llm_trigger/service.py`. |
 | RAG ingestion | Separate container (`ingestion`) running `services/rag/main.py --watch` |
-| Qdrant, Ollama (embeddings) | Infra containers |
+| Qdrant; Ollama (`local-ml` profile) | Infra containers |
 | LLMs | External APIs: Ollama Cloud, Groq or Gemini, selected by `LLM_PROVIDER` / `ASSISTANT_LLM_PROVIDER` |
 
 ## Rationale
 
 - **Split by runtime, not domain.** Interactions, scores, policies, feedback and notifications share one lifecycle and one database. Splitting them would add cross-service joins without benefit.
-- **Isolate GPU and model crashes.** A CUDA or torch failure in WhisperX fails one HTTP call and marks the job `failed`; it does not kill the API.
+- **Isolate GPU and model crashes.** A CUDA or torch failure in a model server fails one HTTP call and marks the job `failed`; it does not kill the API.
+- **Keep the app stack small.** With models on Kaggle, the default compose stack needs no GPU and no model downloads.
 - **Scale independently.** Model services can scale without scaling the API, and vice versa.
 
 ## Trade-offs accepted
@@ -38,8 +41,8 @@ One FastAPI + SQLModel + Postgres backend, with the GPU-heavy stages split out a
 
 | Failure | Handling |
 |---|---|
-| Transient LLM error (rate limit, timeout) | `_invoke_chain_with_retry` in `llm_trigger/chains.py`: 3 attempts with exponential backoff, then the deterministic fallback verdict |
-| WhisperX / VAD / emotion down | The stage fails, and `processing_jobs` errors appear in the Session Inspector. Retry with **Reprocess**. |
+| Transient LLM error (rate limit, timeout) | `_invoke_chain_with_retry` in `llm_trigger/chains.py`: 3 attempts with exponential backoff, then the `reasoning` stage fails (no fallback verdict) |
+| Kaggle server or local model services down | The stage fails, downstream stages are marked `Not run`, no score is written, and the errors appear in the Session Inspector. Retry with **Reprocess**. |
 | Qdrant empty or down | `llm_trigger/retrieval.py` falls back to manual org files under `storage/docs/` |
 | Backend restart mid-job | On startup, `_enqueue_pending_interactions_backlog()` resets `processing` interactions to `pending` and re-enqueues every pending one |
 

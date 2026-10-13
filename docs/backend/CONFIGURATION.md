@@ -16,16 +16,18 @@ Values that differ by layer:
 
 | Setting | `config.py` | Compose / example files |
 |---|---|---|
-| `IS_LOCAL` | `True` | compose hardcodes `true`; `backend/.env.example` sets `false` (intended for native dev) |
+| `IS_LOCAL` | `True` | compose `${IS_LOCAL:-false}`; both `.env.example` files set `false` |
+| `RAG_MODELS_HOST` | `local` | compose `${RAG_MODELS_HOST:-kaggle}` (backend and ingestion); both `.env.example` files set `kaggle` |
 | `LLM_PROVIDER` | `groq` | compose `${LLM_PROVIDER:-ollama_cloud}` |
 | `ASSISTANT_LLM_PROVIDER` | `auto` | compose `${ASSISTANT_LLM_PROVIDER:-ollama_cloud}` |
-| `TEXT_EMOTION_PROVIDER` | `rule_based` | compose `${TEXT_EMOTION_PROVIDER:-hf_transformers}` |
 | `AUDIO_FOLDER_WATCHER_ENABLED` | `False` | `true` in `backend/.env.example` |
 | `SOP_RETRIEVAL_TOP_K` | `4` | compose `${SOP_RETRIEVAL_TOP_K:-3}` |
 
+Under compose, set `IS_LOCAL` and `RAG_MODELS_HOST` in the root `.env` (or the shell): the backend's `environment:` block overrides their `backend/.env` values. Put `KAGGLE_SERVER_URL` in the root `.env`: the backend reads it through `env_file` (`backend/.env` wins), while the `ingestion` container has no `env_file` and gets it only by interpolation from the root `.env` or shell.
+
 A few variables are read with `os.getenv` instead of `Settings`, so pydantic never loads them from `backend/.env`. Under compose they arrive through `env_file`; natively you must export them in the shell: `EMOTION_MIN_SEGMENT_SECS` (default 1.0), `LLM_TRIGGER_EVAL_TIMEOUT_SECONDS` (600), `DB_POOL_SIZE` (15), `DB_MAX_OVERFLOW` (20), `SQLALCHEMY_ECHO`.
 
-Startup check (`validate_startup_settings`): the backend refuses to start if `SECRET_KEY` is still the placeholder, if `LLM_PROVIDER=groq` has no `GROQ_API_KEY`, or if `LLM_PROVIDER=ollama_cloud` has no `OLLAMA_CLOUD_API_KEY`/`OLLAMA_API_KEY`. A missing `HF_TOKEN` only logs a warning (diarization is disabled).
+Startup check (`validate_startup_settings`): the backend refuses to start if `SECRET_KEY` is still the placeholder, if `LLM_PROVIDER=groq` has no `GROQ_API_KEY`, or if `LLM_PROVIDER=ollama_cloud` has no `OLLAMA_CLOUD_API_KEY`/`OLLAMA_API_KEY`. A missing `HF_TOKEN` only logs a warning.
 
 ## Core and auth
 
@@ -47,14 +49,17 @@ Startup check (`validate_startup_settings`): the backend refuses to start if `SE
 
 ## Inference routing
 
+Where each model runs: [SYSTEM_OVERVIEW.md](../architecture/SYSTEM_OVERVIEW.md#where-models-run). Kaggle server API and setup: [services/kaggle/README.md](../../services/kaggle/README.md).
+
 | Variable | Default | Notes |
 |---|---|---|
-| `IS_LOCAL` | `True` | `true`: call the `vad`/`emotion`/`whisperx` containers. `false`: call the Kaggle server (`backend/app/core/kaggle_client.py`). |
-| `VAD_API_URL` / `EMOTION_API_URL` / `WHISPERX_API_URL` | `localhost:8002` / `:8001` / `:8003` | Compose points these at the service names |
-| `KAGGLE_SERVER_URL` (fallback `KAGGLE_NGROK_URL`) | empty | ngrok URL of the Kaggle notebook |
-| `HF_TOKEN` | empty | Needed for pyannote diarization |
+| `IS_LOCAL` | `True` | `false`: speech and text emotion go to the Kaggle server (`backend/app/core/kaggle_client.py`, `emotion_fusion.py`). `true`: the `local-ml` containers `vad`/`emotion`/`whisperx`. |
+| `RAG_MODELS_HOST` | `local` | `kaggle`: query embeddings via Kaggle `/embed` (`resolve_embedding_base_url`). `local`: Ollama (`OLLAMA_BASE_URL`) or Ollama Cloud. Re-ingest after switching. |
+| `KAGGLE_SERVER_URL` (fallback `KAGGLE_NGROK_URL`) | empty | ngrok URL of the Kaggle notebook. Required when `IS_LOCAL=false` or `RAG_MODELS_HOST=kaggle`. |
+| `VAD_API_URL` / `EMOTION_API_URL` / `WHISPERX_API_URL` | `localhost:8002` / `:8001` / `:8003` | Used when `IS_LOCAL=true`; compose points them at the service names |
+| `HF_TOKEN` | empty | pyannote diarization in the local `whisperx` container (the Kaggle notebook reads its own `HF_TOKEN` secret) |
 
-**Kaggle mode.** With `IS_LOCAL=false`, all speech inference goes to a remote Kaggle notebook exposed through ngrok. The client adds the `ngrok-skip-browser-warning` header. This is the recommended mode for native dev because no ML models are downloaded locally, which is why `backend/.env.example` sets `IS_LOCAL=false`. The notebook API is documented in `infra/fixtures/kaggle/README.md`. `POST /api/v1/internal/set-kaggle-url` swaps the URL and forces `IS_LOCAL=false` at runtime (in memory only).
+All Kaggle requests carry `ngrok-skip-browser-warning: true`. `POST /api/v1/internal/set-kaggle-url` (called by the notebook on start) swaps `KAGGLE_SERVER_URL` and forces `IS_LOCAL=false` at runtime, in memory only; it does not reach the `ingestion` container, which reads `KAGGLE_SERVER_URL` from its environment.
 
 ## Audio storage
 
@@ -84,20 +89,19 @@ The supported providers are **`ollama_cloud`** (free Ollama Cloud models; the co
 
 Duplicate override names: `get_model_for_stage` in `backend/app/llm_trigger/chains.py` checks `OLLAMA_MODEL_EMOTION_SHIFT` / `_PROCESS_ADHERENCE` / `_NLI_POLICY` first. Only when those are empty does it fall back to the legacy `OLLAMA_EMOTION_SHIFT_MODEL` / `OLLAMA_PROCESS_ADHERENCE_MODEL` / `OLLAMA_NLI_MODEL`, and then to the heavy/fast default.
 
-## RAG and text emotion
+## RAG
 
 | Variable | Default | Notes |
 |---|---|---|
 | `QDRANT_URL` | `http://localhost:6333` | |
 | `QDRANT_COLLECTION_PARENTS` / `QDRANT_COLLECTION_SOP_PARENTS` | `vocalmind_parents` / `vocalmind_sop_parents` | The backend reads only these two collections |
-| `OLLAMA_BASE_URL` / `EMBEDDING_MODEL` | `http://localhost:11434` / `snowflake-arctic-embed2` | Query embeddings |
+| `OLLAMA_BASE_URL` / `EMBEDDING_MODEL` | `http://localhost:11434` / `snowflake-arctic-embed2` | Query embeddings when `RAG_MODELS_HOST=local` |
 | `OLLAMA_CLOUD_EMBED_ENABLED` | `False` | Embed through Ollama Cloud instead |
 | `SOP_RETRIEVAL_TOP_K` | `4` | |
 | `RAG_SUPPORTED_THRESHOLD` / `RAG_NEUTRAL_THRESHOLD` | `0.82` / `0.55` | Used by `routes/rag.py` |
 | `POLICY_DOCS_ROOT`, `SOP_DOCS_ROOT`, `KNOWLEDGE_DOCS_ROOT`, `SOP_PARSED_DOCS_ROOT` | `<cwd>/storage/docs` | Knowledge file roots |
-| `TEXT_EMOTION_PROVIDER` | `rule_based` | `hf_transformers` calls `/predict_text` on the emotion service (or Kaggle when `IS_LOCAL=false`) and falls back to rule-based for the rest of the process on any error |
 
-Defined in `Settings` but unused by any code: `OPENAI_API_KEY`, `SOP_MAX_CHUNKS`, `POLICY_PARSED_DOCS_ROOT`, `TEXT_EMOTION_MODEL` (the model name is hardcoded in `services/emotion/app.py`). `SUPABASE_DB_URL` is read only by `backend/scripts/verify_supabase_schema.py`.
+Defined in `Settings` but unused by any code: `OPENAI_API_KEY`, `SOP_MAX_CHUNKS`, `POLICY_PARSED_DOCS_ROOT`. `SUPABASE_DB_URL` is read only by `backend/scripts/verify_supabase_schema.py`.
 
 ## Service-only variables (not in backend `Settings`)
 
@@ -105,4 +109,4 @@ Defined in `Settings` but unused by any code: `OPENAI_API_KEY`, `SOP_MAX_CHUNKS`
 |---|---|
 | whisperx (`services/whisperx/app.py`) | `HF_TOKEN`, `WHISPER_MODEL_SIZE` (`large-v2`; compose `tiny`, GPU overlay `large-v3`), `WHISPER_BATCH_SIZE` (8), `WHISPER_COMPUTE_TYPE` (`float16` on CUDA, `int8` on CPU), `STRICT_DIARIZATION` (false), `CHANNEL_DIARIZATION_ENABLED` (true), `CHANNEL_DIARIZATION_MAX_CORR` (0.92), `AGENT_CHANNEL`, `DIARIZATION_NUM_SPEAKERS` (2), `DIARIZATION_MIN_SPEAKERS` / `DIARIZATION_MAX_SPEAKERS` |
 | emotion (`services/emotion/app.py`) | `EMOTION_MAX_AUDIO_SECONDS` (30) |
-| ingestion (`services/rag/config.py`) | `QDRANT_COLLECTION_CHILDREN` (`vocalmind_children`), `EMBEDDING_DIMENSION` (1024), `DOCS_DIR` / `POLICY_DOCS_DIR` / `KNOWLEDGE_DOCS_DIR` / `PARSED_*_DIR`, `RERANK_ENABLED` / `RERANK_MODEL`, `HYDE_ENABLED`, plus the same `LLM_PROVIDER` / `OLLAMA_*` names as the backend |
+| ingestion (`services/rag/config.py`) | `RAG_MODELS_HOST` / `KAGGLE_SERVER_URL` (Settings default `local`), `QDRANT_COLLECTION_CHILDREN` (`vocalmind_children`), `EMBEDDING_DIMENSION` (1024), `DOCS_DIR` / `POLICY_DOCS_DIR` / `KNOWLEDGE_DOCS_DIR` / `PARSED_*_DIR`, `RERANK_ENABLED` / `RERANK_MODEL`, `HYDE_ENABLED`, plus the same `LLM_PROVIDER` / `OLLAMA_*` names as the backend |

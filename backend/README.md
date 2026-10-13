@@ -10,9 +10,9 @@ uv sync
 uv run uvicorn app.main:app --reload --port 8000   # same as `make be-dev`
 ```
 
-The default `.env` expects Postgres on `localhost:5434`, Qdrant on `:6333` and Ollama on `:11434`. Start them with `docker compose up -d db qdrant ollama`.
+The default `.env` expects Postgres on `localhost:5434` and Qdrant on `:6333`; start them with `make support-up`.
 
-`.env.example` sets `IS_LOCAL=false`, which sends inference to the Kaggle server so no ML models have to be downloaded locally. To use local containers instead, run `make support-up` and set `IS_LOCAL=true`. Settings and how they are layered: [docs/backend/CONFIGURATION.md](../docs/backend/CONFIGURATION.md).
+`.env.example` sets `IS_LOCAL=false` and `RAG_MODELS_HOST=kaggle`, so every model (speech, text emotion, embeddings) runs on the Kaggle GPU server at `KAGGLE_SERVER_URL` ([services/kaggle/README.md](../services/kaggle/README.md)) and nothing is downloaded locally. The backend installs no deep-learning frameworks; its only local model is the speaker-role classifier. To run models locally instead, `make support-up-local` (adds Ollama, VAD, Emotion, WhisperX), `make ollama-pull-embed`, set `IS_LOCAL=true` and `RAG_MODELS_HOST=local`, and re-ingest the docs. If a model or LLM is unreachable, processing fails that stage (no fallback); reprocess once it is back. Settings and how they are layered: [docs/backend/CONFIGURATION.md](../docs/backend/CONFIGURATION.md).
 
 ## Test and lint
 

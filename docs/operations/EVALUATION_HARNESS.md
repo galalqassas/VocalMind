@@ -37,4 +37,4 @@ Logs in as the org manager, optionally reprocesses selected calls, fetches the f
 
 ## Rate limits
 
-Each processed call runs three LLM chains. `_invoke_chain_with_retry` in `backend/app/llm_trigger/chains.py` makes up to 3 attempts on transient errors (rate limit, timeout, connection), with exponential backoff between them. If the provider stays rate-limited, the trigger stage falls back to its deterministic heuristics, which skews scores, so check the backend logs before trusting a run.
+Each processed call makes about six LLM calls (ASR gibberish gate, topic classification, three trigger chains, the policy-compliance judge). `_invoke_chain_with_retry` in `backend/app/llm_trigger/chains.py` makes up to 3 attempts on transient errors (rate limit, timeout, connection), with exponential backoff between them. If the provider stays rate-limited, the `reasoning` stage fails and the call has no scores; check `processing_jobs` for failed stages and reprocess before trusting a run.

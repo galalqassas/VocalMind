@@ -44,9 +44,9 @@ Agents only see their own interactions (`_interaction_scope_filters`); managers 
 | POST | `/interactions` | user | Multipart audio upload; creates the interaction and enqueues processing |
 | POST | `/interactions/from-storage` | user | Create an interaction from an existing Supabase Storage object |
 | GET | `/interactions` | user | List interactions with agent name and scores |
-| GET | `/interactions/{interaction_id}` | user | Detail: utterances, emotion events, triggers, explainability, `scores` |
+| GET | `/interactions/{interaction_id}` | user | Detail: utterances, emotion events, triggers, explainability, `scores`. When the text-emotion model is unavailable, per-utterance text/fused fields and `emotionComparison` are `null`. |
 | GET | `/interactions/{interaction_id}/processing-status` | user | Per-stage `ProcessingJob` status |
-| GET | `/interactions/{interaction_id}/emotion-comparison` | user | Acoustic vs text vs fused emotion comparison |
+| GET | `/interactions/{interaction_id}/emotion-comparison` | user | Acoustic vs text vs fused emotion comparison; 503 when the text-emotion model is unavailable |
 | GET | `/interactions/{interaction_id}/audio` | user | Stream audio (local FS or Supabase Storage) |
 | POST | `/interactions/{interaction_id}/reprocess` | user | Reset and re-run the pipeline (`?force=`, `?priority=`) |
 | DELETE | `/interactions/{interaction_id}` | user | Delete the interaction and all dependent rows |
@@ -130,17 +130,19 @@ Agents only see their own interactions (`_interaction_scope_filters`); managers 
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/llm-trigger/health` | public | Qdrant / Ollama dependency check |
+| GET | `/llm-trigger/health` | public | Qdrant and embedding-host check (Kaggle `/health`, Ollama Cloud, or local Ollama); only Qdrant affects `status` |
 | POST | `/llm-trigger/emotion-shift` | public | Run the emotion-shift chain on ad-hoc text |
 | POST | `/llm-trigger/process-adherence` | public | Run the SOP adherence chain on an ad-hoc transcript |
 | POST | `/llm-trigger/nli-policy-check` | public | Run single-claim NLI against a policy text |
 | POST | `/llm-trigger/interaction/{interaction_id}/run` | user | Run all trigger checks for one org-scoped interaction |
 
+The four run endpoints return 503 when an LLM or the text-emotion model is unavailable (no heuristic fallback).
+
 ## `/rag` — `routes/rag.py`
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/rag/health` | public | Qdrant / Ollama dependency check |
+| GET | `/rag/health` | public | Qdrant / local Ollama dependency check |
 | POST | `/rag/query` | user | Org-filtered retrieval with provenance |
 
 ## Inference passthroughs — `routes/{vad,transcription,diarization,emotion,full}/router.py`
@@ -152,9 +154,9 @@ These call the local microservices, or Kaggle when `IS_LOCAL=false`. `*-local` v
 | POST | `/vad/analyze`, `/vad/analyze-local` | public | Silero VAD segments |
 | POST | `/transcription/analyze`, `/transcription/analyze-local` | public | WhisperX transcription |
 | POST | `/diarization/analyze`, `/diarization/analyze-local` | public | Speaker diarization |
-| POST | `/full/analyze`, `/full/analyze-local` | public | VAD → ASR → emotion in one call |
+| POST | `/full/analyze`, `/full/analyze-local` | public | ASR + diarization + per-segment emotion in one call (Kaggle `/full`, or WhisperX + Emotion) |
 | POST | `/emotion/analyze`, `/emotion/analyze-local` | public | Dominant acoustic emotion for a clip |
-| POST | `/emotion/fuse` | public | Fuse text and acoustic emotion |
+| POST | `/emotion/fuse` | public | Fuse text and acoustic emotion; 503 when the text-emotion model is unavailable |
 | POST | `/emotion/process` | public | VAD split → transcribe → per-segment emotion |
 
 ## `/internal` — `routes/internal.py`

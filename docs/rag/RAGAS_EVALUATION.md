@@ -16,7 +16,7 @@ Testset format: `{"samples": [{"user_input": "...", "reference": "..."}, ...]}`;
 
 ## Prerequisites
 
-1. Qdrant and Ollama running (`make support-up`) with `snowflake-arctic-embed2` pulled (`make ollama-pull-embed`).
+1. Qdrant running (`make support-up`) and the embedding host used at ingest: the Kaggle server (`RAG_MODELS_HOST=kaggle`, `KAGGLE_SERVER_URL`) or Ollama (`make support-up-local` + `make ollama-pull-embed`).
 2. Documents ingested: `cd services/rag && uv run python main.py --ingest`.
 3. A synthesis LLM: Groq key, `LLM_PROVIDER=ollama_cloud` + Ollama Cloud key, or `SYNTHESIS_BASE_URL` (see [RAG_OVERVIEW.md](RAG_OVERVIEW.md#retrieval-paths)).
 4. A judge LLM (below).
@@ -29,7 +29,7 @@ Testset format: `{"samples": [{"user_input": "...", "reference": "..."}, ...]}`;
 - `groq`: `llama-3.3-70b-versatile`, `max_tokens=2048`.
 - `vertex`: Vertex AI OpenAI-compatible endpoint using service account `VERTEX_SA_FILE`, `VERTEX_LOCATION`, model `RAGAS_JUDGE_MODEL`, `max_tokens=8192`.
 
-RAGAS embeddings use the same Ollama embedding model (`_OllamaEmbeddings`). `RunConfig(max_workers=2, timeout=180)` limits concurrency for rate-limited providers.
+RAGAS embeddings use the same embedding host as retrieval (`_OllamaEmbeddings`, which calls Kaggle `/embed` when `RAG_MODELS_HOST=kaggle`). `RunConfig(max_workers=2, timeout=180)` limits concurrency for rate-limited providers.
 
 Synthesis knobs that move the scores: `SYNTHESIS_PROMPT_MODE` (`safe` admits missing context; `assertive` never hedges and scores higher on AnswerRelevancy), `RERANK_ENABLED`, `RERANK_CANDIDATE_K`, `similarity_top_k`, `HYDE_ENABLED`.
 
