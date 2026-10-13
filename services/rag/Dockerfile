@@ -1,6 +1,7 @@
 # ── VocalMind Final RAG — Ingestion Container ────────────────────────────────
-# Docling (AI-powered PDF → Markdown) + Ollama embeddings + Qdrant vector store.
-# First build takes 5-10 min — Docling downloads PyTorch CPU + AI model weights.
+# Qdrant ingestion; embeddings/parsing/reranking run on Ollama + in-process
+# models (RAG_MODELS_HOST=local) or on the Kaggle GPU server (=kaggle).
+# RAG_LOCAL_MODELS=true installs Docling + cross-encoder (PyTorch CPU, 5-10 min).
 
 # Builder stage keeps toolchain isolated from runtime image.
 # pinned: python:3.11-slim (2026-06-16)
@@ -18,9 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies into an isolated virtualenv for copy-to-runtime
 COPY pyproject.toml .
+ARG RAG_LOCAL_MODELS=false
 ENV PIP_DEFAULT_TIMEOUT=300
 RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --retries 10 .
+    && if [ "$RAG_LOCAL_MODELS" = "true" ]; then target=".[local-models]"; else target="."; fi \
+    && /opt/venv/bin/pip install --no-cache-dir --retries 10 "$target"
 
 
 # Runtime stage excludes build tooling like gcc.
@@ -39,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 
 # Copy all application code
-COPY config.py ingest.py query_engine.py evaluator.py main.py __init__.py llm_circuit_breaker.py ./
+COPY config.py ingest.py query_engine.py reranker.py evaluator.py main.py __init__.py llm_circuit_breaker.py prompt_safety.py ./
 
 # Directories used at runtime
 RUN mkdir -p /app/storage/docs /app/logs /app/reports

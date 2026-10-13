@@ -13,6 +13,7 @@ from app.llm_trigger.schemas import (
     ProcessAdherenceReport,
 )
 from app.llm_trigger.service import (
+    LLMUnavailableError,
     analyze_emotion_shift,
     evaluate_interaction_triggers,
     evaluate_process_adherence,
@@ -21,6 +22,19 @@ from app.llm_trigger.service import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE = {503: {"description": "LLM unavailable — no heuristic fallback; retry later"}}
+
+
+async def _llm_or_503(coro):
+    try:
+        return await coro
+    except LLMUnavailableError as exc:
+        logger.warning("LLM trigger request failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="The LLM reasoning service is unavailable; this analysis cannot run right now. Retry later.",
+        ) from exc
 
 
 class EmotionShiftRequest(BaseModel):
@@ -85,7 +99,22 @@ async def llm_trigger_health():
         checks["qdrant"] = "error"
 
     # Embeddings health check
-    if settings.OLLAMA_CLOUD_EMBED_ENABLED:
+    if settings.RAG_MODELS_HOST == "kaggle":
+        try:
+            import httpx
+
+            from app.core.config import embedding_request_headers, resolve_embedding_base_url
+
+            response = httpx.get(
+                f"{resolve_embedding_base_url()}/health",
+                headers=embedding_request_headers(),
+                timeout=5.0,
+            )
+            checks["embeddings"] = "ok" if response.status_code == 200 else f"status:{response.status_code}"
+        except Exception:
+            logger.warning("LLM trigger health kaggle embedding check failed", exc_info=True)
+            checks["embeddings"] = "error"
+    elif settings.OLLAMA_CLOUD_EMBED_ENABLED:
         try:
             import httpx
 
@@ -112,7 +141,7 @@ async def llm_trigger_health():
             logger.warning("LLM trigger health ollama check failed", exc_info=True)
             checks["ollama"] = "error"
 
-    critical = {k: v for k, v in checks.items() if k != "ollama"}
+    critical = {k: v for k, v in checks.items() if k not in {"ollama", "embeddings"}}
     overall = "ok" if all(v == "ok" for v in critical.values()) else "degraded"
     return {"status": overall, "dependencies": checks}
 
@@ -121,57 +150,57 @@ async def llm_trigger_health():
     "/emotion-shift",
     response_model=EmotionShiftAnalysis,
     summary="Cross-Modal Dissonance and Counterfactual Analysis",
-    responses={422: {"description": "Invalid input payload"}}
+    responses={422: {"description": "Invalid input payload"}, **_UNAVAILABLE},
 )
 async def emotion_shift_endpoint(payload: EmotionShiftRequest) -> EmotionShiftAnalysis:
     """
     Analyze customer speech vs text discrepancy to check for cross-modal dissonance (e.g. sarcasm, passive-aggression).
     """
-    return await analyze_emotion_shift(
+    return await _llm_or_503(analyze_emotion_shift(
         agent_context=payload.agent_context,
         customer_text=payload.customer_text,
         acoustic_emotion=payload.acoustic_emotion,
-    )
+    ))
 
 
 @router.post(
     "/process-adherence",
     response_model=ProcessAdherenceReport,
     summary="Topic Detection and SOP Process Adherence",
-    responses={422: {"description": "Invalid input payload"}}
+    responses={422: {"description": "Invalid input payload"}, **_UNAVAILABLE},
 )
 async def process_adherence_endpoint(payload: ProcessAdherenceRequest) -> ProcessAdherenceReport:
     """
     Evaluate transcript compliance against the expected Standard Operating Procedure (SOP) steps.
     """
-    return await evaluate_process_adherence(
+    return await _llm_or_503(evaluate_process_adherence(
         transcript_text=payload.transcript_text,
         retrieved_sop_from_pinecone=payload.retrieved_sop_from_pinecone,
         org_filter=payload.org_filter,
-    )
+    ))
 
 
 @router.post(
     "/nli-policy-check",
     response_model=NLIEvaluation,
     summary="Single-Claim NLI Policy Alignment Check",
-    responses={422: {"description": "Invalid input payload"}}
+    responses={422: {"description": "Invalid input payload"}, **_UNAVAILABLE},
 )
 async def nli_policy_check_endpoint(payload: NLIPolicyCheckRequest) -> NLIEvaluation:
     """
     Run Natural Language Inference (NLI) to check if an agent statement contradicts the company policy document.
     """
-    return await run_nli_policy_check(
+    return await _llm_or_503(run_nli_policy_check(
         agent_statement=payload.agent_statement,
         ground_truth_policy=payload.ground_truth_policy,
-    )
+    ))
 
 
 @router.post(
     "/interaction/{interaction_id}/run",
     response_model=InteractionLLMTriggerReport,
     summary="Run all LLM trigger checks for one interaction",
-    responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - credentials invalid or cross-organization violation"}, 404: {"description": "Interaction not found"}, 422: {"description": "Invalid interaction ID or request payload"}}
+    responses={401: {"description": "Not authenticated"}, 403: {"description": "Access denied - credentials invalid or cross-organization violation"}, 404: {"description": "Interaction not found"}, 422: {"description": "Invalid interaction ID or request payload"}, **_UNAVAILABLE},
 )
 async def run_interaction_trigger_endpoint(
     interaction_id: UUID = Path(..., description="The unique UUID of the interaction to run LLM trigger checks on."),
@@ -183,7 +212,7 @@ async def run_interaction_trigger_endpoint(
     Execute the full suite of compliance and trigger checks for a specific interaction.
     """
     try:
-        return await evaluate_interaction_triggers(
+        return await _llm_or_503(evaluate_interaction_triggers(
             session=session,
             interaction_id=interaction_id,
             retrieved_sop_from_pinecone=payload.retrieved_sop_from_pinecone if payload else "",
@@ -192,7 +221,7 @@ async def run_interaction_trigger_endpoint(
             requester_organization_id=current_user.organization_id,
             force_rerun=payload.force_rerun if payload else False,
             commit_cache=True,
-        )
+        ))
     except ValueError as exc:
         message = str(exc)
         if message == "Interaction not found.":

@@ -27,7 +27,7 @@ from app.core.audio_resolver import (
     fetch_audio_bytes,
     supabase_object_exists,
 )
-from app.core.emotion_fusion import fuse_emotion_signals
+from app.core.emotion_fusion import EmotionFusionResult, TextEmotionUnavailable, fuse_emotion_signals
 from app.core.score_utils import to_percentage
 from pathlib import Path
 from app.core.inference_contracts import is_supported_audio_filename
@@ -380,7 +380,7 @@ class InteractionDetailResponse(APIModel):
     interaction: InteractionDetailSummaryResponse
     scores: InteractionScoresResponse
     utterances: list[UtteranceResponse]
-    emotionComparison: EmotionComparisonResponse
+    emotionComparison: EmotionComparisonResponse | None = None
     ragCompliance: RagComplianceReportResponse | None = None
     emotionTriggers: EmotionTriggerReportResponse | None = None
     llmTriggers: LLMTriggerReportResponse | None = None
@@ -859,17 +859,28 @@ def _compact_distribution(labels: list[str]) -> list[dict[str, float | int | str
     return rows
 
 
-def _build_emotion_comparison_payload(utterances_rows: list[Utterance]) -> dict:
-    fused_pairs: list[tuple[str, str, str]] = []
-    for u in utterances_rows:
-        acoustic_emotion = u.emotion or "neutral"
-        fused = fuse_emotion_signals(
-            text=u.text or "",
-            acoustic_emotion=acoustic_emotion,
-            acoustic_confidence=u.emotion_confidence or 0.0,
-        )
-        fused_pairs.append((acoustic_emotion, fused.text_emotion, fused.emotion))
-    return _build_emotion_comparison_from_labels(fused_pairs)
+def _fuse_utterance_emotions(utterances_rows: list[Utterance]) -> list[EmotionFusionResult] | None:
+    """Text+acoustic fusion per utterance; None when the text emotion model is unavailable."""
+    try:
+        return [
+            fuse_emotion_signals(
+                text=u.text or "",
+                acoustic_emotion=u.emotion or "unknown",
+                acoustic_confidence=u.emotion_confidence or 0.0,
+            )
+            for u in utterances_rows
+        ]
+    except TextEmotionUnavailable:
+        return None
+
+
+def _build_emotion_comparison_payload(utterances_rows: list[Utterance]) -> dict | None:
+    fused_rows = _fuse_utterance_emotions(utterances_rows)
+    if fused_rows is None:
+        return None
+    return _build_emotion_comparison_from_labels(
+        [(u.emotion or "unknown", fused.text_emotion, fused.emotion) for u, fused in zip(utterances_rows, fused_rows)]
+    )
 
 
 def _build_emotion_comparison_from_labels(fused_pairs: list[tuple[str, str, str]]) -> dict:
@@ -1342,16 +1353,14 @@ async def get_interaction_detail(
     utterances_rows = utt_result.all()
 
     utterances = []
+    fused_rows = _fuse_utterance_emotions(utterances_rows)
     fused_pairs: list[tuple[str, str, str]] = []
-    for u in utterances_rows:
-        acoustic_emotion = u.emotion or "neutral"
+    for index, u in enumerate(utterances_rows):
+        acoustic_emotion = u.emotion or "unknown"
         acoustic_confidence = u.emotion_confidence or 0.0
-        fused = fuse_emotion_signals(
-            text=u.text or "",
-            acoustic_emotion=acoustic_emotion,
-            acoustic_confidence=acoustic_confidence,
-        )
-        fused_pairs.append((acoustic_emotion, fused.text_emotion, fused.emotion))
+        fused = fused_rows[index] if fused_rows is not None else None
+        if fused:
+            fused_pairs.append((acoustic_emotion, fused.text_emotion, fused.emotion))
         utterances.append(
             {
                 "id": str(u.id),
@@ -1364,11 +1373,11 @@ async def get_interaction_detail(
                 "timestamp": f"{int(u.start_time_seconds) // 60:02d}:{int(u.start_time_seconds) % 60:02d}",
                 "emotion": acoustic_emotion,
                 "confidence": acoustic_confidence,
-                "textEmotion": fused.text_emotion,
-                "textConfidence": fused.text_confidence,
-                "fusedEmotion": fused.emotion,
-                "fusedConfidence": fused.confidence,
-                "fusionModel": fused.model,
+                "textEmotion": fused.text_emotion if fused else None,
+                "textConfidence": fused.text_confidence if fused else None,
+                "fusedEmotion": fused.emotion if fused else None,
+                "fusedConfidence": fused.confidence if fused else None,
+                "fusionModel": fused.model if fused else None,
             }
         )
 
@@ -1442,12 +1451,14 @@ async def get_interaction_detail(
         for v in viol_rows
     ]
 
-    emotion_comparison = _build_emotion_comparison_from_labels(fused_pairs)
-    emotion_comparison["evidence"] = _build_evidence_payload(
-        utterances_rows=utterances_rows,
-        events_rows=events_rows,
-        viol_rows=viol_rows,
-    )
+    emotion_comparison = None
+    if fused_rows is not None:
+        emotion_comparison = _build_emotion_comparison_from_labels(fused_pairs)
+        emotion_comparison["evidence"] = _build_evidence_payload(
+            utterances_rows=utterances_rows,
+            events_rows=events_rows,
+            viol_rows=viol_rows,
+        )
 
     llm_triggers = None
     emotion_triggers = None
@@ -1571,7 +1582,8 @@ async def get_interaction_detail(
         401: {"description": "Not authenticated"},
         403: {"description": "Access denied - unauthorized organization access"},
         404: {"description": "Interaction not found"},
-        422: {"description": "Invalid UUID format"}
+        422: {"description": "Invalid UUID format"},
+        503: {"description": "Text emotion model unavailable"}
     }
 )
 async def get_interaction_emotion_comparison(
@@ -1601,6 +1613,8 @@ async def get_interaction_emotion_comparison(
     utterances_rows = utt_result.all()
 
     payload = _build_emotion_comparison_payload(utterances_rows)
+    if payload is None:
+        raise HTTPException(status_code=503, detail="Text emotion model unavailable.")
     payload["interactionId"] = str(interaction_id)
     return payload
 

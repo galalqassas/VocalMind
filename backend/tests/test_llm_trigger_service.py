@@ -4,20 +4,24 @@ from unittest.mock import patch
 import pytest
 
 from app.llm_trigger.retrieval import RetrievedChunk
-from app.llm_trigger.schemas import EmotionShiftAnalysis, NLIEvaluation, ProcessAdherenceReport
+from app.llm_trigger.prompt_constants import RESOLUTION_GRAPHS, UNKNOWN_TOPIC
+from app.llm_trigger.schemas import (
+    EmotionShiftAnalysis,
+    NLIEvaluation,
+    ProcessAdherenceReport,
+    TopicClassification,
+)
 from app.llm_trigger.service import (
+    LLMUnavailableError,
     _build_policy_reference_from_chunk,
     _build_emotion_transition_attributions,
     _build_rolling_windows,
-    _detect_cross_modal_dissonance,
-    _detect_topic,
     _detect_topic_from_sop_chunks,
     _derive_llm_inputs,
     _quote_anchored_in_policy,
     _render_window_bundle,
-    _trajectory_missing_steps,
-    _window_citations,
     analyze_emotion_shift,
+    classify_topic,
     evaluate_process_adherence,
     run_single_claim_nli_policy_check,
 )
@@ -31,9 +35,20 @@ class _FakeProcessChain:
             is_resolved=True,
             efficiency_score=8,
             justification="Agent completed key verification steps but skipped the refund confirmation closeout.",
-            missing_sop_steps=["Confirm refund method and timeline"],
+            missing_sop_steps=["confirm_refund_method_and_timeline"],
+            evidence_quotes=["I checked your order and policy window."],
             confidence_score=0.95,
         )
+
+
+class _FakeTopicChain:
+    def __init__(self, topic):
+        self.topic = topic
+        self.calls = 0
+
+    async def ainvoke(self, _payload):
+        self.calls += 1
+        return TopicClassification(topic=self.topic)
 
 
 class _FailingProcessChain:
@@ -83,10 +98,7 @@ async def test_analyze_emotion_shift_runs_llm_for_agent_friction_on_calm_custome
         "customer: I am just trying to understand my bill.\n"
         "agent: I already explained this, there is nothing more to do."
     )
-    with (
-        patch("app.llm_trigger.service.infer_text_emotion_with_provider", return_value=("neutral", 0.5)),
-        patch("app.llm_trigger.service.build_emotion_shift_chain", return_value=_FakeEmotionChain()) as mock_builder,
-    ):
+    with patch("app.llm_trigger.service.build_emotion_shift_chain", return_value=_FakeEmotionChain()) as mock_builder:
         result = await analyze_emotion_shift(
             agent_context="Agent context",
             customer_text="I am just trying to understand my bill.",
@@ -120,10 +132,7 @@ async def test_analyze_emotion_shift_downgrades_ungrounded_friction():
         "customer: I am really upset about this whole situation.\n"
         "agent: I understand, let me pull up your account and sort this out."
     )
-    with (
-        patch("app.llm_trigger.service.infer_text_emotion_with_provider", return_value=("frustrated", 0.7)),
-        patch("app.llm_trigger.service.build_emotion_shift_chain", return_value=_FakeEmotionChain()),
-    ):
+    with patch("app.llm_trigger.service.build_emotion_shift_chain", return_value=_FakeEmotionChain()):
         result = await analyze_emotion_shift(
             agent_context="Agent context",
             customer_text="I am really upset about this whole situation.",
@@ -189,38 +198,28 @@ async def test_nli_contradiction_kept_when_policy_anchored():
 
 
 
-def test_detect_cross_modal_dissonance_heuristic():
-    with patch("app.llm_trigger.service.infer_text_emotion_with_provider", return_value=("happy", 0.95)):
-        assert _detect_cross_modal_dissonance("Everything is perfect, thanks.", "angry") is True
-
-    with patch("app.llm_trigger.service.infer_text_emotion_with_provider", return_value=("angry", 0.92)):
-        assert _detect_cross_modal_dissonance("This is unacceptable and terrible.", "happy") is True
-
-    with patch("app.llm_trigger.service.infer_text_emotion_with_provider", return_value=("happy", 0.98)):
-        assert _detect_cross_modal_dissonance("Thanks for solving that quickly.", "happy") is False
+def test_topic_classification_normalizes_to_catalog_or_unknown():
+    assert TopicClassification(topic="Fraud-Dispute").topic == "fraud_dispute"
+    assert TopicClassification(topic="weather chat").topic == UNKNOWN_TOPIC
 
 
-def test_topic_and_trajectory_mapping_helpers():
-    transcript = (
-        "customer: I need a refund for my order.\n"
-        "agent: Sure, let me check your order number and eligibility window.\n"
-        "agent: I can submit the refund now."
-    )
-    sop = "1. Collect order identifier\n2. Verify refund eligibility window\n3. Confirm refund method and timeline"
+def test_resolution_graphs_single_source_has_all_topics():
+    from app.llm_trigger import service
+    from app.llm_trigger.prompt_constants import PROCESS_ADHERENCE_SYSTEM_CORE, TOPIC_CLASSIFICATION_SYSTEM_CORE
 
-    topic = _detect_topic(transcript, sop)
-    assert topic == "refund_request"
+    assert service.RESOLUTION_GRAPHS is RESOLUTION_GRAPHS
+    assert len(RESOLUTION_GRAPHS) == 11
+    for topic in ("account_signers", "aml_review", "retention", "wire_transfer"):
+        assert f"Topic `{topic}`" in PROCESS_ADHERENCE_SYSTEM_CORE
+        assert f"Topic `{topic}`" in TOPIC_CLASSIFICATION_SYSTEM_CORE
 
-    missing = _trajectory_missing_steps(
-        transcript,
-        [
-            "Collect order identifier",
-            "Verify refund eligibility window",
-            "Confirm refund method and timeline",
-            "Close with summary and next steps",
-        ],
-    )
-    assert "Close with summary and next steps" in missing
+
+@pytest.mark.asyncio
+async def test_classify_topic_uses_topic_chain():
+    chain = _FakeTopicChain("wire_transfer")
+    with patch("app.llm_trigger.service.build_topic_classification_chain", return_value=chain):
+        assert await classify_topic("customer: I need to send a wire.") == "wire_transfer"
+    assert chain.calls == 1
 
 
 def test_detect_topic_from_sop_chunk_reference_prefers_matched_document():
@@ -261,39 +260,36 @@ def test_policy_reference_preserves_doc_type_and_policy_ref_metadata():
 
 
 @pytest.mark.asyncio
-async def test_evaluate_process_adherence_merges_deterministic_and_llm_steps():
+async def test_evaluate_process_adherence_uses_llm_steps_and_given_topic():
     transcript = (
         "customer: I need a refund.\n"
         "agent: I can help with that.\n"
         "agent: I checked your order and policy window."
     )
 
-    with patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()):
+    with (
+        patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()),
+        patch("app.llm_trigger.service.build_topic_classification_chain") as topic_builder,
+    ):
         result = await evaluate_process_adherence(
             transcript_text=transcript,
             retrieved_sop_from_pinecone="",
             org_filter=None,
+            retrieved_sop_chunks=[],
+            topic="refund_request",
         )
 
-    assert isinstance(result, ProcessAdherenceReport)
-    assert result.detected_topic
-    assert 1 <= result.efficiency_score <= 10
-    assert len(result.missing_sop_steps) >= 1
-    assert result.evidence_quotes
+    topic_builder.assert_not_called()
+    assert result.detected_topic == "refund_request"
+    assert result.is_resolved is True
+    assert result.efficiency_score == 8
+    assert result.missing_sop_steps == ["Confirm refund method and timeline"]
+    assert result.evidence_quotes == ["I checked your order and policy window."]
     assert result.citations
 
 
 @pytest.mark.asyncio
-async def test_evaluate_process_adherence_uses_sop_file_hint_for_topic():
-    """Topic detection: when keyword signal is weak, fall back to the SOP file hint.
-
-    The transcript here only mentions the topic keywords lightly, so the
-    file-hint takes precedence and we still get the refund topic.
-    """
-    transcript = (
-        "customer: I want a refund please.\n"
-        "agent: I can issue the refund right away."
-    )
+async def test_evaluate_process_adherence_uses_sop_file_hint_when_classifier_abstains():
     chunks = [
         RetrievedChunk(
             text="[01-refund-request-processing.pdf]\nStep 1 - Open the Call & Verify Identity\nStep 7 - Apply Credit & Communicate Timeline",
@@ -302,9 +298,12 @@ async def test_evaluate_process_adherence_uses_sop_file_hint_for_topic():
         )
     ]
 
-    with patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()):
+    with (
+        patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()),
+        patch("app.llm_trigger.service.build_topic_classification_chain", return_value=_FakeTopicChain(UNKNOWN_TOPIC)),
+    ):
         result = await evaluate_process_adherence(
-            transcript_text=transcript,
+            transcript_text="customer: I want a refund please.\nagent: I can issue the refund right away.",
             retrieved_sop_from_pinecone="",
             org_filter="nexalink",
             retrieved_sop_chunks=chunks,
@@ -314,18 +313,7 @@ async def test_evaluate_process_adherence_uses_sop_file_hint_for_topic():
 
 
 @pytest.mark.asyncio
-async def test_evaluate_process_adherence_keyword_signal_wins_over_file_hint():
-    """Topic detection: a strong transcript keyword signal overrides the SOP file hint.
-
-    When the dense retriever returns an off-topic SOP (here: refund SOP for a
-    billing call where the customer talks heavily about double-charges), the
-    transcript keywords should still drive the topic — otherwise wrong-SOP
-    retrieval would hijack downstream missing-step detection.
-    """
-    transcript = (
-        "customer: My bill has a double charge from last month. The billing error keeps showing on my statement.\n"
-        "agent: I can pull up your invoice and check the billing error against your statement balance."
-    )
+async def test_evaluate_process_adherence_classifier_topic_wins_over_file_hint():
     chunks = [
         RetrievedChunk(
             text="[01-refund-request-processing.pdf]\nStep 1 - Open the Call & Verify Identity",
@@ -334,9 +322,12 @@ async def test_evaluate_process_adherence_keyword_signal_wins_over_file_hint():
         )
     ]
 
-    with patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()):
+    with (
+        patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FakeProcessChain()),
+        patch("app.llm_trigger.service.build_topic_classification_chain", return_value=_FakeTopicChain("billing_issue")),
+    ):
         result = await evaluate_process_adherence(
-            transcript_text=transcript,
+            transcript_text="customer: My bill has a double charge.\nagent: Let me check the billing error.",
             retrieved_sop_from_pinecone="",
             org_filter="nexalink",
             retrieved_sop_chunks=chunks,
@@ -395,23 +386,46 @@ def test_build_emotion_transition_attributions_tracks_each_speaker_change():
 
 
 @pytest.mark.asyncio
-async def test_evaluate_process_adherence_fallback_mentions_rate_limit():
-    transcript = (
-        "customer: I need a refund.\n"
-        "agent: I can help and check your eligibility now."
-    )
-
-    with patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FailingProcessChain()):
-        result = await evaluate_process_adherence(
-            transcript_text=transcript,
+async def test_process_adherence_llm_failure_raises():
+    with (
+        patch("app.llm_trigger.service.build_process_adherence_chain", return_value=_FailingProcessChain()),
+        pytest.raises(LLMUnavailableError, match="process_adherence"),
+    ):
+        await evaluate_process_adherence(
+            transcript_text="customer: I need a refund.\nagent: I can help and check your eligibility now.",
             retrieved_sop_from_pinecone="",
-            org_filter=None,
+            retrieved_sop_chunks=[],
+            topic="refund_request",
         )
 
-    assert "rate limit" in result.justification.lower()
+
+@pytest.mark.asyncio
+async def test_emotion_and_nli_llm_failures_raise():
+    conversation = "agent: Hello, how can I help you today?\ncustomer: My card was charged twice this month."
+    with (
+        patch("app.llm_trigger.service.build_emotion_shift_chain", return_value=_FailingProcessChain()),
+        pytest.raises(LLMUnavailableError),
+    ):
+        await analyze_emotion_shift("ctx", "My card was charged twice.", "angry", conversation_text=conversation)
+
+    with (
+        patch("app.llm_trigger.service.build_nli_policy_chain", return_value=_FailingProcessChain()),
+        pytest.raises(LLMUnavailableError),
+    ):
+        await run_single_claim_nli_policy_check("I refunded you.", "Refunds within 30 days.")
 
 
-def test_derive_llm_inputs_uses_full_call_customer_and_agent_turns():
+@pytest.mark.asyncio
+async def test_topic_classification_failure_raises():
+    with (
+        patch("app.llm_trigger.service.build_topic_classification_chain", return_value=_FailingProcessChain()),
+        pytest.raises(LLMUnavailableError, match="topic_classification"),
+    ):
+        await classify_topic("customer: hello")
+
+
+@patch("app.llm_trigger.service.fuse_emotion_signals", return_value=SimpleNamespace(emotion="frustrated"))
+def test_derive_llm_inputs_uses_full_call_customer_and_agent_turns(_mock_fuse):
     utterances = [
         SimpleNamespace(speaker_role=SimpleNamespace(value="customer"), text="I called yesterday.", emotion="neutral", emotion_confidence=0.3),
         SimpleNamespace(speaker_role=SimpleNamespace(value="agent"), text="I can help with that.", emotion=None, emotion_confidence=None),
@@ -434,7 +448,8 @@ def test_derive_llm_inputs_uses_full_call_customer_and_agent_turns():
     assert "full-call behavior" in agent_context
 
 
-def test_derive_llm_inputs_uses_dominant_customer_emotion_not_last_turn_only():
+@patch("app.llm_trigger.service.fuse_emotion_signals", return_value=SimpleNamespace(emotion="frustrated"))
+def test_derive_llm_inputs_uses_dominant_customer_emotion_not_last_turn_only(_mock_fuse):
     utterances = [
         SimpleNamespace(speaker_role=SimpleNamespace(value="customer"), text="This issue is still unresolved and very frustrating.", emotion="frustrated", emotion_confidence=0.94),
         SimpleNamespace(speaker_role=SimpleNamespace(value="customer"), text="I keep waiting and this is unacceptable.", emotion="angry", emotion_confidence=0.86),
@@ -471,10 +486,6 @@ def test_build_rolling_windows_and_bundle_for_long_transcript():
     bundle = _render_window_bundle(windows)
     assert "[W0]" in bundle
     assert "turns 0-3" in bundle
-
-    citations = _window_citations(windows)
-    assert citations
-    assert citations[0].source == "transcript"
 
 
 def test_get_model_for_stage_uses_stage_override_first(monkeypatch):

@@ -2,6 +2,13 @@
 
 Document ingestion, Qdrant retrieval, optional answer synthesis, and policy/answer judges. Python ≥ 3.11, managed with `uv`. In compose it runs as the `vocalmind-ingestion` container (`python main.py --watch`); the backend imports `query_engine.py` and `evaluator.py` from the `/app/rag` mount.
 
+The models (embeddings, Docling PDF parsing, cross-encoder rerank) run where `RAG_MODELS_HOST` says:
+
+- `kaggle` — on the Kaggle GPU server at `KAGGLE_SERVER_URL` ([services/kaggle](../kaggle/README.md)). Base install only: `uv sync`.
+- `local` (default) — Ollama for embeddings plus in-process Docling and cross-encoder: `uv sync --extra local-models` (Docker: build arg `RAG_LOCAL_MODELS=true`).
+
+The two hosts use different embedding models, so after switching re-ingest with `uv run python main.py --ingest --force`.
+
 Concepts and collection roles: [docs/rag/RAG_OVERVIEW.md](../../docs/rag/RAG_OVERVIEW.md). Pipeline details: [docs/rag/INGESTION_PIPELINE.md](../../docs/rag/INGESTION_PIPELINE.md). Evaluation: [docs/rag/RAGAS_EVALUATION.md](../../docs/rag/RAGAS_EVALUATION.md).
 
 ## Modules
@@ -61,6 +68,7 @@ Copy `.env.example` to `.env` (values from the repo `.env` and `backend/.env` ar
 | `QDRANT_COLLECTION_PARENTS` / `_CHILDREN` / `_SOP_PARENTS` | `vocalmind_parents` / `vocalmind_children` / `vocalmind_sop_parents` | Collection names |
 | `OLLAMA_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION` | `http://localhost:11434`, `snowflake-arctic-embed2`, `1024` | Embeddings |
 | `OLLAMA_CLOUD_EMBED_ENABLED` | `false` | Embed via Ollama Cloud instead |
+| `RAG_MODELS_HOST`, `KAGGLE_SERVER_URL` | `local`, empty | Run embed/parse/rerank locally or on the Kaggle server |
 | `DOCS_DIR`, `POLICY_DOCS_DIR`, `KNOWLEDGE_DOCS_DIR`, `PARSED_DIR`, `PARSED_POLICY_DIR`, `PARSED_SOP_DIR` | `<repo>/storage/docs` | Source and output roots (relative paths resolve against `services/rag/`) |
 | `LLM_PROVIDER` | `groq` (compose: `ollama_cloud`) | Synthesis and judge provider |
 | `GROQ_API_KEY`, `LLM_MODEL` | —, `llama-3.3-70b-versatile` | Groq |

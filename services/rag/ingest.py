@@ -24,7 +24,6 @@ from pathlib import Path
 
 import ftfy
 import httpx
-from docling.document_converter import DocumentConverter
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
@@ -33,9 +32,23 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, FilterSelector, MatchValue, PointStruct, VectorParams
 
 try:
-    from .config import settings, embedding_http_base_url, embedding_http_headers
+    from .config import (
+        settings,
+        embedding_http_base_url,
+        embedding_http_headers,
+        kaggle_embed,
+        kaggle_post,
+        use_kaggle_models,
+    )
 except ImportError:  # pragma: no cover - allows direct script/test imports
-    from config import settings, embedding_http_base_url, embedding_http_headers
+    from config import (
+        settings,
+        embedding_http_base_url,
+        embedding_http_headers,
+        kaggle_embed,
+        kaggle_post,
+        use_kaggle_models,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -46,13 +59,15 @@ VALID_POLICY_SEVERITIES = {"critical", "major", "minor"}
 
 # ── Docling Singleton ─────────────────────────────────────────────────────────
 
-_docling_converter: DocumentConverter | None = None
+_docling_converter = None
 
 
-def _get_converter() -> DocumentConverter:
+def _get_converter():
     """Lazily initialise the Docling converter (loads AI models once)."""
     global _docling_converter
     if _docling_converter is None:
+        from docling.document_converter import DocumentConverter
+
         print("  Initialising Docling converter (loading AI models — first call only)...")
         _docling_converter = DocumentConverter()
         print("  ✓ Docling ready.")
@@ -120,7 +135,10 @@ class DocumentIngestionPipeline:
             print(f"  ✓ Created collection: {name} (dim={target_dim})")
 
     def _verify_ollama(self) -> None:
-        """Check that Ollama is reachable and the embedding model works."""
+        """Check that the embedding backend (Ollama or the Kaggle server) works."""
+        if use_kaggle_models():
+            self._verify_kaggle()
+            return
         print(f"\nVerifying Ollama at {settings.embedding.base_url}...")
         try:
             vec = self._get_embedding("test connection")
@@ -138,10 +156,26 @@ class DocumentIngestionPipeline:
                 f"  docker exec vocalmind_ollama ollama pull {settings.embedding.model}"
             ) from e
 
+    def _verify_kaggle(self) -> None:
+        """Check that the Kaggle server is reachable and returns 1024-d embeddings."""
+        print(f"\nVerifying Kaggle server at {settings.KAGGLE_SERVER_URL}...")
+        try:
+            dim = len(self._get_embedding("test connection"))
+        except Exception as e:
+            raise ConnectionError(
+                f"Cannot reach the Kaggle server for embeddings: {e}\n"
+                "Make sure the Kaggle notebook is running and KAGGLE_SERVER_URL points to its ngrok URL."
+            ) from e
+        if dim != settings.embedding.dimension:
+            raise ValueError(f"Kaggle embedding dim {dim} != expected {settings.embedding.dimension}.")
+        print(f"  ✓ Kaggle server reachable. Embedding dim = {dim}")
+
     # ── Embedding ─────────────────────────────────────────────────────────
 
     def _get_embedding(self, text: str) -> list[float]:
-        """Request an embedding vector from the local Ollama instance."""
+        """Request an embedding vector from Ollama or the Kaggle server."""
+        if use_kaggle_models():
+            return kaggle_embed([text])[0]
         if settings.OLLAMA_CLOUD_EMBED_ENABLED:
             try:
                 response = httpx.post(
@@ -205,10 +239,14 @@ class DocumentIngestionPipeline:
     @staticmethod
     def _parse_pdf(pdf_path: str) -> str:
         """Convert a PDF to clean Markdown using Docling (DocLayNet + TableFormer)."""
-        print("  Parsing with Docling...")
-        converter = _get_converter()
-        result = converter.convert(pdf_path)
-        md_text = result.document.export_to_markdown()
+        if use_kaggle_models():
+            print("  Parsing with Docling on the Kaggle server...")
+            with open(pdf_path, "rb") as f:
+                files = {"file": (Path(pdf_path).name, f, "application/pdf")}
+                md_text = kaggle_post("/parse", timeout=600.0, files=files)["markdown"]
+        else:
+            print("  Parsing with Docling...")
+            md_text = _get_converter().convert(pdf_path).document.export_to_markdown()
         print(f"  Parsed {len(md_text):,} characters of Markdown.")
         return md_text
 
@@ -787,10 +825,10 @@ class DocumentIngestionPipeline:
         label: str,
     ) -> int:
         """Embed each chunk and upsert into a Qdrant collection."""
-        points: list[PointStruct] = []
+        items: list[tuple[str, str, dict]] = []
         print(f"  Embedding {len(chunks)} {label} chunks...")
 
-        for i, chunk in enumerate(chunks):
+        for chunk in chunks:
             content = chunk.page_content.strip()
             if not content:
                 continue
@@ -798,16 +836,21 @@ class DocumentIngestionPipeline:
             # Deterministic UUID — includes source metadata to avoid cross-document collisions
             source_key = f"{chunk.metadata.get('source_file', '')}:{chunk.metadata.get('org', '')}"
             content_hash = hashlib.md5(f"{source_key}:{content}".encode()).hexdigest()
-            point_id = str(uuid.UUID(content_hash))
+            items.append((str(uuid.UUID(content_hash)), content, chunk.metadata))
 
-            vector = self._get_embedding(content)
-            payload = {"text": content}
-            payload.update(chunk.metadata)
+        # Kaggle embeds in batches (one HTTP round trip per batch); Ollama per chunk.
+        batch_size = 32 if use_kaggle_models() else 1
+        points: list[PointStruct] = []
+        for start in range(0, len(items), batch_size):
+            batch = items[start : start + batch_size]
+            texts = [content for _, content, _ in batch]
+            vectors = kaggle_embed(texts) if use_kaggle_models() else [self._get_embedding(texts[0])]
+            for (point_id, content, metadata), vector in zip(batch, vectors, strict=True):
+                points.append(PointStruct(id=point_id, vector=vector, payload={"text": content, **metadata}))
 
-            points.append(PointStruct(id=point_id, vector=vector, payload=payload))
-
-            if (i + 1) % 10 == 0 or (i + 1) == len(chunks):
-                print(f"    {i+1}/{len(chunks)} embedded...")
+            done = len(points)
+            if done % 10 < len(batch) or done == len(items):
+                print(f"    {done}/{len(items)} embedded...")
 
         if points:
             self.qdrant.upsert(collection_name=collection_name, points=points)

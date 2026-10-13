@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.emotion.pipeline import process_audio
 from app.api.routes.emotion.service import emotion_client
-from app.core.emotion_fusion import fuse_emotion_signals
+from app.core.emotion_fusion import TextEmotionUnavailable, fuse_emotion_signals
 
 router = APIRouter()
 
@@ -50,16 +50,19 @@ async def analyze_emotion(file: UploadFile = File(..., description="The audio fi
     return await emotion_client.analyze_audio(file)
 
 
-@router.post("/fuse", response_model=EmotionFusionResponse, summary="Fuse Text and Acoustic Emotion", responses={422: {"description": "Invalid request parameters"}})
+@router.post("/fuse", response_model=EmotionFusionResponse, summary="Fuse Text and Acoustic Emotion", responses={422: {"description": "Invalid request parameters"}, 503: {"description": "Text emotion model unavailable"}})
 async def fuse_emotion(payload: EmotionFusionRequest):
     """
     Apply dual-emotion fusion logic to combine text and acoustic emotion signals.
     """
-    fused = fuse_emotion_signals(
-        text=payload.text,
-        acoustic_emotion=payload.acoustic_emotion,
-        acoustic_confidence=payload.acoustic_confidence,
-    )
+    try:
+        fused = fuse_emotion_signals(
+            text=payload.text,
+            acoustic_emotion=payload.acoustic_emotion,
+            acoustic_confidence=payload.acoustic_confidence,
+        )
+    except TextEmotionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return EmotionFusionResponse(
         emotion=fused.emotion,
         confidence=fused.confidence,

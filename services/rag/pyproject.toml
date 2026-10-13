@@ -4,21 +4,14 @@ version = "1.0.0"
 description = "VocalMind Final RAG — Dual-granularity policy compliance & answer scoring with Docling, Qdrant, and Groq"
 requires-python = ">=3.11"
 dependencies = [
-    # ── PDF Parsing ──
-    "docling>=2.15.0",
-
     # ── Chunking ──
     "langchain-text-splitters>=0.2.0",
 
-    # ── Embeddings (Ollama HTTP) ──
+    # ── Embeddings (Ollama or Kaggle server over HTTP) ──
     "httpx>=0.27.0",
 
     # ── Vector Store ──
     "qdrant-client>=1.11.0,<1.13.0",
-
-    # ── Reranking (cross-encoder) + sparse vectors for hybrid retrieval ──
-    "sentence-transformers>=3.0.0",
-    "fastembed>=0.3.0",
 
     # ── LLM (Groq fallback via llama-index-llms-groq; Ollama Cloud via openai SDK) ──
     "openai>=1.0.0",
@@ -41,6 +34,14 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.0.0",
     "ftfy>=6.1.0",
+]
+
+[project.optional-dependencies]
+# In-process models for RAG_MODELS_HOST=local (Docling PDF parsing + cross-encoder
+# reranking). Not needed when RAG_MODELS_HOST=kaggle.
+local-models = [
+    "docling>=2.15.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [build-system]

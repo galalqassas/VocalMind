@@ -29,3 +29,12 @@ Runs every heavy model for VocalMind on a free Kaggle GPU so the local stack sta
 | Parse | Docling |
 
 Switching `RAG_MODELS_HOST` changes the embedding model, so re-ingest the docs afterwards with `python main.py --ingest --force` in `services/rag`.
+
+## Run on Kaggle
+
+1. Import `services/kaggle/vocalmind_gpu.ipynb` into Kaggle. Settings: **Accelerator = GPU**, **Internet = on**.
+2. Add-ons → Secrets, attach: `HF_TOKEN` (accepted terms for `pyannote/speaker-diarization-3.1` + `pyannote/segmentation-3.0`), `NGROK_TOKEN`, `NGROK_DOMAIN` (static ngrok domain), `BACKEND_URL` (backend public URL + `/api/v1/internal/set-kaggle-url`).
+3. Run all. Cell 1 clones the repo (`BRANCH`, default `main`) and installs `requirements.txt` with numpy/torch pinned to Kaggle's preinstalled versions, so no kernel restart is needed. Cell 2 starts `server.py`, which loads all models, opens the ngrok tunnel and POSTs `{"kaggle_url"}` to `BACKEND_URL` (switching the backend to `IS_LOCAL=false`).
+4. The last cell blocks while serving; interrupt it to stop. Re-running is safe: the clone is replaced and the same static domain is re-registered. With no `BACKEND_URL`, set `KAGGLE_SERVER_URL` on the backend yourself.
+
+Tests (models mocked): `cd backend && uv run pytest ../services/kaggle/test_server.py`.

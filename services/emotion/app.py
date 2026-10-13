@@ -1,6 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 import uvicorn
+import json
 import os
 import shutil
 import tempfile
@@ -19,6 +20,8 @@ from fastapi import Request
 ml_models = {}
 inference_lock = asyncio.Lock()
 MAX_INFERENCE_SECONDS = int(os.getenv("EMOTION_MAX_AUDIO_SECONDS", "30"))
+SAMPLE_RATE = 16000
+MIN_SEGMENT_WINDOW_SECONDS = 0.8
 logger = logging.getLogger(__name__)
 
 class TextPredictRequest(BaseModel):
@@ -41,8 +44,7 @@ async def lifespan(app: FastAPI):
     logger.info("Audio model loaded successfully.")
 
     # Initialize the text model. Failure to load must NOT break the container —
-    # /predict_text will return 503 and callers fall back to the rule-based
-    # text emotion provider in the backend (emotion_fusion._HF_PROVIDER_DISABLED_REASON).
+    # /predict_text returns 503 and the backend marks the text-emotion stage failed.
     try:
         logger.info("Loading text emotion model j-hartmann/emotion-english-distilroberta-base...")
         hf_device = 0 if device == "cuda" else -1
@@ -74,15 +76,50 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
-def _run_inference(filepath):
-    logger.info(f"Starting inference on file: {filepath}")
-    return ml_models["emotion2vec"].generate(input=filepath, extract_embedding=False)
+def _run_inference(audio_input):
+    return ml_models["emotion2vec"].generate(input=audio_input, extract_embedding=False)
+
+
+def _parse_result(res: dict) -> dict:
+    labels = [lbl.split('/')[-1] if '/' in lbl else lbl for lbl in res['labels']]
+    scores = [float(s) for s in res['scores']]
+    best = int(np.argmax(scores))
+    return {"emotion": labels[best], "confidence": scores[best], "labels": labels, "scores": scores}
+
+
+def segment_windows(segments: list[dict], total_samples: int, sr: int = SAMPLE_RATE) -> list[tuple[int, int]]:
+    """Sample ranges per segment: centered window of at least MIN_SEGMENT_WINDOW_SECONDS, capped at MAX_INFERENCE_SECONDS."""
+    total = total_samples / sr
+    windows = []
+    for seg in segments:
+        start, end = float(seg["start"]), float(seg["end"])
+        duration = min(max(end - start, MIN_SEGMENT_WINDOW_SECONDS), MAX_INFERENCE_SECONDS, total)
+        lo = max(0.0, min((start + end) / 2 - duration / 2, total - duration))
+        windows.append((int(lo * sr), int(min(total, lo + duration) * sr)))
+    return windows
+
+
+def _ffmpeg(args: list[str]) -> bytes:
+    return subprocess.run(
+        ["ffmpeg", "-nostdin", "-y", *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout
+
+
+def _decode_mono_16k(path: str) -> np.ndarray:
+    pcm = _ffmpeg(["-i", path, "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"])
+    return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(file: UploadFile = File(...), segments: str | None = Form(None)):
+    """Clip-level emotion; with `segments` (JSON list of {start, end}) also returns `segment_emotions`."""
     filename = (file.filename or "").lower()
     if not (filename.endswith('.wav') or filename.endswith('.mp3')):
         raise HTTPException(status_code=400, detail="Only .wav or .mp3 files are supported.")
+    try:
+        segment_list = json.loads(segments) if segments else []
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid segments JSON: {e}")
 
     suffix = '.wav' if filename.endswith('.wav') else '.mp3'
 
@@ -96,53 +133,44 @@ async def predict(file: UploadFile = File(...)):
         # Normalize all inputs to a bounded mono 16k wav to avoid unstable inference on long/raw files.
         fd_wav, normalized_wav_path = tempfile.mkstemp(suffix='.wav')
         os.close(fd_wav)
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-y",
-                "-i",
-                temp_path,
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-t",
-                str(MAX_INFERENCE_SECONDS),
-                normalized_wav_path,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-        inference_path = normalized_wav_path
+        _ffmpeg(["-i", temp_path, "-ac", "1", "-ar", str(SAMPLE_RATE), "-t", str(MAX_INFERENCE_SECONDS), normalized_wav_path])
 
         # Run inference using the pre-loaded FunaSR model via threadpool
         async with inference_lock:
-            results = await run_in_threadpool(_run_inference, inference_path)
-        logger.info(f"Inference finished. Results: {results}")
-
-        # Parse result
-        if results and len(results) > 0:
-            res = results[0]
-            highest_score_idx = np.argmax(res['scores'])
-            raw_label = res['labels'][highest_score_idx]
-
-            # The label comes as "中文/english" like "开心/happy"
-            emotion = raw_label.split('/')[-1] if '/' in raw_label else raw_label
-            confidence = float(res['scores'][highest_score_idx])
-
-            return {
-                "emotion": emotion,
-                "confidence": confidence,
-                "raw_result": {
-                    "labels": [lbl.split('/')[-1] if '/' in lbl else lbl for lbl in res['labels']],
-                    "scores": [float(s) for s in res['scores']]
-                }
-            }
-        else:
+            results = await run_in_threadpool(_run_inference, normalized_wav_path)
+        if not results:
             raise HTTPException(status_code=500, detail="Model inference returned empty results.")
+        clip = _parse_result(results[0])
 
+        segment_emotions = []
+        if segment_list:
+            audio = _decode_mono_16k(temp_path)
+            for lo, hi in segment_windows(segment_list, len(audio)):
+                if hi <= lo:
+                    segment_emotions.append({"emotion": "unknown", "confidence": 0.0, "emotion_scores": []})
+                    continue
+                async with inference_lock:
+                    seg_results = await run_in_threadpool(_run_inference, audio[lo:hi])
+                if not seg_results:
+                    raise HTTPException(status_code=500, detail="Model inference returned empty segment results.")
+                parsed = _parse_result(seg_results[0])
+                segment_emotions.append({
+                    "emotion": parsed["emotion"],
+                    "confidence": parsed["confidence"],
+                    "emotion_scores": [{"label": lbl, "score": sc} for lbl, sc in zip(parsed["labels"], parsed["scores"])],
+                })
+
+        response = {
+            "emotion": clip["emotion"],
+            "confidence": clip["confidence"],
+            "raw_result": {"labels": clip["labels"], "scores": clip["scores"]},
+        }
+        if segment_list:
+            response["segment_emotions"] = segment_emotions
+        return response
+
+    except HTTPException:
+        raise
     except subprocess.CalledProcessError as e:
         stderr = (e.stderr or b"").decode(errors="ignore")
         raise HTTPException(status_code=400, detail=f"Failed to decode/convert audio: {stderr[:400]}")
@@ -171,19 +199,19 @@ async def predict_text(request: TextPredictRequest):
     if "text_emotion" not in ml_models:
         raise HTTPException(
             status_code=503,
-            detail="Text emotion model unavailable; backend will fall back to rule-based provider.",
+            detail="Text emotion model unavailable.",
         )
 
     try:
         # Run inference using the pre-loaded HF pipeline
         raw_result = ml_models["text_emotion"](request.text)
         
-        # Pipeline with top_k=None returns a list of lists of dicts: [[{'label': 'joy', 'score': 0.9}, ...]]
-        scores = raw_result[0] if raw_result and isinstance(raw_result[0], list) else []
+        # top_k=None returns [[{'label', 'score'}, ...]] or a flat list depending on the transformers version.
+        scores = raw_result[0] if raw_result and isinstance(raw_result[0], list) else raw_result
         
         if not scores:
-            return {"emotion": "neutral", "confidence": 0.3}
-            
+            raise HTTPException(status_code=500, detail="Text emotion model returned empty results.")
+
         # Get the top score
         top_emotion = max(scores, key=lambda x: x["score"])
         
@@ -192,6 +220,8 @@ async def predict_text(request: TextPredictRequest):
             "confidence": float(top_emotion["score"]),
             "raw_result": scores
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Text emotion inference failed: {str(e)}")
 

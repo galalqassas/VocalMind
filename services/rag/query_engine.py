@@ -32,7 +32,9 @@ try:
         build_rag_llm_client,
         embedding_http_base_url,
         embedding_http_headers,
+        kaggle_embed,
         rag_synthesis_model,
+        use_kaggle_models,
     )
     from .prompt_safety import sanitize_prompt_text, with_injection_guard
     from .llm_circuit_breaker import get_breaker
@@ -43,7 +45,9 @@ except ImportError:  # pragma: no cover - allows direct script/test imports
         build_rag_llm_client,
         embedding_http_base_url,
         embedding_http_headers,
+        kaggle_embed,
         rag_synthesis_model,
+        use_kaggle_models,
     )
     from prompt_safety import sanitize_prompt_text, with_injection_guard
     from llm_circuit_breaker import get_breaker
@@ -185,7 +189,12 @@ class RAGQueryEngine:
     # ── Embedding ─────────────────────────────────────────────────────────
 
     def _embed_query(self, text: str) -> list[float]:
-        """Embed a query string via Ollama."""
+        """Embed a query string via Ollama or the Kaggle server."""
+        if use_kaggle_models():
+            try:
+                return get_breaker("embedding").call_sync(lambda: kaggle_embed([text]))[0]
+            except Exception as exc:
+                raise ConnectionError(f"Kaggle /embed failed (RAG_MODELS_HOST=kaggle): {exc}") from exc
         if settings.OLLAMA_CLOUD_EMBED_ENABLED:
             try:
                 response = httpx.post(

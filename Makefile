@@ -1,27 +1,33 @@
-.PHONY: help up up-gpu down build build-retry logs support-up support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio seed reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
+.PHONY: help up up-local up-gpu down build build-retry logs support-up support-up-local support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio seed reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # ── Docker ────────────────────────────────────────────────────────────────
 
-up: ## Start all services (CPU)
+up: ## Start the app stack; models run on the Kaggle GPU server (services/kaggle)
 	docker compose up -d
 
-up-gpu: ## Start all services with NVIDIA GPU acceleration (whisperx/emotion/ollama)
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+up-local: ## Start the app stack plus local model containers (ollama/vad/emotion/whisperx, CPU)
+	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose --profile local-ml up -d
+
+up-gpu: ## Same as up-local with NVIDIA GPU acceleration
+	IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ml up -d
 
 down: ## Stop all services
-	docker compose down
+	docker compose --profile local-ml down
 
-support-up: ## Start only supporting services for local backend/frontend development (CPU)
-	docker compose up -d db ollama qdrant vad emotion whisperx
+support-up: ## Start db + qdrant for running backend/frontend on the host (models on Kaggle)
+	docker compose up -d db qdrant
 
-support-up-gpu: ## Start supporting services with GPU acceleration enabled
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d db ollama qdrant vad emotion whisperx
+support-up-local: ## Same plus local model containers (CPU)
+	docker compose --profile local-ml up -d db ollama qdrant vad emotion whisperx
+
+support-up-gpu: ## Same plus local model containers with GPU acceleration
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile local-ml up -d db ollama qdrant vad emotion whisperx
 
 support-down: ## Stop supporting services used by local backend/frontend development
-	docker compose stop db ollama qdrant vad emotion whisperx
+	docker compose --profile local-ml stop db ollama qdrant vad emotion whisperx
 
 build: ## Build all Docker images
 	docker compose build
@@ -30,11 +36,11 @@ build-retry: ## Build/start with retry logic for transient Docker daemon EOF/500
 	powershell -ExecutionPolicy Bypass -File infra/scripts/docker_compose_retry.ps1 -ComposeArgs "up -d --build"
 
 logs: ## Follow logs for all services
-	docker compose logs -f
+	docker compose --profile local-ml logs -f
 
 ollama-pull-embed: ## Pull the RAG embedding model into the compose Ollama service
-	docker compose up -d ollama
-	docker compose exec ollama ollama pull snowflake-arctic-embed2
+	docker compose --profile local-ml up -d ollama
+	docker compose --profile local-ml exec ollama ollama pull snowflake-arctic-embed2
 
 # ── Backend ───────────────────────────────────────────────────────────────
 

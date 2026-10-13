@@ -1,4 +1,6 @@
 # Frontend service uses Dockerfile.dev + a bind mount so source edits show up without rebuilding.
+# Default stack (db, backend, frontend, qdrant, ingestion) sends all model work to the
+# Kaggle GPU server (services/kaggle). Local models instead: `--profile local-ml` (make up-local).
 
 services:
 
@@ -38,13 +40,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       # DATABASE_URL / ASSISTANT_DATABASE_URL come from backend/.env (Supabase pooler in prod-like demos).
       - SECRET_KEY=${SECRET_KEY:-vocalmind_local_dev_secret_change_in_env}
-      - IS_LOCAL=true
+      # false = Kaggle GPU server (default); true = local-ml profile containers
+      - IS_LOCAL=${IS_LOCAL:-false}
+      - KAGGLE_SERVER_URL=${KAGGLE_SERVER_URL:-}
+      - RAG_MODELS_HOST=${RAG_MODELS_HOST:-kaggle}
       - EMOTION_API_URL=http://emotion:8000
       - VAD_API_URL=http://vad:8002
       - WHISPERX_API_URL=http://whisperx:8000
@@ -66,9 +69,6 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-snowflake-arctic-embed2}
       - SOP_RETRIEVAL_TOP_K=${SOP_RETRIEVAL_TOP_K:-3}
-      # Text emotion
-      - TEXT_EMOTION_PROVIDER=${TEXT_EMOTION_PROVIDER:-hf_transformers}
-      - TEXT_EMOTION_MODEL=${TEXT_EMOTION_MODEL:-j-hartmann/emotion-english-distilroberta-base}
       - HF_TOKEN=${HF_TOKEN:-}
       # Ollama Cloud (when LLM_PROVIDER=ollama_cloud)
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
@@ -132,6 +132,7 @@ services:
   # ── Local Ollama (embeddings + optional local LLM) ─────────────────────────
   ollama:
     image: ollama/ollama:0.24.0
+    profiles: ["local-ml"]
     container_name: vocalmind-ollama
     cpus: 4.0
     ports:
@@ -169,12 +170,13 @@ services:
     build:
       context: ./services/rag
       dockerfile: Dockerfile
+      args:
+        # true = install Docling + cross-encoder for RAG_MODELS_HOST=local (several GB)
+        RAG_LOCAL_MODELS: ${RAG_LOCAL_MODELS:-false}
     container_name: vocalmind-ingestion
     cpus: 2.0
     depends_on:
       qdrant:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     volumes:
       - ./storage:/app/storage
@@ -206,12 +208,15 @@ services:
       - OLLAMA_NLI_MODEL=${OLLAMA_NLI_MODEL:-}
       - OLLAMA_CLOUD_EMBED_ENABLED=${OLLAMA_CLOUD_EMBED_ENABLED:-false}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama_cloud}
+      - RAG_MODELS_HOST=${RAG_MODELS_HOST:-kaggle}
+      - KAGGLE_SERVER_URL=${KAGGLE_SERVER_URL:-}
     restart: unless-stopped
 
   # ── VAD Preprocessing ──────────────────────────────────────────────────────
   vad:
     build:
       context: ./services/vad
+    profiles: ["local-ml"]
     container_name: vocalmind-vad
     cpus: 2.0
     ports:
@@ -232,6 +237,7 @@ services:
     pull_policy: if_not_present
     build:
       context: ./services/emotion
+    profiles: ["local-ml"]
     container_name: vocalmind-emotion
     cpus: 2.0
     ports:
@@ -254,6 +260,7 @@ services:
       context: ./services/whisperx
       dockerfile: Dockerfile
     image: grad-whisperx:latest
+    profiles: ["local-ml"]
     container_name: vocalmind-whisperx
     cpus: 4.0
     ports:

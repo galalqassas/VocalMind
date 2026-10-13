@@ -472,7 +472,6 @@ def _run_judge_client(client, prompt: str, max_tokens: int) -> str:
         return response.content
     else:
         # OpenAI or Groq client
-        from .config import rag_judge_model
         response = client.chat.completions.create(
             model=rag_judge_model(),
             messages=[{"role": "user", "content": prompt}],

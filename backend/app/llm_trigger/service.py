@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlmodel import select
@@ -16,10 +16,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.emotion_fusion import EMOTION_NORMALIZATION, fuse_emotion_signals, infer_text_emotion_with_provider
 from app.llm_trigger.chains import (
+    _invoke_chain_with_retry,
     build_emotion_shift_chain,
     build_nli_policy_chain,
     build_process_adherence_chain,
+    build_topic_classification_chain,
 )
+from app.llm_trigger.prompt_constants import RESOLUTION_GRAPHS, STEP_KEY_TO_LABEL, UNKNOWN_TOPIC, _step_key
 from app.llm_trigger.retrieval import RetrievedChunk, resolve_retrieved_sop_context, retrieve_policy_chunks
 from app.llm_trigger.schemas import (
     ClaimProvenance,
@@ -43,90 +46,30 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-CACHE_SCHEMA_VERSION = 4
+CACHE_SCHEMA_VERSION = 5
 _evaluator_lock = threading.Lock()
 _policy_compliance_evaluator = None
 
 
-RESOLUTION_GRAPHS: dict[str, list[str]] = {
-    "refund_request": [
-        "Acknowledge customer issue",
-        "Collect order identifier",
-        "Verify refund eligibility window",
-        "Confirm refund method and timeline",
-        "Close with summary and next steps",
-    ],
-    "billing_issue": [
-        "Acknowledge billing concern",
-        "Verify account and charge details",
-        "Explain charge source or correction",
-        "Confirm customer understanding",
-        "Close with follow-up path",
-    ],
-    "technical_support": [
-        "Acknowledge the technical issue",
-        "Collect device or account context",
-        "Run step-by-step troubleshooting",
-        "Validate issue resolution",
-        "Document next escalation path",
-    ],
-    "account_access": [
-        "Acknowledge access issue",
-        "Verify user identity",
-        "Guide reset or unlock steps",
-        "Confirm successful login",
-        "Close with prevention advice",
-    ],
-    "account_opening": [
-        "Greet and confirm intent to open account",
-        "Collect identity documents and KYC data",
-        "Disclose required fees and terms",
-        "Capture customer signature / consent",
-        "Confirm account number and next steps (debit card mailing, online banking)",
-    ],
-    "fraud_dispute": [
-        "Acknowledge and reassure the customer",
-        "Confirm card status and freeze if needed",
-        "Collect transaction details (date, amount, merchant)",
-        "Open the fraud / Reg E dispute ticket",
-        "Explain provisional credit timeline and follow-up SLA",
-    ],
-    "fee_adjustment": [
-        "Acknowledge the fee concern",
-        "Verify the fee against account history and policy",
-        "Check waiver authority and frequency cap",
-        "Apply waiver or open Manager Approval ticket",
-        "Confirm outcome and document the case",
-    ],
-    "aml_review": [
-        "Acknowledge customer without alerting to SAR review",
-        "Collect transaction context (purpose, source of funds)",
-        "Flag the account for AML / BSA review without disclosure",
-        "Open suspicious-activity ticket per regulation",
-        "Close call neutrally without confirming the review",
-    ],
-    "retention": [
-        "Acknowledge cancellation intent without resistance",
-        "Identify root cause for the cancellation",
-        "Offer the appropriate retention play (loyalty credit, plan change)",
-        "Confirm customer decision",
-        "Close: process cancellation OR confirm retention outcome",
-    ],
-    "wire_transfer": [
-        "Verify enhanced identity (5-of-5)",
-        "Confirm transfer details (amount, recipient, account)",
-        "Apply compliance check (CTR/BSA threshold)",
-        "Execute or hold transfer per policy",
-        "Confirm outcome and document case",
-    ],
-    "account_signers": [
-        "Verify account control person identity",
-        "Collect authorized signer details",
-        "Confirm signer is not a beneficial owner",
-        "Submit signer update request",
-        "Confirm completion and next steps",
-    ],
-}
+class LLMUnavailableError(RuntimeError):
+    """A model the reasoning engine depends on (LLM or text-emotion) failed.
+
+    There is no heuristic fallback: the stage fails and can be reprocessed later.
+    """
+
+
+async def _run_chain(stage: str, build_chain, inputs: dict) -> Any:
+    try:
+        return await _invoke_chain_with_retry(build_chain(), inputs)
+    except Exception as exc:
+        raise LLMUnavailableError(f"LLM stage '{stage}' is unavailable: {exc}") from exc
+
+
+def _model_call(stage: str, fn, *args, **kwargs) -> Any:
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        raise LLMUnavailableError(f"Model stage '{stage}' is unavailable: {exc}") from exc
 
 
 ROLLING_WINDOW_TURNS = 8
@@ -134,147 +77,8 @@ ROLLING_WINDOW_STRIDE = 4
 MAX_PROCESS_WINDOWS = 3
 INSUFFICIENT_EVIDENCE_LABEL = "insufficient evidence"
 POLICY_PRIORITY_BUCKETS: tuple[str, ...] = ("regulatory", "legal")
-DEGRADED_MODE_SUFFIX = " [DEGRADED: LLM unavailable — heuristic fallback used]"
 
 BULLET_PREFIXES = ("•", "-", "–", "▪", "\uf0b7", "*", "·")
-
-STEP_ALIASES: dict[str, list[str]] = {
-    "verify refund eligibility": [
-        "refund timeline",
-        "eligibility check",
-        "refund window",
-        "check eligibility",
-        "confirm eligibility",
-    ],
-    "close with summary": [
-        "root cause summary",
-        "resolution summary",
-        "closing summary",
-        "wrap up",
-        "summary and next steps",
-        "call summary",
-    ],
-    "acknowledge": [
-        "greet",
-        "opening",
-        "introduction",
-        "thank you for calling",
-    ],
-    "verify account": [
-        "pull up account",
-        "account lookup",
-        "check account",
-        "account details",
-        "account verification",
-    ],
-    "validate issue resolution": [
-        "resolution confirmation",
-        "issue confirmation",
-        "confirm resolved",
-        "resolution summary",
-        "validate issue",
-        "issue resolved",
-        "verify fix",
-        "issue classification",
-        "confirm the issue",
-        "resolution confirmed",
-        "confirmed resolution",
-    ],
-    "explain provisional credit timeline": [
-        "provisional credit",
-        "credit timeline",
-        "sla stated",
-        "sla",
-        "follow-up sla",
-        "credit within cap",
-        "within cap",
-        "provisional credit within",
-        "credit cap",
-        "manager approval ticket",
-        "above cap",
-    ],
-    "verify refund eligibility window": [
-        "refund timeline",
-        "eligibility window",
-        "refund eligibility",
-        "refund window",
-        "fin-rule-001",
-        "eligibility check",
-        "refund check",
-        "refund policy check",
-    ],
-    "confirm customer decision": [
-        "strike three",
-        "call termination",
-        "termination with stated reason",
-        "customer decision confirmed",
-        "cancellation confirmed",
-        "retention confirmed",
-    ],
-    "confirm customer understanding": [
-        "customer confirmation",
-        "confirm understanding",
-        "customer acknowledged",
-        "tone adapted",
-    ],
-    "verify account and charge details": [
-        "account and charge",
-        "charge details",
-        "verify charge",
-        "transaction details",
-    ],
-    "acknowledge customer issue": [
-        "greeting",
-        "greet the customer",
-        "opening greeting",
-        "call opening",
-        "introduction",
-        "thank you for calling",
-        "opening",
-        "welcome",
-    ],
-    "acknowledge access issue": [
-        "acknowledge reason for call",
-        "reason for call",
-        "opening acknowledgement",
-        "acknowledge the issue",
-        "understand your concern",
-        "hear you calling about",
-        "greeting",
-        "greet the customer",
-        "opening greeting",
-        "call opening",
-        "introduction",
-        "opening",
-        "welcome",
-        "acknowledge reason",
-    ],
-    "close with prevention advice": [
-        "password-change advice",
-        "password change advice",
-        "prevent future incidents",
-        "prevention tips",
-        "security tips going forward",
-        "prevention advice",
-        "password-change",
-        "prevent future",
-    ],
-}
-
-# More specific topics win when scores are competitive (checked before billing_issue).
-_TOPIC_DETECTION_PRIORITY: tuple[str, ...] = (
-    "fraud_dispute",
-    "aml_review",
-    "wire_transfer",
-    "account_signers",
-    "account_access",
-    "account_opening",
-    "fee_adjustment",
-    "retention",
-    "technical_support",
-    "refund_request",
-    "billing_issue",
-)
 
 
 def _filter_bullet_steps(steps: list[str]) -> list[str]:
@@ -356,17 +160,6 @@ def _filter_cross_topic_steps(steps: list[str], topic_hint: str) -> list[str]:
     return filtered
 
 
-def _alias_match(a: str, b: str) -> bool:
-    # Normalize: lowercase + replace underscores with spaces
-    a_lower = a.lower().replace("_", " ")
-    b_lower = b.lower().replace("_", " ")
-    for canonical, aliases in STEP_ALIASES.items():
-        targets = [canonical] + aliases
-        a_hit = any(t in a_lower for t in targets)
-        b_hit = any(t in b_lower for t in targets)
-        if a_hit and b_hit:
-            return True
-    return False
 
 _FRICTION_TITLES = {
     "interruption": "Agent Interruption",
@@ -582,214 +375,6 @@ def _emotion_polarity(label: str) -> str:
     return "neutral"
 
 
-def _detect_cross_modal_dissonance(customer_text: str, acoustic_emotion: str, text_emotion: str | None = None) -> bool:
-    if text_emotion is None:
-        text_emotion, _ = infer_text_emotion_with_provider(customer_text)
-    text_polarity = _emotion_polarity(text_emotion)
-    acoustic_polarity = _emotion_polarity(acoustic_emotion)
-    if "!" in customer_text and acoustic_polarity == "negative" and text_polarity != "negative":
-        return True
-    return (text_polarity == "positive" and acoustic_polarity == "negative") or (
-        text_polarity == "negative" and acoustic_polarity == "positive"
-    )
-
-
-_TOPIC_KEYWORDS: dict[str, dict[str, float]] = {
-    "refund_request": {
-        "refund": 3.0,
-        "chargeback": 3.0,
-        "reimburse": 3.0,
-        "money back": 3.0,
-        "credit on": 2.0,
-        "credit my": 2.0,
-        "outage credit": 3.0,
-        "service outage": 2.5,
-        "prorated": 2.5,
-        "compensation": 2.0,
-        "goodwill": 2.0,
-        "return": 1.0,
-    },
-    "billing_issue": {
-        "invoice": 2.5,
-        "double charge": 3.0,
-        "overcharge": 3.0,
-        "billing error": 3.0,
-        "bill": 1.5,
-        "charge": 1.5,
-        "payment": 1.5,
-        "statement": 1.5,
-        "balance": 1.0,
-    },
-    "technical_support": {
-        "outage": 0.5,
-        "no internet": 0.5,
-        "router": 2.0,
-        "modem": 2.0,
-        "wifi": 2.0,
-        "wi-fi": 2.0,
-        "speed test": 2.5,
-        "reboot": 2.0,
-        "firmware": 2.5,
-        "crash": 2.0,
-        "error code": 2.5,
-        "not connecting": 1.5,
-        "troubleshoot": 2.5,
-        "blue screen": 3.0,
-        "ping": 1.5,
-    },
-    "account_access": {
-        "password": 2.5,
-        "login": 2.5,
-        "log in": 2.5,
-        "sign in": 2.5,
-        "locked out": 3.0,
-        "reset my": 2.0,
-        "two-factor": 2.5,
-        "2fa": 2.5,
-        "verification code": 2.5,
-        "authenticator": 2.5,
-        "recovery code": 2.5,
-        "username": 2.0,
-        "pin reset": 3.0,
-        "unauthorized access": 3.0,
-        "account locked": 3.0,
-        "fraud alert": 3.0,
-        "suspicious": 2.5,
-        "account recovery": 3.0,
-        "security": 2.0,
-        "identity": 2.5,
-        "verify identity": 3.0,
-        "account compromised": 3.0,
-    },
-    "account_opening": {
-        "open an account": 3.0,
-        "open a new account": 3.0,
-        "opening an account": 3.0,
-        "kyc": 3.0,
-        "know your customer": 3.0,
-        "driver's license": 2.0,
-        "passport": 2.0,
-        "social security number": 2.0,
-        "proof of address": 2.5,
-        "debit card mailing": 2.5,
-        "account number generated": 2.5,
-        "checking account": 1.5,
-        "savings account": 1.5,
-    },
-    "fraud_dispute": {
-        "unauthorized charge": 3.0,
-        "unauthorized transaction": 3.0,
-        "card fraud": 3.0,
-        "stolen card": 3.0,
-        "lost card": 2.0,
-        "didn't make this": 3.0,
-        "i did not make": 3.0,
-        "fraudulent": 3.0,
-        "freeze the card": 3.0,
-        "close the card": 2.5,
-        "provisional credit": 2.5,
-        "reg e": 3.0,
-        "dispute the": 2.5,
-        "dispute": 2.5,
-        "not me": 2.5,
-        "didn't make": 2.5,
-        "someone else": 2.5,
-        "stolen": 2.5,
-        "compromised card": 3.0,
-        "elder financial exploitation": 3.0,
-        "check fraud": 3.0,
-    },
-    "fee_adjustment": {
-        "overdraft fee": 3.0,
-        "overdraft": 2.0,
-        "waive the fee": 3.0,
-        "waive this fee": 3.0,
-        "fee waiver": 3.0,
-        "courtesy waiver": 2.5,
-        "monthly fee": 2.0,
-        "service fee": 2.0,
-        "nsf fee": 3.0,
-        "insufficient funds fee": 3.0,
-    },
-    "aml_review": {
-        "wire transfer": 2.0,
-        "structuring": 3.0,
-        "large cash": 2.5,
-        "suspicious activity": 3.0,
-        "aml": 3.0,
-        "bsa": 3.0,
-        "money laundering": 3.0,
-        "ctr": 2.0,
-        "currency transaction": 2.5,
-    },
-    "retention": {
-        "cancel my account": 3.0,
-        "cancel the account": 3.0,
-        "i want to cancel": 3.0,
-        "close my account": 3.0,
-        "switching to": 2.5,
-        "competitor": 2.0,
-        "leave you guys": 2.0,
-        "cancellation": 2.5,
-        "early termination fee": 2.5,
-        "etf": 2.5,
-        "downgrade": 1.5,
-    },
-    "wire_transfer": {
-        "wire transfer": 3.0,
-        "outbound wire": 3.0,
-        "domestic wire": 3.0,
-        "international wire": 3.0,
-        "send a wire": 3.0,
-        "wire $": 3.0,
-        "wire five": 2.5,
-        "beneficiary": 2.5,
-        "ofac": 3.0,
-        "enhanced verification": 3.0,
-        "callback to phone": 2.5,
-        "wire disclosure": 2.5,
-        "settlement window": 2.0,
-    },
-    "account_signers": {
-        "authorized signer": 3.0,
-        "signer change": 3.0,
-        "add a signer": 3.0,
-        "add my brother": 2.5,
-        "control person": 3.0,
-        "signer update": 3.0,
-        "not a beneficial owner": 3.0,
-        "branch visit": 2.5,
-        "in-person id": 2.5,
-    },
-}
-
-
-def _detect_topic(transcript_text: str, retrieved_sop: str) -> str:
-    topic, _ = _score_topic(transcript_text, retrieved_sop)
-    return topic or "billing_issue"
-
-
-def _score_topic(transcript_text: str, retrieved_sop: str) -> tuple[str | None, float]:
-    """Return (best_topic, score). best_topic is None when no keyword fired."""
-    source = f"{transcript_text}\n{retrieved_sop}".lower()
-    scores: dict[str, float] = {}
-    for topic, keyword_weights in _TOPIC_KEYWORDS.items():
-        score = 0.0
-        for keyword, weight in keyword_weights.items():
-            if keyword in source:
-                score += weight * source.count(keyword)
-        scores[topic] = score
-    best_score = max(scores.values())
-    if best_score <= 0:
-        return None, 0.0
-    competitive_threshold = best_score * 0.85
-    for topic in _TOPIC_DETECTION_PRIORITY:
-        topic_score = scores.get(topic, 0.0)
-        if topic_score >= competitive_threshold:
-            return topic, topic_score
-    best_topic = max(scores, key=scores.get)
-    return best_topic, best_score
-
 
 def _detect_topic_from_sop_chunks(chunks: list[RetrievedChunk]) -> str | None:
     if not chunks:
@@ -894,328 +479,10 @@ def _extract_sop_steps(retrieved_sop: str) -> list[str]:
     return steps[:5]
 
 
-def _step_keywords(step: str) -> set[str]:
-    stop_words = {
-        "the",
-        "and",
-        "with",
-        "from",
-        "that",
-        "this",
-        "for",
-        "then",
-        "into",
-        "customer",
-        "agent",
-    }
-    return {token for token in _tokenize(step) if len(token) > 3 and token not in stop_words}
-
-
-def _steps_overlap(completed_step: str, expected_step: str) -> bool:
-    """True if the two step descriptions refer to the same action."""
-    stop = {
-        "the", "a", "an", "and", "or", "to", "of", "with",
-        "in", "is", "are", "if", "for", "not", "do", "does",
-        "it", "be", "as", "at", "by", "•", "-", "–",
-    }
-    a_tokens = set(completed_step.lower().replace("_", " ").split()) - stop
-    b_tokens = set(expected_step.lower().replace("_", " ").split()) - stop
-    if not a_tokens or not b_tokens:
-        return False
-    overlap = len(a_tokens & b_tokens) / min(len(a_tokens), len(b_tokens))
-    if overlap >= 0.35:
-        return True
-    return _alias_match(completed_step, expected_step)
-
-
-def _trajectory_missing_steps(transcript_text: str, expected_steps: list[str]) -> list[str]:
-    transcript_tokens = set(_tokenize(transcript_text))
-    completed: list[str] = []
-    missing: list[str] = []
-    for step in expected_steps:
-        keywords = _step_keywords(step)
-        if not keywords:
-            continue
-        overlap = len(keywords.intersection(transcript_tokens))
-        threshold = max(1, len(keywords) // 3)
-        if overlap >= threshold:
-            completed.append(step)
-        else:
-            missing.append(step)
-
-    final_missing: list[str] = []
-    for step in missing:
-        if any(_steps_overlap(completed_step, step) for completed_step in completed):
-            continue
-        final_missing.append(step)
-    return final_missing
-
-
-def _merge_missing_steps(
-    deterministic_missing: list[str],
-    llm_missing: list[str],
-) -> list[str]:
-    if not llm_missing:
-        return deterministic_missing
-    if not deterministic_missing:
-        return llm_missing
-
-    normalized_deterministic = {step.lower(): step for step in deterministic_missing}
-    merged = list(deterministic_missing)
-    for llm_step in llm_missing:
-        llm_keywords = _step_keywords(llm_step)
-        matched = False
-        for expected_lower, original_step in normalized_deterministic.items():
-            expected_keywords = _step_keywords(expected_lower)
-            if llm_keywords and expected_keywords and llm_keywords.intersection(expected_keywords):
-                matched = True
-                break
-        if not matched and llm_step not in merged:
-            merged.append(llm_step)
-    return merged
-
-
-def _is_resolved_heuristic(transcript_text: str) -> Optional[bool]:
-    """Detect call-level resolution.
-
-    Strategy:
-      1) Hard NEGATIVE markers (escalation / no-resolution) → not resolved.
-      2) Strong POSITIVE markers (concrete outcome delivered) → resolved.
-      3) Otherwise weight positive vs negative soft signals; tie/none → abstain (None).
-
-    Bare 'thank you' alone is never enough; every polite call ends with it.
-    """
-    text = transcript_text.lower()
-
-    # ── Hard negative: explicit non-resolution / escalation ─────────────
-    hard_negative = (
-        "still not working",
-        "didn't work",
-        "not fixed",
-        "we cannot",
-        "we can't process",
-        "unable to process",
-        "won't be able to",
-        "outside my authority",
-        "manager approval ticket",
-        "back-office ticket",
-        "needs more information",
-        "have to escalate",
-        "still being investigated",
-        "three-strike termination",
-        "ending this call",
-        "i have to disconnect",
-        "freeze the account",
-    )
-    if any(marker in text for marker in hard_negative):
-        return False
-
-    # ── Strong positive: concrete outcome delivered on the call ─────────
-    strong_positive = (
-        "credit has been applied",
-        "credit has been approved",
-        "credit has been processed",
-        "credit of $",
-        "credit of about $",
-        "refund of $",
-        "refund has been processed",
-        "fee has been waived",
-        "fee waived",
-        "fee is waived",
-        "i've waived",
-        "i have waived",
-        "i've applied",
-        "i have applied",
-        "i applied a",
-        "applied a $",
-        "applied a credit",
-        "applied the credit",
-        "applied the refund",
-        "approved the credit",
-        "approved the refund",
-        "approved a credit",
-        "credit to your account",
-        "credit on the account",
-        "credit on your account",
-        "your account is now open",
-        "account is now active",
-        "your new account number",
-        "you should see this on your next",
-        "appear on your next",
-        "applied to your next",
-        "reflected on your next",
-        "issue has been resolved",
-        "issue is resolved",
-        "problem is resolved",
-        "is fixed",
-        "is now working",
-        "works now",
-        "back online",
-        "successfully reset",
-        "successfully verified",
-        "your plan has been upgraded",
-        "your plan has been updated",
-        "your plan is now",
-        "is live on your account",
-        "i upgraded your",
-        "plan change has been applied",
-        "your account has been updated",
-        "case reference number for today",
-        "ticket has been created",
-    )
-    if any(marker in text for marker in strong_positive):
-        return True
-
-    # ── Soft signals — need a small majority to count as resolved ──────
-    soft_positive = (
-        "case reference number is",
-        "case reference number:",
-        "ticket number is",
-        "ticket reference",
-        "ticket id is",
-        "i have processed",
-        "i have applied",
-        "all set",
-        "all set with",
-        "confirmation number is",
-        "confirmation email",
-        "you'll receive an email",
-        "you should receive",
-        "anything else i can help",
-    )
-    soft_negative = (
-        "i'll have to",
-        "call back",
-        "i'll follow up",
-        "i will follow up",
-        "we'll get back",
-        "needs further review",
-        "review by our team",
-        "manager will review",
-    )
-    pos = sum(1 for m in soft_positive if m in text)
-    neg = sum(1 for m in soft_negative if m in text)
-    if pos >= 2 and pos > neg:
-        return True
-    return None
-
-
-def _efficiency_score_heuristic(transcript_text: str, missing_steps: list[str], expected_steps: list[str]) -> int:
-    if not expected_steps:
-        return 6
-    missing_ratio = min(len(missing_steps), len(expected_steps)) / len(expected_steps)
-    coverage = 1.0 - missing_ratio
-    score = int(round(1 + 9 * coverage))
-    turns = len([line for line in transcript_text.splitlines() if line.strip()])
-    if turns > 20:
-        score -= 1
-    if turns > 30:
-        score -= 1
-    return max(1, min(10, score))
-
 
 def _split_sentences(text: str) -> list[str]:
     return [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
 
-
-EMOTIONAL_QUOTE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "negative": (
-        "frustrat",
-        "angry",
-        "upset",
-        "terrible",
-        "unacceptable",
-        "not working",
-        "still",
-        "again",
-        "delay",
-        "waiting",
-        "issue",
-        "problem",
-        "broken",
-        "failed",
-        "cannot",
-        "can't",
-        "won't",
-        "refund",
-        "complaint",
-    ),
-    "positive": (
-        "thank",
-        "great",
-        "resolved",
-        "fixed",
-        "helpful",
-        "perfect",
-        "appreciate",
-    ),
-}
-
-
-def _sentence_emotion_score(sentence: str, target_emotion: str | None = None) -> float:
-    text = sentence.lower()
-    score = 0.0
-
-    negative_hits = sum(1 for token in EMOTIONAL_QUOTE_KEYWORDS["negative"] if token in text)
-    positive_hits = sum(1 for token in EMOTIONAL_QUOTE_KEYWORDS["positive"] if token in text)
-
-    score += (negative_hits * 1.6)
-    score += (positive_hits * 0.9)
-
-    if "!" in sentence:
-        score += 0.8
-    if "?" in sentence:
-        score += 0.3
-    if len(sentence.split()) >= 8:
-        score += 0.4
-
-    if target_emotion:
-        target_polarity = _emotion_polarity(target_emotion)
-        if target_polarity == "negative":
-            score += (negative_hits * 1.1)
-            score -= (positive_hits * 0.4)
-        elif target_polarity == "positive":
-            score += (positive_hits * 0.6)
-
-    # Down-rank identity-only lines that often pollute evidence snippets.
-    if "my name is" in text or "pin is" in text:
-        score -= 1.8
-
-    return score
-
-
-def _quote_candidates(text: str, max_quotes: int = 3, target_emotion: str | None = None) -> list[str]:
-    if not text:
-        return []
-
-    sentences = _split_sentences(text)
-    scored_sentences: list[tuple[float, int, str]] = []
-    for sentence in sentences:
-        cleaned = sentence.strip().strip('"')
-        if len(cleaned.split()) < 4:
-            continue
-
-        score = _sentence_emotion_score(cleaned, target_emotion=target_emotion)
-        scored_sentences.append((score, len(scored_sentences), cleaned))
-
-    if scored_sentences:
-        scored_sentences.sort(key=lambda item: (-item[0], item[1]))
-        return [sentence for _, _, sentence in scored_sentences[:max_quotes]]
-
-    quotes: list[str] = []
-    for sentence in sentences:
-        cleaned = sentence.strip().strip('"')
-        if len(cleaned.split()) < 4:
-            continue
-        quotes.append(cleaned)
-        if len(quotes) >= max_quotes:
-            break
-
-    if quotes:
-        return quotes
-
-    fallback = text.strip().replace("\n", " ")
-    return [fallback[:180]] if fallback else []
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
@@ -1225,41 +492,6 @@ def _truncate_text(text: str, max_chars: int) -> str:
     trimmed = normalized[:max_chars].rsplit(" ", 1)[0].strip()
     return trimmed or normalized[:max_chars].strip()
 
-
-def _llm_failure_reason(exc: Exception) -> str:
-    message = str(exc or "").strip().lower()
-    if "rate limit" in message or "rate_limit_exceeded" in message or "error code: 429" in message:
-        return "the LLM provider rate limit was reached"
-    if "api key" in message or "unauthorized" in message or "forbidden" in message or "authentication" in message:
-        return "LLM authentication failed"
-    if "timeout" in message or "timed out" in message:
-        return "the LLM request timed out"
-    if "connection" in message or "refused" in message or "unavailable" in message:
-        return "the LLM service was unavailable"
-    return "the LLM service was unavailable"
-
-
-def _build_customer_emotion_reasoning(emotion: str, root_cause: str, quotes: list[str]) -> str:
-    quote = quotes[0] if quotes else ""
-    emotional_state = _normalize_acoustic_label(emotion)
-    root = (root_cause or "").strip()
-    if root and INSUFFICIENT_EVIDENCE_LABEL not in root.lower():
-        return root
-
-    baseline_reasons: dict[str, str] = {
-        "angry": "Customer language and tone indicate perceived service failure and elevated agitation.",
-        "frustrated": "Customer appears blocked in issue resolution and expresses repeated dissatisfaction.",
-        "sad": "Customer wording suggests disappointment and low-confidence expectations.",
-        "happy": "Customer language and tone indicate satisfaction with the handling and outcome.",
-        "neutral": "Customer wording remains informational without strong affective escalation.",
-    }
-    reason = baseline_reasons.get(
-        emotional_state,
-        "Customer emotion is present but transcript evidence is limited for a detailed causal explanation.",
-    )
-    if quote:
-        return f"{reason} Evidence: \"{quote}\""
-    return reason
 
 
 def _normalize_for_match(text: str) -> str:
@@ -1279,17 +511,6 @@ def _iso_or_none(value: datetime | None) -> str | None:
         return None
     return value.isoformat()
 
-
-def _ensure_minimum_policy_citation(nli_policy: NLIEvaluation, policy_text: str) -> None:
-    has_policy_citation = any(c.source == "policy" and bool((c.quote or "").strip()) for c in nli_policy.citations)
-    if has_policy_citation:
-        return
-
-    fallback_quotes = _quote_candidates(policy_text, max_quotes=1)
-    if fallback_quotes:
-        nli_policy.citations.append(
-            EvidenceCitation(source="policy", speaker="system", quote=fallback_quotes[0])
-        )
 
 
 def _has_mapped_transcript_citation(citations: list[EvidenceCitation]) -> bool:
@@ -1739,7 +960,7 @@ def _emotion_signal_confidence(
 
     text_confidence: float | None = None
     if span and span.quote.strip():
-        _label, text_confidence = infer_text_emotion_with_provider(span.quote)
+        _label, text_confidence = _model_call("text_emotion", infer_text_emotion_with_provider, span.quote)
 
     available = [score for score in [acoustic_confidence, text_confidence] if score is not None]
     if not available:
@@ -1964,34 +1185,6 @@ def _build_process_trigger_attributions(
     return attributions
 
 
-def _fallback_claim_citations(agent_statement: str) -> list[EvidenceCitation]:
-    return [
-        EvidenceCitation(source="transcript", speaker="agent", quote=quote)
-        for quote in _quote_candidates(agent_statement, max_quotes=2)
-    ]
-
-
-def _estimate_nli_confidence(verdict: str, similarity: float | None) -> float:
-    """Estimate a claim-provenance confidence when the LLM omits it.
-
-    Gemini routinely returns valid NLI JSON without a ``confidence_score``. Rather
-    than surface "Confidence N/A", derive a grounded estimate: a verdict-based
-    prior nudged toward the retrieval similarity that anchored the verdict.
-    """
-    verdict_prior = {
-        "Contradiction": 0.82,
-        "Entailment": 0.82,
-        "Supported": 0.82,
-        "Partial Attempt": 0.66,
-        "Neutral": 0.6,
-        "Insufficient Evidence": 0.5,
-    }.get(verdict, 0.6)
-    if similarity is not None:
-        # Blend the prior with retrieval evidence so weakly-anchored verdicts
-        # (low similarity) read as lower confidence.
-        verdict_prior = 0.6 * verdict_prior + 0.4 * _clamp_unit(similarity)
-    return round(_clamp_unit(verdict_prior), 2)
-
 
 def _build_claim_provenance_cards(
     nli_policy: NLIEvaluation,
@@ -2013,8 +1206,6 @@ def _build_claim_provenance_cards(
         for citation in nli_policy.citations
         if citation.source == "transcript" and citation.speaker in {"agent", "unknown"}
     ]
-    if not claim_citations:
-        claim_citations = _fallback_claim_citations(agent_statement)
     if not claim_citations and (agent_statement or "").strip():
         claim_citations = [
             EvidenceCitation(
@@ -2107,11 +1298,7 @@ def _build_claim_provenance_cards(
                 retrieved_policy=PolicyReference.model_validate(policy_reference.model_dump()),
                 semantic_similarity=similarity,
                 nli_verdict=verdict,  # type: ignore[arg-type]
-                confidence=(
-                    nli_policy.confidence_score
-                    if nli_policy.confidence_score is not None
-                    else _estimate_nli_confidence(verdict, similarity)
-                ),
+                confidence=nli_policy.confidence_score,
                 reasoning=nli_policy.justification,
                 provenance=provenance or "Active policy context",
                 supporting_quotes=[quote for quote in [claim_text, policy_reference.clause] if quote],
@@ -2216,35 +1403,20 @@ def _build_rolling_windows(
     return windows
 
 
-def _count_role_lines(window_text: str, role: str) -> int:
-    prefix = f"{role.lower()}:"
-    return sum(1 for line in window_text.splitlines() if line.lower().startswith(prefix))
-
-
-def _emotion_window_score(window: TranscriptWindow) -> tuple[int, int, int]:
-    customer_lines = [
-        line.split(":", 1)[1].strip()
-        for line in window.text.splitlines()
-        if line.lower().startswith("customer:") and ":" in line
-    ]
-    joined_customer = " ".join(customer_lines)
-    text_emotion, text_confidence = infer_text_emotion_with_provider(joined_customer)
-    polarity_conflict_markers = int(round(text_confidence * 10))
-    if _emotion_polarity(text_emotion) == "negative":
-        polarity_conflict_markers += 2
-    if "!" in joined_customer:
-        polarity_conflict_markers += 1
-    return (
-        polarity_conflict_markers,
-        _count_role_lines(window.text, "customer"),
-        window.end_index,
+def _emotion_window_score(window: TranscriptWindow, utterances: list[Utterance]) -> tuple[float, int]:
+    """Rank windows by the pipeline's (acoustic/fused) negative customer emotion signal."""
+    negative_signal = sum(
+        float(u.emotion_confidence or 0.0)
+        for u in utterances[window.start_index : window.end_index + 1]
+        if _utterance_speaker(u) == "customer" and _emotion_polarity(u.emotion or "neutral") == "negative"
     )
+    return negative_signal, window.end_index
 
 
-def _select_emotion_window(windows: list[TranscriptWindow]) -> TranscriptWindow | None:
+def _select_emotion_window(windows: list[TranscriptWindow], utterances: list[Utterance]) -> TranscriptWindow | None:
     if not windows:
         return None
-    return max(windows, key=_emotion_window_score)
+    return max(windows, key=lambda window: _emotion_window_score(window, utterances))
 
 
 def _select_process_windows(windows: list[TranscriptWindow], max_windows: int = MAX_PROCESS_WINDOWS) -> list[TranscriptWindow]:
@@ -2273,22 +1445,6 @@ def _render_window_bundle(windows: list[TranscriptWindow]) -> str:
     return "\n\n".join(blocks)
 
 
-def _window_citations(windows: list[TranscriptWindow]) -> list[EvidenceCitation]:
-    citations: list[EvidenceCitation] = []
-    for window in windows:
-        snippet = window.text.splitlines()[0].strip() if window.text.splitlines() else ""
-        if not snippet:
-            continue
-        citations.append(
-            EvidenceCitation(
-                source="transcript",
-                speaker="unknown",
-                utterance_index=window.start_index,
-                quote=snippet[:220],
-            )
-        )
-    return citations
-
 
 async def analyze_emotion_shift(
     agent_context: str,
@@ -2296,43 +1452,21 @@ async def analyze_emotion_shift(
     acoustic_emotion: str,
     conversation_text: str = "",
 ) -> EmotionShiftAnalysis:
+    """Diagnose agent friction with the emotion-shift LLM chain; LLM failures propagate."""
     inferred_emotion = _normalize_acoustic_label(acoustic_emotion)
-    _text_emotion, text_confidence = infer_text_emotion_with_provider(customer_text)
 
-    # Agent-behaviour friction (interruption / dismissive tone / missing
-    # acknowledgment) is INDEPENDENT of the customer's acoustic-vs-text state:
-    # an agent can be dismissive to a perfectly calm customer. We therefore no
-    # longer gate the friction LLM on cross-modal/negative-acoustic signals
-    # (that gate was returning "none" for every call, pinning empathy at 1.0).
-    # Instead we always run the detector whenever there is a real conversation,
-    # and feed it the speaker-labelled transcript so it can actually see the
-    # agent's turns — previously it was asked to spot agent interruptions while
-    # receiving only the customer's text.
+    # Agent-behaviour friction is independent of the customer's emotion, so the
+    # chain always runs on a real, speaker-labelled conversation.
     conversation = (conversation_text or "").strip()
     if len(conversation.split()) < 8:
-        quotes = _quote_candidates(customer_text, max_quotes=2, target_emotion=inferred_emotion)
         return EmotionShiftAnalysis(
             is_dissonance_detected=False,
             dissonance_type="None",
             root_cause="Conversation too short to assess agent friction.",
             counterfactual_correction="If the agent had continued the same supportive approach, the interaction likely would have remained stable.",
-            evidence_quotes=quotes,
             current_customer_emotion=inferred_emotion,
-            current_emotion_reasoning=_build_customer_emotion_reasoning(
-                emotion=inferred_emotion,
-                root_cause="",
-                quotes=quotes,
-            ),
-            citations=[
-                EvidenceCitation(
-                    source="transcript",
-                    speaker="customer",
-                    quote=quote,
-                )
-                for quote in quotes
-            ],
+            current_emotion_reasoning=INSUFFICIENT_EVIDENCE_LABEL,
             insufficient_evidence=True,
-            confidence_score=_clamp_unit(text_confidence),
         )
 
     friction_agent_context = (
@@ -2341,40 +1475,16 @@ async def analyze_emotion_shift(
         "interruption, dismissive tone, or missing acknowledgment):\n"
         f"{conversation}"
     )
-
-    chain = build_emotion_shift_chain()
-    try:
-        from app.llm_trigger.chains import _invoke_chain_with_retry
-        result = await _invoke_chain_with_retry(
-            chain,
-            {
-                "detected_emotion": acoustic_emotion,
-                "agent_context": _sanitize_for_prompt(friction_agent_context, max_length=7000),
-                "customer_text": _sanitize_for_prompt(customer_text),
-                "acoustic_emotion": acoustic_emotion,
-            },
-        )
-    except Exception as exc:
-        logger.warning("Emotion shift LLM chain failed, using fallback: %s", exc)
-        quotes = _quote_candidates(customer_text, max_quotes=2, target_emotion=inferred_emotion)
-        return EmotionShiftAnalysis(
-            is_dissonance_detected=True,
-            dissonance_type="Unknown",
-            root_cause=INSUFFICIENT_EVIDENCE_LABEL + DEGRADED_MODE_SUFFIX,
-            counterfactual_correction="If the agent had acknowledged the concern and confirmed a clear next action, escalation risk could have decreased.",
-            evidence_quotes=quotes,
-            citations=[
-                EvidenceCitation(source="transcript", speaker="customer", quote=quote)
-                for quote in quotes
-            ],
-            current_customer_emotion=inferred_emotion,
-            current_emotion_reasoning=_build_customer_emotion_reasoning(
-                emotion=inferred_emotion,
-                root_cause=INSUFFICIENT_EVIDENCE_LABEL,
-                quotes=quotes,
-            ),
-            confidence_score=0.0,
-        )
+    result = await _run_chain(
+        "emotion_shift",
+        build_emotion_shift_chain,
+        {
+            "detected_emotion": acoustic_emotion,
+            "agent_context": _sanitize_for_prompt(friction_agent_context, max_length=7000),
+            "customer_text": _sanitize_for_prompt(customer_text),
+            "acoustic_emotion": acoustic_emotion,
+        },
+    )
     result.is_dissonance_detected = result.dissonance_type.strip().lower() != "none"
     # Suppress ungrounded friction: if the model claims agent friction but cannot
     # back it with an agent-spoken quote, treat the call as friction-free so a
@@ -2383,13 +1493,11 @@ async def analyze_emotion_shift(
         result.dissonance_type = "none"
         result.is_dissonance_detected = False
         result.root_cause = "No agent-grounded friction evidence; treated as no friction."
-    if not result.evidence_quotes:
-        result.evidence_quotes = _quote_candidates(customer_text, max_quotes=3, target_emotion=inferred_emotion)
-    if not result.root_cause.strip():
-        result.root_cause = INSUFFICIENT_EVIDENCE_LABEL
-    if not result.evidence_quotes:
-        result.root_cause = INSUFFICIENT_EVIDENCE_LABEL
-    if INSUFFICIENT_EVIDENCE_LABEL in result.root_cause.lower():
+    if (
+        not result.root_cause.strip()
+        or not result.evidence_quotes
+        or INSUFFICIENT_EVIDENCE_LABEL in result.root_cause.lower()
+    ):
         result.root_cause = INSUFFICIENT_EVIDENCE_LABEL
     if not result.citations:
         result.citations = [
@@ -2397,14 +1505,40 @@ async def analyze_emotion_shift(
             for quote in result.evidence_quotes
         ]
     result.current_customer_emotion = inferred_emotion
-    result.current_emotion_reasoning = _build_customer_emotion_reasoning(
-        emotion=inferred_emotion,
-        root_cause=result.root_cause,
-        quotes=result.evidence_quotes,
-    )
-    if result.confidence_score is None:
-        result.confidence_score = _clamp_unit(text_confidence)
     return result
+
+
+async def classify_topic(transcript_text: str) -> str:
+    """Classify the call into one RESOLUTION_GRAPHS topic (or UNKNOWN_TOPIC) with the fast LLM stage."""
+    result = await _run_chain(
+        "topic_classification",
+        build_topic_classification_chain,
+        {"transcript_text": _sanitize_for_prompt(transcript_text, max_length=6000)},
+    )
+    return result.topic
+
+
+def _resolve_step_labels(step_keys: list[str], expected_steps: list[str]) -> list[str]:
+    """Map LLM step_key outputs back to human-readable step labels."""
+    labels = {**STEP_KEY_TO_LABEL, **{_step_key(step): step for step in expected_steps}}
+    resolved: list[str] = []
+    for key in step_keys:
+        label = labels.get(_step_key(key), key)
+        if label not in resolved:
+            resolved.append(label)
+    return resolved
+
+
+def _reference_sop_citation(chunks: list[RetrievedChunk]) -> EvidenceCitation:
+    primary = chunks[0]
+    source_file = (primary.metadata.get("source_file") or "").strip()
+    header_parts = " > ".join(
+        str(primary.metadata.get(k)).strip()
+        for k in ("Header 1", "Header 2", "Header 3")
+        if primary.metadata.get(k)
+    )
+    label = f"{source_file} — {header_parts}" if source_file and header_parts else (source_file or "Retrieved SOP")
+    return EvidenceCitation(source="sop", speaker="system", quote=f"[Reference SOP] {label}")
 
 
 async def evaluate_process_adherence(
@@ -2413,7 +1547,9 @@ async def evaluate_process_adherence(
     org_filter: str | None = None,
     retrieved_sop_chunks: list[RetrievedChunk] | None = None,
     full_transcript_text: str | None = None,
+    topic: str | None = None,
 ) -> ProcessAdherenceReport:
+    """SOP adherence judged by the LLM; topic comes from ``classify_topic`` when not supplied."""
     if retrieved_sop_chunks is not None:
         retrieved_sop = "\n\n---\n\n".join(chunk.text for chunk in retrieved_sop_chunks if chunk.text)
     else:
@@ -2441,273 +1577,56 @@ async def evaluate_process_adherence(
             retrieved_sop = ""
             retrieved_sop_chunks = []
 
-    # Two-pass topic detection: keyword score on the TRANSCRIPT is primary
-    # (the transcript carries the strongest topic signal). The retrieved-chunk
-    # source_file hint is only used when keyword scoring is genuinely weak
-    # (no keyword fired) — using the file hint as primary would let a single
-    # off-topic retrieved chunk hijack the whole pipeline (e.g. a retention
-    # SOP getting recalled by 'credit' wording in a pure refund call).
-    # Topic detection uses the FULL transcript (when available), not just the
-    # rolling-window slice — keyword density on a short window is too noisy.
-    topic_source_text = full_transcript_text or transcript_text
-    keyword_topic, keyword_score = _score_topic(topic_source_text, "")
-    file_topic = _detect_topic_from_sop_chunks(retrieved_sop_chunks or [])
-    logger.debug(
-        "topic_detect: keyword=%r score=%.1f file=%r tx_len=%d sop_chunks=%d",
-        keyword_topic, keyword_score, file_topic, len(topic_source_text or ""), len(retrieved_sop_chunks or []),
-    )
-    if keyword_topic and keyword_score >= 3.0:
-        # Strong keyword signal — trust the transcript regardless of file hint.
-        topic_hint = keyword_topic
-    elif keyword_topic and file_topic and keyword_topic == file_topic:
-        # Both agree → confident
-        topic_hint = keyword_topic
-    elif file_topic:
-        topic_hint = file_topic
-    else:
-        topic_hint = keyword_topic or "billing_issue"
+    if topic is None:
+        topic = await classify_topic(full_transcript_text or transcript_text)
+    # When the classifier abstains, fall back to the retrieved SOP document's own metadata.
+    topic_hint = topic if topic != UNKNOWN_TOPIC else (_detect_topic_from_sop_chunks(retrieved_sop_chunks or []) or "")
 
     # Topic-aware SOP filter: drop chunks whose source_file doesn't match the topic,
     # so the LLM doesn't see retention SOP text when the call is about a refund.
     if retrieved_sop_chunks:
         filtered_chunks = _filter_chunks_by_topic(retrieved_sop_chunks, topic_hint)
-        if filtered_chunks is not retrieved_sop_chunks and len(filtered_chunks) != len(retrieved_sop_chunks):
+        if len(filtered_chunks) != len(retrieved_sop_chunks):
             retrieved_sop_chunks = filtered_chunks
             retrieved_sop = "\n\n---\n\n".join(chunk.text for chunk in filtered_chunks if chunk.text)
 
-    extracted_sop_steps = _extract_sop_steps(retrieved_sop)
-    if extracted_sop_steps:
-        expected_steps = extracted_sop_steps[:8]
-    else:
-        expected_steps = RESOLUTION_GRAPHS.get(topic_hint, []).copy()[:8]
-
+    expected_steps = _extract_sop_steps(retrieved_sop)[:8] or RESOLUTION_GRAPHS.get(topic_hint, [])[:8]
     expected_steps = _filter_cross_topic_steps(
         _filter_prose_steps(_filter_bullet_steps(expected_steps)),
         topic_hint,
     )
 
-    deterministic_missing = _filter_cross_topic_steps(
-        _filter_prose_steps(
-            _filter_bullet_steps(
-                _trajectory_missing_steps(transcript_text, expected_steps)
-            )
-        ),
-        topic_hint,
+    result = await _run_chain(
+        "process_adherence",
+        build_process_adherence_chain,
+        {
+            "topic_hint": topic_hint or UNKNOWN_TOPIC,
+            "transcript_text": _sanitize_for_prompt(transcript_text),
+            "retrieved_sop": _sanitize_for_prompt(retrieved_sop or "No SOP context found.", max_length=6000),
+            "expected_resolution_graph": "\n".join(f"- {step}" for step in expected_steps)
+            or "- No explicit graph available.",
+        },
     )
-    deterministic_efficiency = _efficiency_score_heuristic(
-        transcript_text=transcript_text,
-        missing_steps=deterministic_missing,
-        expected_steps=expected_steps,
-    )
-    deterministic_resolved = _is_resolved_heuristic(full_transcript_text or transcript_text)
 
-    chain = build_process_adherence_chain()
-    try:
-        from app.llm_trigger.chains import _invoke_chain_with_retry
-        result = await _invoke_chain_with_retry(
-            chain,
-            {
-                "topic_hint": topic_hint,
-                "transcript_text": _sanitize_for_prompt(transcript_text),
-                "retrieved_sop": _sanitize_for_prompt(retrieved_sop or "No SOP context found.", max_length=6000),
-                "expected_resolution_graph": "\n".join(
-                    f"- {step}" for step in expected_steps
-                )
-                or "- No explicit graph available.",
-            }
-        )
-    except Exception as exc:
-        logger.warning("Process adherence LLM chain failed, using deterministic fallback: %s", exc)
-        evidence_quotes = _quote_candidates(transcript_text, max_quotes=3)
-        citations = [
-            EvidenceCitation(source="transcript", speaker="unknown", quote=quote)
-            for quote in evidence_quotes
-        ]
-        sop_quote = _quote_candidates(retrieved_sop, max_quotes=1)
-        if sop_quote:
-            citations.append(EvidenceCitation(source="sop", speaker="system", quote=sop_quote[0]))
-
-        # Inject the reference-SOP citation here too so the degraded path
-        # still surfaces WHICH SOP grounded the verdict.
-        if retrieved_sop_chunks:
-            primary = retrieved_sop_chunks[0]
-            source_file = (primary.metadata.get("source_file") or "").strip()
-            header_parts = " > ".join(
-                str(primary.metadata.get(k)).strip()
-                for k in ("Header 1", "Header 2", "Header 3")
-                if primary.metadata.get(k)
-            )
-            label = f"{source_file} — {header_parts}" if source_file and header_parts else (source_file or "Retrieved SOP")
-            citations.append(
-                EvidenceCitation(source="sop", speaker="system", quote=f"[Reference SOP] {label}")
-            )
-
-        return ProcessAdherenceReport(
-            detected_topic=topic_hint,
-            is_resolved=deterministic_resolved if deterministic_resolved is not None else False,
-            efficiency_score=deterministic_efficiency,
-            justification=(
-                f"LLM analysis is temporarily unavailable because {_llm_failure_reason(exc)}. "
-                "Scores are provisional estimates from transcript and SOP keyword coverage."
-                + DEGRADED_MODE_SUFFIX
-            ),
-            missing_sop_steps=deterministic_missing,
-            evidence_quotes=evidence_quotes,
-            citations=citations,
-            confidence_score=0.0,
-        )
-
-    # If the deterministic topic detector found a STRONG signal (high keyword score
-    # or both heuristics agree), trust it over the LLM. The LLM has been observed
-    # to default to refund_request/billing_issue for any call that mentions money
-    # — overriding it with a strong-signal hint is safer than letting the LLM
-    # mislabel KYC / fraud / 2FA / cancellation calls.
-    llm_topic = (result.detected_topic or "").strip()
-    if topic_hint and (
-        not llm_topic
-        or (keyword_score >= 6.0)
-        or (keyword_topic and file_topic and keyword_topic == file_topic and keyword_score >= 3.0)
-    ):
-        if llm_topic != topic_hint:
-            logger.info(
-                "process_adherence topic override: llm=%r -> hint=%r (kw_score=%.1f, kw_topic=%r, file_topic=%r)",
-                llm_topic, topic_hint, keyword_score, keyword_topic, file_topic,
-            )
-        result.detected_topic = topic_hint
-
-    if result.missing_sop_steps:
-        result.missing_sop_steps = _filter_cross_topic_steps(
-            _filter_prose_steps(
-                _filter_bullet_steps(result.missing_sop_steps)
-            ),
-            topic_hint,
-        )
-
+    result.detected_topic = topic_hint or (result.detected_topic or "").strip()
     result.missing_sop_steps = _filter_cross_topic_steps(
-        _filter_prose_steps(
-            _filter_bullet_steps(
-                _merge_missing_steps(
-                    deterministic_missing=deterministic_missing,
-                    llm_missing=result.missing_sop_steps,
-                )
-            )
-        ),
+        _filter_prose_steps(_filter_bullet_steps(_resolve_step_labels(result.missing_sop_steps, expected_steps))),
         topic_hint,
     )
-    result.efficiency_score = max(
-        1,
-        min(10, int(round((result.efficiency_score + deterministic_efficiency) / 2))),
-    )
-    if deterministic_resolved is not None:
-        result.is_resolved = deterministic_resolved
-    STRONG_UNRESOLVED_SIGNALS = [
-        "escalat",
-        "not resolved",
-        "unresolved",
-        "wrong information",
-        "incorrect information",
-        "misinformation",
-        "policy violation",
-        "failed to",
-        "left the call",
-        "hung up",
-        "terminated the call",
-        "no resolution",
-        "pending investigation",
-    ]
-    transcript_for_resolution = full_transcript_text or transcript_text
-    if result.is_resolved and transcript_for_resolution:
-        transcript_end = transcript_for_resolution[int(len(transcript_for_resolution) * 0.75):]
-        end = transcript_end.lower()
-        if any(sig in end for sig in STRONG_UNRESOLVED_SIGNALS):
-            result.is_resolved = False
-            result.justification = (
-                f"{result.justification} Overridden: strong unresolved signal in call ending."
-            ).strip()
-        elif result.is_resolved:
-            DID_NOT_RESOLUTION_WORDS = [
-                "did not resolve",
-                "did not fix",
-                "did not complete",
-                "did not process",
-                "did not apply",
-                "did not waive",
-                "did not open",
-                "did not escalate",
-            ]
-            if any(phrase in end for phrase in DID_NOT_RESOLUTION_WORDS):
-                result.is_resolved = False
-                result.justification = (
-                    f"{result.justification} Overridden: did-not resolution signal."
-                ).strip()
-            elif result.is_resolved:
-                COMPLAINT_FILED_PHRASES = [
-                    "filed a complaint",
-                    "opening a complaint",
-                    "complaint has been filed",
-                    "formal complaint",
-                ]
-                if any(phrase in end for phrase in COMPLAINT_FILED_PHRASES):
-                    result.is_resolved = False
-                    result.justification = (
-                        f"{result.justification} Overridden: complaint filed signal."
-                    ).strip()
-                elif (
-                    result.is_resolved
-                    and "follow-up required" in end
-                    and "no follow-up required" not in end
-                ):
-                    result.is_resolved = False
-                    result.justification = (
-                        f"{result.justification} Overridden: follow-up required signal."
-                    ).strip()
-    if not result.evidence_quotes:
-        result.evidence_quotes = _quote_candidates(transcript_text, max_quotes=3)
     if not result.citations:
         result.citations = [
             EvidenceCitation(source="transcript", speaker="unknown", quote=quote)
             for quote in result.evidence_quotes
         ]
-        sop_quote = _quote_candidates(retrieved_sop, max_quotes=1)
-        if sop_quote:
-            result.citations.append(
-                EvidenceCitation(source="sop", speaker="system", quote=sop_quote[0])
-            )
 
-    # Ensure the response always names WHICH SOP grounded the verdict, even
-    # when the LLM returned no missing-step (i.e. fully adherent calls). We
-    # prepend a synthetic SOP citation whose quote is the SOP file name +
-    # section header — that way the UI explainability panel and downstream
-    # eval can both see the retrieval source without having to read the prompt.
-    if retrieved_sop_chunks:
-        has_sop_citation_with_source = any(
-            (c.source or "").lower() == "sop" and any(
-                tok in (c.quote or "").lower()
-                for tok in ("sop_", "policy_", ".pdf")
-            )
-            for c in (result.citations or [])
-        )
-        if not has_sop_citation_with_source:
-            primary = retrieved_sop_chunks[0]
-            source_file = (primary.metadata.get("source_file") or "").strip()
-            header_parts = " > ".join(
-                str(primary.metadata.get(k)).strip()
-                for k in ("Header 1", "Header 2", "Header 3")
-                if primary.metadata.get(k)
-            )
-            label = f"{source_file} — {header_parts}" if source_file and header_parts else (source_file or "Retrieved SOP")
-            result.citations.append(
-                EvidenceCitation(
-                    source="sop",
-                    speaker="system",
-                    quote=f"[Reference SOP] {label}",
-                )
-            )
-
-    if result.confidence_score is None and retrieved_sop_chunks:
-        scored_chunks = [chunk.score for chunk in retrieved_sop_chunks if chunk.score is not None]
-        if scored_chunks:
-            result.confidence_score = _clamp_unit(max(scored_chunks))
+    # Always name WHICH retrieved SOP grounded the verdict (file name + section
+    # header) so the explainability panel can show the retrieval source.
+    if retrieved_sop_chunks and not any(
+        (c.source or "").lower() == "sop"
+        and any(tok in (c.quote or "").lower() for tok in ("sop_", "policy_", ".pdf"))
+        for c in result.citations
+    ):
+        result.citations.append(_reference_sop_citation(retrieved_sop_chunks))
     return result
 
 
@@ -2722,75 +1641,18 @@ async def run_single_claim_nli_policy_check(
     returns entailment-style categories. It is intentionally separate from
     transcript-level compliance reporting.
     """
-    chain = build_nli_policy_chain()
-    try:
-        from app.llm_trigger.chains import _invoke_chain_with_retry
-        result = await _invoke_chain_with_retry(
-            chain,
-            {
-                "agent_statement": _sanitize_for_prompt(agent_statement),
-                "ground_truth_policy": _sanitize_for_prompt(ground_truth_policy, max_length=6000),
-            }
-        )
-    except Exception as exc:
-        logger.warning("NLI policy LLM chain failed, using deterministic fallback: %s", exc)
-        statement_quote = _quote_candidates(agent_statement, max_quotes=1)
-        policy_quote = _quote_candidates(ground_truth_policy, max_quotes=1)
-        evidence_quotes = statement_quote + [q for q in policy_quote if q not in statement_quote]
-        citations: list[EvidenceCitation] = []
-        if statement_quote:
-            citations.append(EvidenceCitation(source="transcript", speaker="agent", quote=statement_quote[0]))
-        if policy_quote:
-            citations.append(EvidenceCitation(source="policy", speaker="system", quote=policy_quote[0]))
-
-        return NLIEvaluation(
-            nli_category="Benign Deviation",
-            justification=(
-                "Deterministic fallback was used because the LLM NLI service was unavailable. "
-                "This label is provisional and should be revalidated when LLM connectivity is restored."
-                + DEGRADED_MODE_SUFFIX
-            ),
-            evidence_quotes=evidence_quotes,
-            citations=citations,
-            insufficient_evidence=not bool(citations),
-            confidence_score=0.0,
-            policy_alignment_score=None,
-        )
-    # Capture the MODEL's own policy anchors before any synthetic backfill below
-    # (the fallbacks pull quotes straight from the policy text, which would
-    # otherwise auto-ground every verdict and defeat the contradiction gate).
+    result = await _run_chain(
+        "nli_policy",
+        build_nli_policy_chain,
+        {
+            "agent_statement": _sanitize_for_prompt(agent_statement),
+            "ground_truth_policy": _sanitize_for_prompt(ground_truth_policy, max_length=6000),
+        },
+    )
     model_policy_quotes = [
-        c.quote for c in (result.citations or [])
+        c.quote for c in result.citations
         if (c.source or "").lower() == "policy" and (c.quote or "").strip()
-    ]
-    model_policy_quotes += list(result.evidence_quotes or [])
-
-    if not result.evidence_quotes:
-        result.evidence_quotes = _quote_candidates(
-            f"{agent_statement}\n{ground_truth_policy}",
-            max_quotes=3,
-        )
-    if not result.citations:
-        citations: list[EvidenceCitation] = []
-        statement_quote = _quote_candidates(agent_statement, max_quotes=1)
-        if statement_quote:
-            citations.append(
-                EvidenceCitation(source="transcript", speaker="agent", quote=statement_quote[0])
-            )
-        policy_quote = _quote_candidates(ground_truth_policy, max_quotes=1)
-        if policy_quote:
-            citations.append(
-                EvidenceCitation(source="policy", speaker="system", quote=policy_quote[0])
-            )
-        result.citations = citations
-    if result.policy_alignment_score is None:
-        category = (result.nli_category or "").strip().lower()
-        if category == "entailment":
-            result.policy_alignment_score = 0.85
-        elif category == "benign deviation":
-            result.policy_alignment_score = 0.45
-        elif category in {"contradiction", "policy hallucination"}:
-            result.policy_alignment_score = 0.1
+    ] + list(result.evidence_quotes)
 
     # Contradiction grounding gate: a genuine contradiction must quote a clause
     # that actually exists in the retrieved policy. When the model cannot anchor
@@ -2876,7 +1738,9 @@ def _derive_llm_inputs(
     # Text-emotion fusion still needs content even when customer turns were not
     # separable; fall back locally without polluting the returned display text.
     fusion_text = customer_text or (_truncate_text(transcript_text, 900) if transcript_text else "")
-    fused = fuse_emotion_signals(
+    fused = _model_call(
+        "emotion_fusion",
+        fuse_emotion_signals,
         text=fusion_text,
         acoustic_emotion=acoustic_emotion,
         acoustic_confidence=acoustic_confidence,
@@ -2906,6 +1770,7 @@ async def _evaluate_policy_and_sop_trigger_checks(
     agent_statement: str,
     policy_context: str,
     full_transcript_text: str | None = None,
+    topic: str | None = None,
 ) -> tuple[ProcessAdherenceReport, NLIEvaluation]:
     """
     Run trigger checks that consume retrieved SOP/policy context.
@@ -2914,10 +1779,6 @@ async def _evaluate_policy_and_sop_trigger_checks(
     helper only performs judgment:
       - SOP process adherence for a transcript window.
       - NLI policy alignment for one agent statement.
-
-    `full_transcript_text` is forwarded so the topic & resolution heuristics
-    can see the whole call, not just the rolling-window slice (which is too
-    sparse for reliable keyword detection).
     """
     process_task = evaluate_process_adherence(
         transcript_text=process_context_text,
@@ -2925,6 +1786,7 @@ async def _evaluate_policy_and_sop_trigger_checks(
         org_filter=org_filter,
         retrieved_sop_chunks=sop_chunks,
         full_transcript_text=full_transcript_text,
+        topic=topic,
     )
     nli_task = run_single_claim_nli_policy_check(
         agent_statement=agent_statement,
@@ -3061,6 +1923,46 @@ async def invalidate_llm_trigger_cache(
     return count
 
 
+def _ensure_on_topic_sop_chunks(
+    sop_chunks: list[RetrievedChunk],
+    topic: str,
+    transcript_text: str,
+    org_filter: str | None,
+) -> list[RetrievedChunk]:
+    """Keep the SOP context on the classified topic, re-retrieving when the dense
+    retriever returned only off-topic documents (e.g. retention SOP for a refund call)."""
+    wanted_tokens = _TOPIC_TO_SOP_FILE_TOKENS.get(topic, ())
+    if not wanted_tokens:
+        return sop_chunks
+
+    def _on_topic(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        return [
+            c for c in chunks
+            if any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
+        ]
+
+    on_topic = _on_topic(sop_chunks)
+    if not on_topic:
+        from app.core.config import settings as _settings
+        from app.llm_trigger.retrieval import SOPRetriever
+
+        try:
+            on_topic = _on_topic(
+                SOPRetriever().retrieve_chunks(
+                    query_text=transcript_text,
+                    collection_name=_settings.QDRANT_COLLECTION_SOP_PARENTS,
+                    top_k=max(5, _settings.SOP_RETRIEVAL_TOP_K * 2),
+                    org_filter=org_filter,
+                    doc_type="sop",
+                )
+            )
+        except Exception as exc:
+            logger.warning("SOP topic re-retrieval failed (%s)", exc)
+    if on_topic and len(on_topic) != len(sop_chunks):
+        logger.info("SOP topic filter: %d -> %d chunks (topic=%r)", len(sop_chunks), len(on_topic), topic)
+    return on_topic or sop_chunks
+
+
 async def evaluate_interaction_triggers(
     session: AsyncSession,
     interaction_id: UUID,
@@ -3140,7 +2042,7 @@ async def evaluate_interaction_triggers(
         raise ValueError("No transcript text available for this interaction.")
 
     rolling_windows = _build_rolling_windows(utterances)
-    selected_emotion_window = _select_emotion_window(rolling_windows)
+    selected_emotion_window = _select_emotion_window(rolling_windows, utterances)
     process_windows = _select_process_windows(rolling_windows)
 
     process_context_text = _render_window_bundle(process_windows) or transcript_text
@@ -3202,66 +2104,12 @@ async def evaluate_interaction_triggers(
         sop_context = ""
         sop_chunks = []
 
-    # Topic-aware SOP re-retrieval: if the dense retriever picked off-topic
-    # chunks (e.g. retention SOP for a refund call because "credit" appears
-    # in both), do a targeted lookup against the expected SOP source_file
-    # and replace the chunk list. This keeps the LLM grounded on the correct
-    # SOP rather than letting the wrong chunk's missing-steps pollute output.
-    try:
-        full_topic, full_topic_score = _score_topic(transcript_text, "")
-        wanted_tokens = _TOPIC_TO_SOP_FILE_TOKENS.get(full_topic or "", ())
-        on_topic_already = any(
-            any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
-            for c in sop_chunks
-        )
-        logger.debug(
-            "sop_topic_check: topic=%r score=%.1f wanted=%r on_topic=%s n_chunks=%d srcs=%r",
-            full_topic, full_topic_score, wanted_tokens, on_topic_already,
-            len(sop_chunks), [c.metadata.get("source_file") for c in sop_chunks],
-        )
-        if full_topic and full_topic_score >= 3.0 and wanted_tokens and not on_topic_already:
-            from app.core.config import settings as _settings
-            from app.llm_trigger.retrieval import SOPRetriever
-            retriever = SOPRetriever()
-            try:
-                extra = retriever.retrieve_chunks(
-                    query_text=transcript_text,
-                    collection_name=_settings.QDRANT_COLLECTION_SOP_PARENTS,
-                    top_k=max(5, _settings.SOP_RETRIEVAL_TOP_K * 2),
-                    org_filter=org_filter,
-                    doc_type="sop",
-                )
-                on_topic_extra = [
-                    c for c in extra
-                    if any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
-                ]
-                if on_topic_extra:
-                    logger.info(
-                        "sop_retrieval topic override: topic=%r tokens=%r added %d chunk(s)",
-                        full_topic, wanted_tokens, len(on_topic_extra),
-                    )
-                    sop_chunks = on_topic_extra + [c for c in sop_chunks if c not in on_topic_extra]
-                    sop_context = "\n\n---\n\n".join(c.text for c in sop_chunks if c.text)
-            except Exception as inner_exc:
-                logger.warning("sop topic re-retrieval inner failure (%s)", inner_exc)
-
-        # ALWAYS hard-filter to on-topic chunks when we have a strong signal,
-        # even if the dense retriever already included one. This keeps the
-        # trigger attribution builder + LLM prompt strictly on-topic.
-        if full_topic and full_topic_score >= 3.0 and wanted_tokens:
-            on_topic_only = [
-                c for c in sop_chunks
-                if any(tok in str(c.metadata.get("source_file") or "").lower() for tok in wanted_tokens)
-            ]
-            if on_topic_only and len(on_topic_only) != len(sop_chunks):
-                logger.info(
-                    "sop topic hard-filter: %d -> %d chunks (topic=%r)",
-                    len(sop_chunks), len(on_topic_only), full_topic,
-                )
-                sop_chunks = on_topic_only
-                sop_context = "\n\n---\n\n".join(c.text for c in sop_chunks if c.text)
-    except Exception as exc:
-        logger.warning("sop topic re-retrieval skipped (%s)", exc)
+    topic = await classify_topic(transcript_text)
+    _log_step(interaction_id, "topic_classified", topic=topic)
+    on_topic_chunks = _ensure_on_topic_sop_chunks(sop_chunks, topic, transcript_text, org_filter)
+    if on_topic_chunks != sop_chunks:
+        sop_chunks = on_topic_chunks
+        sop_context = "\n\n---\n\n".join(c.text for c in sop_chunks if c.text)
 
     policy_context = await _resolve_active_policy_context(
         session=session,
@@ -3286,6 +2134,7 @@ async def evaluate_interaction_triggers(
         agent_statement=agent_statement,
         policy_context=policy_context.text,
         full_transcript_text=transcript_text,
+        topic=topic,
     )
     transcript_policy_task = _evaluate_transcript_policy_pipeline(
         transcript_text=process_context_text,
@@ -3307,24 +2156,6 @@ async def evaluate_interaction_triggers(
         )
     process_adherence, nli_policy = grounded_trigger_checks
 
-    window_citations = _window_citations(process_windows)
-    if window_citations:
-        if not process_adherence.citations:
-            process_adherence.citations = []
-        process_adherence.citations.extend(window_citations)
-
-    if selected_emotion_window:
-        emotion_window_quote = _quote_candidates(selected_emotion_window.text, max_quotes=1)
-        if emotion_window_quote:
-            emotion_shift.citations.append(
-                EvidenceCitation(
-                    source="transcript",
-                    speaker="unknown",
-                    utterance_index=selected_emotion_window.start_index,
-                    quote=emotion_window_quote[0],
-                )
-            )
-
     _backfill_transcript_citation_indices(emotion_shift.citations, utterances)
     _backfill_transcript_citation_indices(process_adherence.citations, utterances)
     _backfill_transcript_citation_indices(nli_policy.citations, utterances)
@@ -3337,7 +2168,6 @@ async def evaluate_interaction_triggers(
         process_adherence.justification = INSUFFICIENT_EVIDENCE_LABEL
         process_adherence.insufficient_evidence = True
 
-    _ensure_minimum_policy_citation(nli_policy, policy_context.text)
     has_policy_citation = any(c.source == "policy" and bool((c.quote or "").strip()) for c in nli_policy.citations)
     if not has_policy_citation:
         nli_policy.justification = INSUFFICIENT_EVIDENCE_LABEL

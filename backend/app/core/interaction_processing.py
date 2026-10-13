@@ -15,15 +15,12 @@ from sqlmodel import delete, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.api.routes.full.service import full_client
-from app.api.routes.transcription.service import transcription_client
 from app.core.audio_resolver import audio_media_type_from_path, fetch_audio_bytes
 from app.core.config import settings
 from app.core.database import engine
-from app.core.emotion_fusion import build_deterministic_emotion_analysis
 from app.core.notification_service import emit, emit_to_managers
 from app.core.inference_contracts import (
     audio_content_type,
-    build_local_full_response,
     is_supported_audio_filename,
 )
 from app.core.policy_violation_mapping import (
@@ -44,7 +41,6 @@ from app.models.organization import Organization
 from app.models.policy import CompanyPolicy, OrganizationPolicy, PolicyCompliance
 from app.models.processing import ProcessingJob
 from app.models.transcript import Transcript
-from app.models.user import User
 from app.models.utterance import Utterance
 
 
@@ -64,8 +60,12 @@ STAGE_ORDER: tuple[JobStage, ...] = (
 )
 
 
-def _deterministic_emotion_analysis(text: str) -> dict:
-    return build_deterministic_emotion_analysis(text)
+class StageFailed(RuntimeError):
+    """A pipeline stage failed; ``stages`` are the ProcessingJobs to mark failed."""
+
+    def __init__(self, stages: tuple[JobStage, ...], message: str):
+        super().__init__(message)
+        self.stages = stages
 
 
 def _emotion_min_segment_secs() -> float:
@@ -105,6 +105,8 @@ def apply_emotion_min_duration_gate(
             start, end = 0.0, 0.0
         duration = max(0.0, end - start)
         current = (seg.get("emotion") or "").strip() or None
+        if current == "unknown":
+            current = None
         if duration < threshold and prev_emotion:
             if current and current != prev_emotion:
                 seg["_emotion_original"] = current
@@ -263,311 +265,84 @@ async def save_audio_upload(organization_slug: str, interaction_id: UUID, filena
     return target_path.resolve()
 
 
-# Weighted phrase tables for content-based speaker role inference.
-# Diarization (WhisperX/PyAnnote) clusters voices into arbitrary IDs (SPEAKER_00,
-# SPEAKER_01); the cluster IDs carry no role semantics. We score each cluster's
-# accumulated text against these phrase lists to decide which cluster is the
-# agent and which is the customer.
-_AGENT_PHRASE_WEIGHTS: tuple[tuple[str, int], ...] = (
-    # Strong scripted openings/closings (call-center signature)
-    ("thank you for calling", 10),
-    ("thanks for calling", 10),
-    ("is there anything else i can help", 10),
-    ("welcome to", 8),
-    ("how can i help", 8),
-    ("how may i help", 8),
-    ("how can i assist", 8),
-    ("case reference", 8),
-    # Strong agent phrasing — verification script (high precision)
-    ("i'll need to verify", 8),
-    ("could you please confirm", 8),
-    ("could you please verify", 8),
-    ("could you confirm the", 7),
-    ("can you confirm the", 7),
-    ("for security purposes", 7),
-    ("for security reasons", 7),
-    ("let me pull up", 6),
-    ("let me look up", 6),
-    ("my name is", 6),
-    ("i can help you", 6),
-    ("i can assist", 6),
-    ("your case", 6),
-    ("case number", 6),
-    ("i'm sorry to hear", 5),
-    ("please verify", 5),
-    ("for verification", 5),
-    # Possessive flips — agent talks about the CUSTOMER's account
-    ("your account", 4),
-    ("your bill", 4),
-    ("your service", 4),
-    ("your name", 3),
-    ("on file", 4),
-    ("let me check", 3),
-    ("i understand", 3),
-    ("i apologize", 4),
-)
-_CUSTOMER_PHRASE_WEIGHTS: tuple[tuple[str, int], ...] = (
-    ("i need help", 8),
-    ("i was charged", 8),
-    ("i want a credit", 8),
-    # Refund / dispute openers — high-precision customer signals
-    ("i'd like a refund", 8),
-    ("i want a refund", 8),
-    ("i want my money back", 8),
-    ("i was overcharged", 8),
-    ("i didn't authorize", 8),
-    ("i didn't make this", 7),
-    ("this is unacceptable", 6),
-    ("this charge is wrong", 7),
-    ("are you serious", 6),
-    ("i'm calling because", 6),
-    ("cannot access", 6),
-    # Possessive flips — customer talks about THEIR OWN things
-    ("my bill", 6),
-    ("my internet", 6),
-    ("my service", 6),
-    ("my account", 4),
-    ("i can't", 5),
-    ("i cannot", 5),
-    ("i want to", 4),
-    ("i need to", 3),
-)
-
-
-STRONG_AGENT_PHRASES: tuple[str, ...] = (
-    "thank you for calling",
-    "how can i help",
-    "how may i help",
-    "my name is",
-    "i can help you with",
-    "i'll go ahead and",
-    "let me pull up your account",
-    "i do apologize",
-)
-
-
-def _strong_agent_phrase_boost(joined: str) -> float:
-    for phrase in STRONG_AGENT_PHRASES:
-        if phrase in joined:
-            return 15.0
-    return 0.0
-
-
 _lr_model = None
 _lr_vectorizer = None
 
 
+class SpeakerRoleModelUnavailable(RuntimeError):
+    pass
+
+
 def _load_lr_model_and_vectorizer():
+    """Load the LR + TF-IDF agent/customer classifier (research/training/customerAgentClassifier.ipynb)."""
     global _lr_model, _lr_vectorizer
     if _lr_model is None:
         try:
             import joblib
+
             core_dir = Path(__file__).parent
-            model_path = core_dir / "model.pkl"
-            vectorizer_path = core_dir / "vectorizer.pkl"
-            if model_path.exists() and vectorizer_path.exists():
-                _lr_model = joblib.load(model_path)
-                _lr_vectorizer = joblib.load(vectorizer_path)
-                logger.info("Successfully loaded Logistic Regression model and vectorizer for speaker classification.")
-        except Exception as e:
-            logger.warning("Failed to load Logistic Regression model or vectorizer: %s", e)
+            _lr_vectorizer = joblib.load(core_dir / "vectorizer.pkl")
+            _lr_model = joblib.load(core_dir / "model.pkl")
+        except Exception as exc:
+            raise SpeakerRoleModelUnavailable(
+                f"Speaker-role model failed to load: {_format_processing_exception(exc)}"
+            ) from exc
+    return _lr_model, _lr_vectorizer
 
 
-def assign_cluster_roles_from_text(
-    segments: list[dict[str, Any]],
-    agent_name: str | None = None,
-) -> dict[str, SpeakerRole]:
-    """Decide which raw diarization clusters are agent vs customer based on content.
+def _agent_probabilities(texts: list[str]) -> list[float]:
+    """P(agent) per text. The model was trained on single Taskmaster utterances (label 1 = agent)."""
+    model, vectorizer = _load_lr_model_and_vectorizer()
+    return [float(p) for p in model.predict_proba(vectorizer.transform(texts))[:, 1]]
 
-    Uses a trained Logistic Regression model and TF-IDF vectorizer if available,
-    falling back to heuristic phrase-matching.
+
+def _explicit_role(segment: dict[str, Any]) -> SpeakerRole | None:
+    """Upstream AGENT/CUSTOMER labels (WhisperX stereo channel diarization) are authoritative."""
+    label = (segment.get("speaker") or "").strip().lower()
+    return SpeakerRole(label) if label in {"agent", "customer"} else None
+
+
+def _diarization_cluster(segment: dict[str, Any]) -> str | None:
+    meta = segment.get("speaker_meta") or {}
+    label = (meta.get("diarization_speaker") or segment.get("speaker") or "").strip()
+    return label if label.upper().startswith("SPEAKER_") else None
+
+
+def assign_speaker_roles(segments: list[dict[str, Any]]) -> list[SpeakerRole]:
+    """Agent/customer role per segment.
+
+    1. Explicit channel labels are kept as-is.
+    2. Two or more diarization clusters: the cluster with the highest mean per-utterance
+       P(agent) is the agent; every other cluster is the customer.
+    3. Otherwise (diarization collapsed to one cluster or unavailable): per-segment LR.
+    Raises ``SpeakerRoleModelUnavailable`` when the model cannot be loaded.
     """
-    cluster_texts: dict[str, list[str]] = {}
-    cluster_first_seen: dict[str, float] = {}
-    for segment in segments:
-        raw = (segment.get("speaker") or "").strip()
-        meta = segment.get("speaker_meta") or {}
-        fallback_reason = (meta.get("fallback_reason") or "")
-        diarization_speaker = (meta.get("diarization_speaker") or "").strip()
-        diarization_unavailable = (
-            fallback_reason == "diarization_unavailable"
-            or diarization_speaker.upper() == "UNKNOWN"
-            or (meta.get("source") or "") == "text_cue"
-        )
-        if not raw or (raw.lower() in {"agent", "customer"} and not diarization_unavailable):
-            continue
-        cluster_key = diarization_speaker if diarization_unavailable and diarization_speaker else raw
-        if not cluster_key:
-            continue
-        cluster_texts.setdefault(cluster_key, []).append((segment.get("text") or "").strip().lower())
-        start = float(segment.get("start") or 0.0)
-        if cluster_key not in cluster_first_seen or start < cluster_first_seen[cluster_key]:
-            cluster_first_seen[cluster_key] = start
+    roles: list[SpeakerRole | None] = [_explicit_role(segment) for segment in segments]
+    pending = [index for index, role in enumerate(roles) if role is None]
+    if not pending:
+        return roles  # type: ignore[return-value]
 
-    if not cluster_texts:
-        return {}
+    texts = [(segments[index].get("text") or "").strip() for index in pending]
+    probabilities = _agent_probabilities(texts)
+    cluster_probs: dict[str, list[float]] = {}
+    for index, text, prob in zip(pending, texts, probabilities):
+        cluster = _diarization_cluster(segments[index])
+        if cluster and text:
+            cluster_probs.setdefault(cluster, []).append(prob)
 
-    _load_lr_model_and_vectorizer()
-
-    name_norm = (agent_name or "").strip().lower()
-
-    # First-speaker prior: in inbound call-center audio, the agent answers
-    # the line first. Whichever cluster owns the earliest segment within the
-    # first 8s of audio gets a strong agent prior regardless of what they say.
-    earliest_cluster: str | None = None
-    earliest_start: float = float("inf")
-    for cluster, start in cluster_first_seen.items():
-        if start < earliest_start:
-            earliest_start = start
-            earliest_cluster = cluster
-    if earliest_cluster is not None and earliest_start >= 8.0:
-        earliest_cluster = None
-
-    scores: dict[str, tuple[float, float]] = {}
-    for cluster, texts in cluster_texts.items():
-        joined = " ".join(texts)
-        
-        # 1. Base scores from ML and/or phrase weights
-        a_base = 0.0
-        c_base = 0.0
-        if _lr_model is not None and _lr_vectorizer is not None:
-            # Classify the full cluster document — short utterances ("okay", "sure",
-            # "thanks") are individually uninformative but collectively meaningful.
-            if joined:
-                feat = _lr_vectorizer.transform([joined])
-                prob_agent = float(_lr_model.predict_proba(feat)[0][1])
-                a_base += 3.0 * prob_agent
-                c_base += 3.0 * (1.0 - prob_agent)
-
-        # Always add phrase weights as reinforcement
-        a_base += float(sum(weight for phrase, weight in _AGENT_PHRASE_WEIGHTS if phrase in joined))
-        c_base += float(sum(weight for phrase, weight in _CUSTOMER_PHRASE_WEIGHTS if phrase in joined))
-
-        # 2. Heuristic rules adjustments
-        agent_score = a_base
-        customer_score = c_base
-
-        agent_score += _strong_agent_phrase_boost(joined)
-
-        if name_norm and name_norm not in {"agent", "customer"} and name_norm in joined:
-            agent_score += 12.0
-
-        # Self-introduction with the known agent name is a near-decisive signal.
-        if name_norm and name_norm not in {"agent", "customer"}:
-            if f"my name is {name_norm}" in joined or f"this is {name_norm}" in joined:
-                agent_score += 6.0
-
-        # Whoever opens the call with the scripted greeting is the agent.
-        if cluster_first_seen.get(cluster, float("inf")) < 15.0 and (
-            "thank you for calling" in joined
-            or "thanks for calling" in joined
-            or "welcome to" in joined
-        ):
-            agent_score += 4.0
-
-        # First-speaker prior — anchors agent role even on mistranscribed greetings.
-        if cluster == earliest_cluster:
-            agent_score += 4.0
-
-        scores[cluster] = (agent_score, customer_score)
-
-    # Single-cluster audio: pick role by sign of (agent − customer).
-    if len(scores) <= 1:
-        # Diarization failed to split speakers.
-        # Return an empty mapping to force reliance on per-segment labels 
-        # from the upstream model (WhisperX classifier).
-        return {}
-
-    # Multi-cluster: cluster with lowest net agent score is the customer; the rest are agents.
-    nets = {cluster: a - c for cluster, (a, c) in scores.items()}
-    # Tie-break: cluster speaking earlier wins agent, i.e., prefer the later speaker for customer.
-    customer_cluster = min(
-        nets,
-        key=lambda k: (nets[k], -cluster_first_seen.get(k, 0.0)),
+    agent_cluster = (
+        max(cluster_probs, key=lambda key: sum(cluster_probs[key]) / len(cluster_probs[key]))
+        if len(cluster_probs) >= 2
+        else None
     )
-
-    return {
-        cluster: SpeakerRole.customer if cluster == customer_cluster else SpeakerRole.agent
-        for cluster in cluster_texts
-    }
-
-
-def _count_diarization_clusters(segments: list[dict[str, Any]]) -> int:
-    clusters: set[str] = set()
-    for segment in segments:
-        meta = segment.get("speaker_meta") or {}
-        diarization_speaker = (meta.get("diarization_speaker") or segment.get("speaker") or "").strip()
-        if diarization_speaker.upper().startswith("SPEAKER_"):
-            clusters.add(diarization_speaker)
-    return len(clusters)
-
-
-def classify_segment_speaker_role(
-    text: str,
-    *,
-    agent_name: str | None = None,
-    segment_index: int = 0,
-) -> SpeakerRole:
-    """Per-segment agent/customer classification when diarization collapses to one cluster."""
-    _load_lr_model_and_vectorizer()
-    joined = (text or "").strip().lower()
-    if not joined:
-        return SpeakerRole.agent if segment_index == 0 else SpeakerRole.customer
-
-    agent_score = 0.0
-    customer_score = 0.0
-    if _lr_model is not None and _lr_vectorizer is not None:
-        prob_agent = float(_lr_model.predict_proba(_lr_vectorizer.transform([joined]))[0][1])
-        agent_score += 3.0 * prob_agent
-        customer_score += 3.0 * (1.0 - prob_agent)
-
-    agent_score += float(sum(weight for phrase, weight in _AGENT_PHRASE_WEIGHTS if phrase in joined))
-    customer_score += float(sum(weight for phrase, weight in _CUSTOMER_PHRASE_WEIGHTS if phrase in joined))
-
-    agent_score += _strong_agent_phrase_boost(joined)
-
-    name_norm = (agent_name or "").strip().lower()
-    if name_norm and name_norm not in {"agent", "customer"} and name_norm in joined:
-        agent_score += 12.0
-    if name_norm and name_norm not in {"agent", "customer"}:
-        if f"my name is {name_norm}" in joined or f"this is {name_norm}" in joined:
-            agent_score += 6.0
-
-    if segment_index == 0 and (
-        "thank you for calling" in joined
-        or "thanks for calling" in joined
-        or "welcome to" in joined
-    ):
-        agent_score += 4.0
-
-    return SpeakerRole.agent if agent_score >= customer_score else SpeakerRole.customer
-
-def _speaker_role_from_label(
-    label: str | None,
-    *,
-    cluster_map: dict[str, SpeakerRole],
-    default: SpeakerRole = SpeakerRole.customer,
-) -> SpeakerRole:
-    """Resolve a single segment's role.
-
-    Priority:
-      1. Explicit "agent"/"customer" labels (e.g. set by diarization) win as-is.
-      2. Cluster map decision from ``assign_cluster_roles_from_text``.
-      3. Caller-supplied default.
-    """
-    if not label:
-        return default
-    raw = label.strip()
-    if not raw:
-        return default
-    normalized = raw.lower()
-    if normalized == "agent":
-        return SpeakerRole.agent
-    if normalized == "customer":
-        return SpeakerRole.customer
-    if raw in cluster_map:
-        return cluster_map[raw]
-    return cluster_map.get(normalized, default)
+    for index, prob in zip(pending, probabilities):
+        cluster = _diarization_cluster(segments[index])
+        if agent_cluster and cluster:
+            is_agent = cluster == agent_cluster
+        else:
+            is_agent = prob >= 0.5
+        roles[index] = SpeakerRole.agent if is_agent else SpeakerRole.customer
+    return roles  # type: ignore[return-value]
 
 
 async def create_processing_jobs(session: AsyncSession, interaction_id: UUID) -> None:
@@ -708,6 +483,9 @@ async def _worker_loop() -> None:
                 continue
         try:
             await process_interaction(interaction_id)
+        except StageFailed as exc:
+            logger.error("Interaction %s failed at %s: %s", interaction_id, [s.value for s in exc.stages], exc)
+            await mark_interaction_failed(interaction_id, str(exc), exc.stages)
         except Exception as exc:
             logger.exception("Interaction processing worker failed for %s", interaction_id)
             await mark_interaction_failed(interaction_id, _format_processing_exception(exc))
@@ -770,45 +548,6 @@ async def reset_interaction_for_reprocess(session: AsyncSession, interaction_id:
     await session.commit()
 
 
-async def _analyze_audio_for_interaction(
-    interaction_id: UUID,
-    audio_bytes: bytes,
-    filename: str,
-) -> dict:
-    try:
-        return await full_client.analyze_bytes(
-            audio_bytes,
-            filename,
-            audio_content_type(filename),
-        )
-    except Exception:
-        if not settings.IS_LOCAL:
-            raise
-        logger.exception(
-            "Full analysis failed for %s; using transcription-only fallback",
-            interaction_id,
-        )
-        try:
-            transcription = await transcription_client.analyze_bytes(
-                audio_bytes,
-                filename,
-                audio_content_type(filename),
-            )
-        except Exception:
-            logger.exception(
-                "Transcription fallback failed for %s; ASR triple-fallback exhausted",
-                interaction_id,
-            )
-            raise RuntimeError(
-                "ASR triple-fallback exhausted: all three transcription levels failed. "
-                "Interaction will be marked failed by the worker."
-            ) from None
-        return build_local_full_response(
-            transcription,
-            _deterministic_emotion_analysis(transcription.get("text") or ""),
-        )
-
-
 async def process_interaction(interaction_id: UUID) -> None:
     """Run pipeline: short DB claim → release pool during slow I/O → persist."""
     audio_path: str
@@ -837,7 +576,11 @@ async def process_interaction(interaction_id: UUID) -> None:
     if not is_supported_audio_filename(filename):
         raise ValueError(f"Unsupported audio file: {filename}")
 
-    analysis = await _analyze_audio_for_interaction(interaction_id, audio_bytes, filename)
+    audio_stages = (JobStage.diarization, JobStage.stt, JobStage.emotion)
+    try:
+        analysis = await full_client.analyze_bytes(audio_bytes, filename, audio_content_type(filename))
+    except Exception as exc:
+        raise StageFailed(audio_stages, f"Audio analysis failed: {_format_processing_exception(exc)}") from exc
 
     transcript_text = (analysis.get("text") or "").strip()
     if not transcript_text:
@@ -845,13 +588,22 @@ async def process_interaction(interaction_id: UUID) -> None:
             (segment.get("text") or "").strip()
             for segment in (analysis.get("segments") or [])
         ).strip()
-    if await is_gibberish(transcript_text):
-        await mark_interaction_failed(
-            interaction_id,
+    try:
+        gibberish = await is_gibberish(transcript_text)
+    except Exception as exc:
+        raise StageFailed((JobStage.stt,), f"ASR quality check failed: {_format_processing_exception(exc)}") from exc
+    if gibberish:
+        raise StageFailed(
+            (JobStage.stt,),
             "ASR quality gate failed: transcript is empty or gibberish. "
             "Check audio file format and WhisperX model availability.",
         )
-        return
+
+    segments = apply_emotion_min_duration_gate([dict(s) for s in analysis.get("segments") or []])
+    try:
+        speaker_roles = assign_speaker_roles(segments)
+    except SpeakerRoleModelUnavailable as exc:
+        raise StageFailed((JobStage.diarization,), str(exc)) from exc
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         interaction = await session.get(Interaction, interaction_id)
@@ -873,45 +625,17 @@ async def process_interaction(interaction_id: UUID) -> None:
         )
         transcript = transcript_result.first() or Transcript(interaction_id=interaction_id)
 
-        segments = analysis.get("segments", []) or []
-        segments = [dict(s) for s in segments]
-        segments = apply_emotion_min_duration_gate(segments)
-        agent_user = await session.get(User, interaction.agent_id) if interaction.agent_id else None
-        agent_name = agent_user.name if agent_user else None
-        cluster_role_map = assign_cluster_roles_from_text(segments, agent_name)
-        single_diarization_cluster = _count_diarization_clusters(segments) <= 1
-        transcript_text = (analysis.get("text") or "").strip()
-        if not transcript_text:
-            transcript_text = " ".join((segment.get("text") or "").strip() for segment in segments).strip()
-
         transcript.full_text = transcript_text
-        transcript.overall_confidence = float(analysis.get("top_score") or 0.0)
+        # TODO: store real ASR confidence once WhisperX/Kaggle return one; the clip-level
+        # emotion score used to be stored here, which is not a transcript confidence.
+        transcript.overall_confidence = None
         session.add(transcript)
         await session.flush()
 
         utterances: list[Utterance] = []
-        for index, segment in enumerate(segments):
-            meta = segment.get("speaker_meta") or {}
-            raw_speaker = (segment.get("speaker") or "").strip().lower()
-            if single_diarization_cluster:
-                if meta.get("source") == "text_cue" and raw_speaker in {"agent", "customer"}:
-                    speaker_role = SpeakerRole.agent if raw_speaker == "agent" else SpeakerRole.customer
-                else:
-                    speaker_role = classify_segment_speaker_role(
-                        segment.get("text"),
-                        agent_name=agent_name,
-                        segment_index=index,
-                    )
-            else:
-                speaker_role = _speaker_role_from_label(
-                    segment.get("speaker"),
-                    cluster_map=cluster_role_map,
-                    default=SpeakerRole.agent if index == 0 else SpeakerRole.customer,
-                )
+        for index, (segment, speaker_role) in enumerate(zip(segments, speaker_roles)):
             emotion_scores = segment.get("emotion_scores") or []
-            emotion_confidence = 0.0
-            if emotion_scores:
-                emotion_confidence = float(emotion_scores[0].get("score") or 0.0)
+            emotion_confidence = float(emotion_scores[0].get("score") or 0.0) if emotion_scores else None
 
             utterance = Utterance(
                 interaction_id=interaction_id,
@@ -922,7 +646,7 @@ async def process_interaction(interaction_id: UUID) -> None:
                 start_time_seconds=float(segment.get("start") or 0.0),
                 end_time_seconds=float(segment.get("end") or 0.0),
                 text=(segment.get("text") or "").strip(),
-                emotion=(segment.get("emotion") or "neutral").strip() or "neutral",
+                emotion=(segment.get("emotion") or "unknown").strip() or "unknown",
                 emotion_confidence=emotion_confidence,
             )
             utterances.append(utterance)
@@ -932,7 +656,9 @@ async def process_interaction(interaction_id: UUID) -> None:
 
         previous_emotion: str | None = None
         for utterance in utterances:
-            current_emotion = utterance.emotion or "neutral"
+            current_emotion = utterance.emotion
+            if current_emotion == "unknown":
+                continue
             if previous_emotion is None:
                 previous_emotion = current_emotion
                 continue
@@ -954,46 +680,43 @@ async def process_interaction(interaction_id: UUID) -> None:
             )
             previous_emotion = current_emotion
 
-        organization_result = await session.exec(
-            select(Organization).where(Organization.id == interaction.organization_id)
-        )
-        organization = organization_result.first()
+        interaction.language_detected = (analysis.get("language") or interaction.language_detected or "en")[:10]
+        interaction.duration_seconds = int(max((float(seg.get("end") or 0.0) for seg in segments), default=interaction.duration_seconds or 0))
+        session.add(interaction)
+        for stage in audio_stages:
+            await _set_job_status(session, interaction_id, stage, JobStatus.completed)
+        await _set_job_status(session, interaction_id, JobStage.reasoning, JobStatus.running)
+        await session.commit()
 
-        report = None
-        if organization:
-            try:
-                report = await asyncio.wait_for(
-                    evaluate_interaction_triggers(
-                        session=session,
-                        interaction_id=interaction_id,
-                        org_filter=organization.slug,
-                        requester_organization_id=interaction.organization_id,
-                        force_rerun=True,
-                    ),
-                    timeout=float(os.getenv("LLM_TRIGGER_EVAL_TIMEOUT_SECONDS", "600")),
-                )
-            except TimeoutError:
-                logger.error(
-                    "LLM trigger evaluation timed out after %ss for interaction %s",
-                    os.getenv("LLM_TRIGGER_EVAL_TIMEOUT_SECONDS", "600"),
-                    interaction_id,
-                )
-            except Exception:
-                logger.exception("LLM trigger evaluation failed for interaction %s", interaction_id)
-
-        if report:
-            await ensure_organization_policies_from_source(
-                session,
-                interaction.organization_id,
+        organization = (
+            await session.exec(select(Organization).where(Organization.id == interaction.organization_id))
+        ).first()
+        if not organization:
+            raise StageFailed((JobStage.reasoning,), "Organization not found for interaction.")
+        timeout = float(os.getenv("LLM_TRIGGER_EVAL_TIMEOUT_SECONDS", "600"))
+        try:
+            report = await asyncio.wait_for(
+                evaluate_interaction_triggers(
+                    session=session,
+                    interaction_id=interaction_id,
+                    org_filter=organization.slug,
+                    requester_organization_id=interaction.organization_id,
+                    force_rerun=True,
+                ),
+                timeout=timeout,
             )
-            scores = compute_scores(report)
-            empathy_score = scores.empathy
-            policy_score = scores.policy
-            resolution_score = scores.resolution
-            overall_score = scores.overall
+        except TimeoutError as exc:
+            raise StageFailed((JobStage.reasoning,), f"LLM trigger evaluation timed out after {timeout:g}s.") from exc
+        except Exception as exc:
+            raise StageFailed(
+                (JobStage.reasoning,), f"LLM trigger evaluation failed: {_format_processing_exception(exc)}"
+            ) from exc
+        await _set_job_status(session, interaction_id, JobStage.reasoning, JobStatus.completed)
 
-            violation_input = ViolationMappingInput.from_llm_trigger_report(report)
-            violation_specs = derive_violation_specs(violation_input)
+        try:
+            await ensure_organization_policies_from_source(session, interaction.organization_id)
+            scores = compute_scores(report)
+            violation_specs = derive_violation_specs(ViolationMappingInput.from_llm_trigger_report(report))
             transcript_policy_degraded = bool(
                 report.nli_policy.insufficient_evidence
                 or report.process_adherence.insufficient_evidence
@@ -1007,47 +730,29 @@ async def process_interaction(interaction_id: UUID) -> None:
                 specs=violation_specs,
                 replace_existing=False,
             )
-
             session.add(
                 InteractionScore(
                     interaction_id=interaction_id,
-                    overall_score=overall_score,
-                    empathy_score=empathy_score,
-                    policy_score=policy_score,
-                    resolution_score=resolution_score,
-                    total_silence_seconds=0.0,
-                    avg_response_time_seconds=1.0,
+                    overall_score=scores.overall,
+                    empathy_score=scores.empathy,
+                    policy_score=scores.policy,
+                    resolution_score=scores.resolution,
+                    # TODO: compute silence / agent response time from utterance timestamps.
+                    total_silence_seconds=None,
+                    avg_response_time_seconds=None,
                     was_resolved=scores.was_resolved,
                 )
             )
-        else:
-            session.add(
-                InteractionScore(
-                    interaction_id=interaction_id,
-                    overall_score=0.7,
-                    empathy_score=0.7,
-                    policy_score=0.7,
-                    resolution_score=0.7,
-                    total_silence_seconds=0.0,
-                    avg_response_time_seconds=1.0,
-                    was_resolved=False,
-                )
-            )
+        except Exception as exc:
+            raise StageFailed(
+                (JobStage.scoring,), f"Scoring failed: {_format_processing_exception(exc)}"
+            ) from exc
 
-        interaction.language_detected = (analysis.get("language") or interaction.language_detected or "en")[:10]
-        interaction.duration_seconds = int(max((float(seg.get("end") or 0.0) for seg in segments), default=interaction.duration_seconds or 0))
+        for stage in (JobStage.scoring, JobStage.rag_eval):
+            await _set_job_status(session, interaction_id, stage, JobStatus.completed)
         interaction.processing_status = ProcessingStatus.completed
         session.add(interaction)
-
         await session.commit()
-
-        try:
-            for stage in STAGE_ORDER:
-                await _set_job_status(session, interaction_id, stage, JobStatus.completed)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
 
         # Notify the agent and managers that the call finished evaluation.
         try:
@@ -1085,7 +790,13 @@ async def process_interaction(interaction_id: UUID) -> None:
             logger.exception("Failed to emit evaluation_complete notification for %s", interaction_id)
 
 
-async def mark_interaction_failed(interaction_id: UUID, error_message: str) -> None:
+async def mark_interaction_failed(
+    interaction_id: UUID,
+    error_message: str,
+    failed_stages: tuple[JobStage, ...] = STAGE_ORDER,
+) -> None:
+    """Mark ``failed_stages`` failed with ``error_message``; other unfinished stages fail as not run."""
+    failed_names = ", ".join(stage.value for stage in failed_stages)
     async with AsyncSession(engine, expire_on_commit=False) as session:
         try:
             interaction = await session.get(Interaction, interaction_id)
@@ -1093,8 +804,18 @@ async def mark_interaction_failed(interaction_id: UUID, error_message: str) -> N
                 interaction.processing_status = ProcessingStatus.failed
                 session.add(interaction)
 
+            jobs_result = await session.exec(
+                select(ProcessingJob).where(ProcessingJob.interaction_id == interaction_id)
+            )
+            completed = {job.stage for job in jobs_result.all() if job.status == JobStatus.completed}
             for stage in STAGE_ORDER:
-                await _set_job_status(session, interaction_id, stage, JobStatus.failed, error_message)
+                if stage in failed_stages:
+                    message = error_message
+                elif stage in completed:
+                    continue
+                else:
+                    message = f"Not run: {failed_names} stage failed."
+                await _set_job_status(session, interaction_id, stage, JobStatus.failed, message)
             await session.commit()
         except Exception:
             await session.rollback()

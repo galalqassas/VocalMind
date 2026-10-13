@@ -7,8 +7,9 @@ it casts a wide net but ranks imperfectly. A cross-encoder reads the
 which is what lifts RAGAS context-precision and faithfulness.
 
 Flow: retrieve a wide candidate pool (RERANK_CANDIDATE_K) from Qdrant,
-rerank here, keep the top `top_k`. The model is loaded lazily once and
-cached. If the reranker cannot be loaded (offline, missing deps), we log
+rerank here, keep the top `top_k`. With RAG_MODELS_HOST=kaggle the same
+model runs on the Kaggle server (/rerank); otherwise it is loaded lazily once
+and cached. If the reranker cannot be loaded (offline, missing deps), we log
 and fall back to the original dense ordering so retrieval never breaks.
 """
 
@@ -20,9 +21,9 @@ from threading import Lock
 from qdrant_client.models import ScoredPoint
 
 try:
-    from .config import settings
+    from .config import kaggle_post, settings, use_kaggle_models
 except ImportError:  # pragma: no cover - allows direct script/test imports
-    from config import settings
+    from config import kaggle_post, settings, use_kaggle_models
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,15 @@ def rerank_points(
     if not settings.RERANK_ENABLED or len(points) <= 1:
         return points[:top_k]
 
-    model = _get_model()
-    if model is None:
-        return points[:top_k]
-
-    pairs = [(query, (pt.payload or {}).get("text", "")) for pt in points]
+    texts = [(pt.payload or {}).get("text", "") for pt in points]
     try:
-        scores = model.predict(pairs)
+        if use_kaggle_models():
+            scores = kaggle_post("/rerank", json={"query": query, "documents": texts})["scores"]
+        else:
+            model = _get_model()
+            if model is None:
+                return points[:top_k]
+            scores = model.predict([(query, text) for text in texts])
     except Exception as exc:  # pragma: no cover - environment dependent
         logger.warning("Reranker prediction failed (%s); using dense order.", exc)
         return points[:top_k]

@@ -85,7 +85,7 @@ async def _process_remote_audio(
 
     for index, seg in enumerate(full_result.get("segments", [])):
         emotion_scores = seg.get("emotion_scores") or []
-        confidence = emotion_scores[0]["score"] if emotion_scores else full_result.get("top_score")
+        confidence = emotion_scores[0]["score"] if emotion_scores else None
         utterances.append(
             {
                 "interaction_id": str(interaction_id),

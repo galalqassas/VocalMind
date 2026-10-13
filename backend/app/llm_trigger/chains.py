@@ -17,8 +17,14 @@ from app.llm_trigger.prompts import (
     build_emotion_shift_prompt,
     build_nli_policy_prompt,
     build_process_adherence_prompt,
+    build_topic_classification_prompt,
 )
-from app.llm_trigger.schemas import EmotionShiftAnalysis, NLIEvaluation, ProcessAdherenceReport
+from app.llm_trigger.schemas import (
+    EmotionShiftAnalysis,
+    NLIEvaluation,
+    ProcessAdherenceReport,
+    TopicClassification,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -33,8 +39,6 @@ _shared_model: BaseChatModel | None = None
 
 _HEAVY_STAGE = "heavy"
 _FAST_STAGE = "fast"
-# NOTE: fast_classification is benchmarked and configurable, but currently has
-# no production call site wired in backend/service runtime flows.
 _STAGE_MODEL_CLASS: dict[str, str] = {
     "emotion_shift": _HEAVY_STAGE,
     "process_adherence": _HEAVY_STAGE,
@@ -264,11 +268,21 @@ def build_nli_policy_chain(model: BaseChatModel | None = None):
     return chain
 
 
+def build_topic_classification_chain(model: BaseChatModel | None = None):
+    parser = PydanticOutputParser(pydantic_object=TopicClassification)
+    prompt = build_topic_classification_prompt().partial(
+        format_instructions=parser.get_format_instructions(),
+    )
+    llm = _with_json_object_mode(_resolve_chain_model("fast_classification", model))
+    return prompt | llm | parser
+
+
 async def is_gibberish(text: str) -> bool:
     """
     Returns True if the transcript is gibberish, noise, or contains
     no meaningful spoken content. Uses ministral-3:8b via fast_classification stage.
     Empty text always returns True immediately (no LLM call needed).
+    LLM failures propagate so the caller can fail the stage.
     """
     if not text or not text.strip():
         return True
@@ -282,10 +296,6 @@ async def is_gibberish(text: str) -> bool:
         "with no real words, or clearly failed ASR output.\n\n"
         f"Transcript:\n{text[:2000]}\n\nAnswer:"
     )
-    try:
-        result = await llm.ainvoke(prompt)
-        answer = (result.content if hasattr(result, "content") else str(result)).strip().upper()
-        return "GIBBERISH" in answer
-    except Exception:
-        logger.warning("is_gibberish() LLM call failed; treating as VALID")
-        return False
+    result = await llm.ainvoke(prompt)
+    answer = (result.content if hasattr(result, "content") else str(result)).strip().upper()
+    return "GIBBERISH" in answer

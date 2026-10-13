@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
+from app.llm_trigger.prompt_constants import RESOLUTION_GRAPHS, UNKNOWN_TOPIC
+
 
 CitationSource = Literal["transcript", "policy", "sop", "acoustic", "kb"]
 CitationSpeaker = Literal["customer", "agent", "system", "unknown"]
@@ -233,15 +235,21 @@ class EmotionShiftAnalysis(BaseModel):
         return _clean_citations(value)
 
 
+class TopicClassification(BaseModel):
+    topic: str = Field(description="One RESOLUTION_GRAPHS topic key, or 'unknown'.")
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def normalize_topic(cls, value: str | None) -> str:
+        topic = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        return topic if topic in RESOLUTION_GRAPHS else UNKNOWN_TOPIC
+
+
 class ProcessAdherenceReport(BaseModel):
-    # NOTE: these four carry defaults so a partial-but-valid JSON object from the
-    # model (Gemini in particular tends to omit fields it deems uninteresting)
-    # still parses and we keep the model's missing_sop_steps/detected_topic signal,
-    # rather than discarding the whole response and dropping to pure heuristics.
+    # is_resolved / efficiency_score are required: they come from the model only.
     detected_topic: str = Field(default="", description="Detected customer-service topic.")
-    is_resolved: bool = Field(default=False, description="Whether issue appears resolved by end of dialogue.")
+    is_resolved: bool = Field(description="Whether issue appears resolved by end of dialogue.")
     efficiency_score: int = Field(
-        default=5,
         ge=1,
         le=10,
         description="Resolution efficiency score where 10 is optimal process adherence.",

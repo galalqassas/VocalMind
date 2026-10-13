@@ -40,10 +40,10 @@ import httpx  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 try:
-    from .config import settings, embedding_http_base_url, embedding_http_headers
+    from .config import settings, embedding_http_base_url, embedding_http_headers, kaggle_embed, use_kaggle_models
     from .query_engine import RAGQueryEngine
 except ImportError:  # pragma: no cover - allows direct script/test imports
-    from config import settings, embedding_http_base_url, embedding_http_headers
+    from config import settings, embedding_http_base_url, embedding_http_headers, kaggle_embed, use_kaggle_models
     from query_engine import RAGQueryEngine
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,9 @@ class _OllamaEmbeddings:
 
     @staticmethod
     def _embed(text: str) -> list[float]:
-        """Call Ollama embed endpoint."""
+        """Call the Ollama (or Kaggle) embed endpoint."""
+        if use_kaggle_models():
+            return kaggle_embed([text])[0]
         base_url = embedding_http_base_url()
         headers = embedding_http_headers()
         payloads = (
