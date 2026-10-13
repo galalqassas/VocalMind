@@ -1,0 +1,35 @@
+# VocalMind Kaggle GPU server dependencies.
+#
+# numpy strategy: do NOT install or pin numpy/torch here. Kaggle's image ships
+# numpy 2.x with compiled wheels (scipy, numba, pandas, sklearn, ...) built
+# against it. The old notebook forced "numpy<2.0", which broke those binaries
+# ("numpy.dtype size changed") and conflicted with pyannote.core 6 /
+# pyannote.metrics 4 (numpy>=2). The notebook installs this file with
+# `-c constraints.txt` pinning numpy/torch/torchaudio to the preinstalled
+# versions, so pip fails loudly instead of silently swapping ABIs.
+#
+# Every package below supports numpy 2. speechbrain==0.5.16 and scipy==1.14.1
+# pins were dropped (old speechbrain conflicts with pyannote.audio >= 3.1).
+
+# Speech
+openai-whisper>=20240930
+funasr>=1.1
+modelscope
+# pyannote/speaker-diarization-3.1 needs pyannote.audio >= 3.1; 4.x still loads
+# it (token= kwarg, output wrapped in .speaker_diarization; server.py handles
+# both). The range lets pip pick 4.x when the preinstalled torch allows it.
+pyannote.audio>=3.3.2,<5
+soundfile
+librosa
+
+# Text emotion / RAG models
+transformers>=4.41
+sentence-transformers>=3.0
+docling>=2.15.0
+
+# Server
+fastapi
+uvicorn
+python-multipart
+pyngrok>=7
+requests

@@ -7,6 +7,7 @@ from app.llm_trigger.prompt_constants import (
     NLI_FEW_SHOT,
     NLI_POLICY_SYSTEM_CORE,
     PROCESS_ADHERENCE_SYSTEM_CORE,
+    TOPIC_CLASSIFICATION_SYSTEM_CORE,
 )
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "build_emotion_shift_prompt",
     "build_process_adherence_prompt",
     "build_nli_policy_prompt",
+    "build_topic_classification_prompt",
 ]
 
 
@@ -91,5 +93,14 @@ def build_nli_policy_prompt() -> ChatPromptTemplate:
                 "- Set confidence_score to a float between 0.0 and 1.0 representing your confidence in the classification.\n"
                 "- Return ONLY the JSON object.",
             ),
+        ]
+    )
+
+
+def build_topic_classification_prompt() -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", TOPIC_CLASSIFICATION_SYSTEM_CORE + "\n{format_instructions}\n" + INJECTION_GUARD),
+            ("human", "Transcript:\n{transcript_text}\n\nReturn ONLY the JSON object."),
         ]
     )

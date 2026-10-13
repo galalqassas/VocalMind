@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     OLLAMA_PROCESS_ADHERENCE_MODEL: str = ""
     OLLAMA_NLI_MODEL: str = ""
     OLLAMA_CLOUD_EMBED_ENABLED: bool = False
+    # Where RAG models run (query embeddings here; ingestion uses the same switch):
+    # "local" = Ollama container, "kaggle" = Kaggle GPU server (services/kaggle).
+    RAG_MODELS_HOST: str = "local"
 
     # ── Vertex AI (Gemini) ──
     # Service-account auth via GOOGLE_APPLICATION_CREDENTIALS (path to the JSON key).
@@ -123,10 +126,6 @@ class Settings(BaseSettings):
     KNOWLEDGE_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
     POLICY_PARSED_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
     SOP_PARSED_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
-
-    # Text emotion model used in text+acoustic fusion
-    TEXT_EMOTION_PROVIDER: str = "rule_based"  # rule_based | hf_transformers
-    TEXT_EMOTION_MODEL: str = "j-hartmann/emotion-english-distilroberta-base"
 
     # OpenAI API Key for Assistant
     OPENAI_API_KEY: str = ""
@@ -193,7 +192,12 @@ def validate_startup_settings(cfg: Settings) -> None:
 
 
 def resolve_embedding_base_url() -> str:
-    """Ollama embed API root URL (local container or Ollama Cloud)."""
+    """Embed API root URL (Kaggle server, Ollama Cloud or the local Ollama container)."""
+    if settings.RAG_MODELS_HOST == "kaggle":
+        base_url = settings.KAGGLE_SERVER_URL or settings.KAGGLE_NGROK_URL
+        if not base_url:
+            raise ValueError("RAG_MODELS_HOST=kaggle but KAGGLE_SERVER_URL is not set.")
+        return base_url.rstrip("/")
     if settings.OLLAMA_CLOUD_EMBED_ENABLED:
         return settings.OLLAMA_CLOUD_BASE_URL.replace("/v1", "").rstrip("/")
     return settings.OLLAMA_BASE_URL.rstrip("/")
@@ -201,6 +205,8 @@ def resolve_embedding_base_url() -> str:
 
 def embedding_request_headers() -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if settings.OLLAMA_CLOUD_EMBED_ENABLED and settings.OLLAMA_CLOUD_API_KEY:
+    if settings.RAG_MODELS_HOST == "kaggle":
+        headers["ngrok-skip-browser-warning"] = "true"
+    elif settings.OLLAMA_CLOUD_EMBED_ENABLED and settings.OLLAMA_CLOUD_API_KEY:
         headers["Authorization"] = f"Bearer {settings.OLLAMA_CLOUD_API_KEY}"
     return headers

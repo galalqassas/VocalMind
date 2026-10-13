@@ -102,210 +102,121 @@ async def test_diarization_service_normalizes_local_whisperx_payload():
     assert result["segments"][1]["end"] == 2.0
 
 
+_TRANSCRIPTION = {
+    "text": "Hello, how can I help? I was charged twice.",
+    "language": "en",
+    "segments": [
+        {"start": 0.0, "end": 1.5, "text": "Hello, how can I help?", "speaker": "SPEAKER_00"},
+        {"start": 1.6, "end": 3.0, "text": "I was charged twice.", "speaker": "SPEAKER_01"},
+    ],
+}
+
+
+def _local_full_settings():
+    return patch.multiple("app.core.kaggle_client.settings", IS_LOCAL=True), patch.multiple(
+        "app.api.routes.full.service.settings", IS_LOCAL=True, WHISPERX_API_URL="http://whisperx:8000"
+    )
+
+
 @pytest.mark.asyncio
-async def test_full_service_builds_local_response_from_transcription_and_emotion():
-    with patch("app.api.routes.full.service.settings") as service_settings, patch(
-        "app.api.routes.emotion.service.settings"
-    ) as emotion_settings, patch("app.api.routes.transcription.service.settings") as transcription_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        emotion_settings.EMOTION_API_URL = "http://emotion:8000"
-        transcription_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = FullAPIClient()
+async def test_full_service_local_passes_transcription_segments_to_emotion_service():
+    client_patch, service_patch = _local_full_settings()
+    with client_patch, service_patch, patch(
+        "app.api.routes.full.service.transcription_client.analyze_bytes",
+        new_callable=AsyncMock,
+        return_value=_TRANSCRIPTION,
+    ), patch(
+        "app.api.routes.full.service.emotion_client.analyze_segments",
+        new_callable=AsyncMock,
+        return_value={
+            "top_emotion": "neutral",
+            "top_score": 0.9,
+            "emotions": [{"label": "neutral", "score": 0.9}],
+            "segment_emotions": [
+                {"emotion": "neutral", "confidence": 0.8, "emotion_scores": [{"label": "neutral", "score": 0.8}]},
+                {"emotion": "angry", "confidence": 0.7, "emotion_scores": [{"label": "angry", "score": 0.7}]},
+            ],
+        },
+    ) as analyze_segments:
+        result = await FullAPIClient().analyze_bytes(b"audio", "clip.wav")
 
-        with patch(
-            "app.api.routes.full.service.transcription_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "text": "hello world",
-                "language": "en",
-                "segments": [{"start": 0.0, "end": 1.0, "text": "hello", "speaker": "SPEAKER_00"}],
-            },
-        ), patch(
-            "app.api.routes.full.service.emotion_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "top_emotion": "neutral",
-                "top_score": 0.9,
-                "emotions": [{"label": "neutral", "score": 0.9}],
-            },
-        ):
-            result = await api.analyze_bytes(b"audio", "clip.wav")
-
-    assert result["top_emotion"] == "neutral"
-    assert result["segments"][0]["emotion"] == "neutral"
+    assert analyze_segments.await_args.args[2] == _TRANSCRIPTION["segments"]
+    assert [s["emotion"] for s in result["segments"]] == ["neutral", "angry"]
+    assert result["segments"][1]["emotion_scores"] == [{"label": "angry", "score": 0.7}]
     assert result["segments"][0]["speaker"] == "SPEAKER_00"
 
 
 @pytest.mark.asyncio
-async def test_full_service_derives_segment_level_emotions_from_segment_text():
-    with patch("app.api.routes.full.service.settings") as service_settings, patch(
-        "app.api.routes.emotion.service.settings"
-    ) as emotion_settings, patch("app.api.routes.transcription.service.settings") as transcription_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        emotion_settings.EMOTION_API_URL = "http://emotion:8000"
-        transcription_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = FullAPIClient()
+async def test_full_service_local_segment_without_emotion_stays_unknown():
+    client_patch, service_patch = _local_full_settings()
+    with client_patch, service_patch, patch(
+        "app.api.routes.full.service.transcription_client.analyze_bytes",
+        new_callable=AsyncMock,
+        return_value=_TRANSCRIPTION,
+    ), patch(
+        "app.api.routes.full.service.emotion_client.analyze_segments",
+        new_callable=AsyncMock,
+        return_value={"top_emotion": "happy", "top_score": 0.97, "emotions": [{"label": "happy", "score": 0.97}]},
+    ):
+        result = await FullAPIClient().analyze_bytes(b"audio", "clip.wav")
 
-        with patch(
-            "app.api.routes.full.service.transcription_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "text": "This is terrible and unacceptable. Thank you for helping me today.",
-                "language": "en",
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 1.0,
-                        "text": "This is terrible and unacceptable.",
-                        "speaker": "SPEAKER_00",
-                    },
-                    {
-                        "start": 1.0,
-                        "end": 2.0,
-                        "text": "Thank you for helping me today.",
-                        "speaker": "SPEAKER_01",
-                    },
-                ],
-            },
-        ), patch(
-            "app.api.routes.full.service.emotion_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "top_emotion": "happy",
-                "top_score": 0.97,
-                "emotions": [{"label": "happy", "score": 0.97}],
-            },
-        ):
-            result = await api.analyze_bytes(b"audio", "clip.wav")
-
-    assert result["top_emotion"] == "happy"
-    assert result["segments"][0]["emotion"] == "angry"
-    assert result["segments"][1]["emotion"] == "happy"
-    assert result["segments"][0]["emotion_scores"][0]["label"] == "angry"
+    assert [s["emotion"] for s in result["segments"]] == ["unknown", "unknown"]
+    assert all(s["emotion_scores"] == [] for s in result["segments"])
 
 
 @pytest.mark.asyncio
-async def test_full_service_uses_deterministic_text_emotion_when_service_returns_neutral():
-    with patch("app.api.routes.full.service.settings") as service_settings, patch(
-        "app.api.routes.emotion.service.settings"
-    ) as emotion_settings, patch("app.api.routes.transcription.service.settings") as transcription_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        emotion_settings.EMOTION_API_URL = "http://emotion:8000"
-        transcription_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = FullAPIClient()
-
-        with patch(
-            "app.api.routes.full.service.transcription_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "text": "This is terrible and unacceptable.",
-                "language": "en",
-                "segments": [{"start": 0.0, "end": 1.0, "text": "This is terrible and unacceptable.", "speaker": "SPEAKER_00"}],
-            },
-        ), patch(
-            "app.api.routes.full.service.emotion_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "top_emotion": "neutral",
-                "top_score": 0.9,
-                "emotions": [{"label": "neutral", "score": 0.9}],
-            },
-        ):
-            result = await api.analyze_bytes(b"audio", "clip.wav")
-
-    assert result["top_emotion"] == "angry"
-    assert result["segments"][0]["emotion"] == "angry"
+async def test_full_service_local_raises_when_emotion_service_fails():
+    client_patch, service_patch = _local_full_settings()
+    with client_patch, service_patch, patch(
+        "app.api.routes.full.service.transcription_client.analyze_bytes",
+        new_callable=AsyncMock,
+        return_value=_TRANSCRIPTION,
+    ), patch(
+        "app.api.routes.full.service.emotion_client.analyze_segments",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("emotion service unreachable"),
+    ), pytest.raises(RuntimeError, match="emotion service unreachable"):
+        await FullAPIClient().analyze_bytes(b"audio", "clip.wav")
 
 
 @pytest.mark.asyncio
-async def test_full_service_uses_deterministic_text_emotion_for_complaints():
-    with patch("app.api.routes.full.service.settings") as service_settings, patch(
-        "app.api.routes.emotion.service.settings"
-    ) as emotion_settings, patch("app.api.routes.transcription.service.settings") as transcription_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        emotion_settings.EMOTION_API_URL = "http://emotion:8000"
-        transcription_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = FullAPIClient()
+async def test_full_service_analyze_local_file_passes_segments(tmp_path):
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"RIFF")
+    client_patch, service_patch = _local_full_settings()
+    with client_patch, service_patch, patch(
+        "app.api.routes.full.service.transcription_client.analyze_local_file",
+        new_callable=AsyncMock,
+        return_value=_TRANSCRIPTION,
+    ), patch(
+        "app.api.routes.full.service.emotion_client.analyze_segments",
+        new_callable=AsyncMock,
+        return_value={"top_emotion": "neutral", "top_score": 0.9, "emotions": []},
+    ) as analyze_segments:
+        await FullAPIClient().analyze_local_file(str(audio))
 
-        with patch(
-            "app.api.routes.full.service.transcription_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "text": "I have been waiting for hours and nothing was fixed.",
-                "language": "en",
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 1.0,
-                        "text": "I have been waiting for hours and nothing was fixed.",
-                        "speaker": "SPEAKER_00",
-                    }
-                ],
-            },
-        ), patch(
-            "app.api.routes.full.service.emotion_client.analyze_bytes",
-            new_callable=AsyncMock,
-            return_value={
-                "top_emotion": "neutral",
-                "top_score": 0.9,
-                "emotions": [{"label": "neutral", "score": 0.9}],
-            },
-        ):
-            result = await api.analyze_bytes(b"audio", "clip.wav")
-
-    assert result["top_emotion"] == "frustrated"
-    assert result["segments"][0]["emotion"] == "frustrated"
+    assert analyze_segments.await_args.args == (b"RIFF", "clip.wav", _TRANSCRIPTION["segments"])
 
 
 @pytest.mark.asyncio
-async def test_full_service_analyze_local_file_falls_back_when_emotion_service_unreachable():
-    with patch("app.api.routes.full.service.settings") as service_settings, patch(
-        "app.api.routes.emotion.service.settings"
-    ) as emotion_settings, patch("app.api.routes.transcription.service.settings") as transcription_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        emotion_settings.EMOTION_API_URL = "http://emotion:8000"
-        transcription_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = FullAPIClient()
+async def test_emotion_client_analyze_segments_posts_segments_form_field():
+    from app.api.routes.emotion.service import EmotionAPIClient
 
-        with patch(
-            "app.api.routes.full.service.transcription_client.analyze_local_file",
-            new_callable=AsyncMock,
-            return_value={
-                "text": "This is terrible and unacceptable.",
-                "language": "en",
-                "segments": [
-                    {
-                        "start": 0.0,
-                        "end": 1.0,
-                        "text": "This is terrible and unacceptable.",
-                        "speaker": "SPEAKER_00",
-                    }
-                ],
-            },
-        ), patch(
-            "app.api.routes.full.service.emotion_client.analyze_local_file",
-            new_callable=AsyncMock,
-            side_effect=Exception("service unreachable"),
-        ):
-            result = await api.analyze_local_file("/tmp/clip.wav")
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {
+        "emotion": "angry",
+        "confidence": 0.9,
+        "raw_result": {"labels": ["angry"], "scores": [0.9]},
+        "segment_emotions": [{"emotion": "sad", "confidence": 0.6, "emotion_scores": [{"label": "sad", "score": 0.6}]}],
+    }
+    with patch.multiple("app.core.kaggle_client.settings", IS_LOCAL=True), patch.multiple(
+        "app.api.routes.emotion.service.settings", EMOTION_API_URL="http://emotion:8000"
+    ), patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=resp) as post:
+        result = await EmotionAPIClient().analyze_segments(b"a", "clip.wav", [{"start": 0, "end": 1.5, "text": "x"}])
 
-    assert result["top_emotion"] == "angry"
-    assert result["segments"][0]["emotion"] == "angry"
+    assert post.await_args.args[0] == "http://emotion:8000/predict"
+    assert post.await_args.kwargs["data"] == {"segments": '[{"start": 0.0, "end": 1.5}]'}
+    assert result["segment_emotions"][0]["emotion"] == "sad"
 
 
 @pytest.mark.asyncio

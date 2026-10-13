@@ -52,8 +52,8 @@ Reprocess targets:
 ## Troubleshooting
 
 - **Empty retrieval**: the `storage/docs/` folder name must match `organizations.slug`; check Qdrant points for that `org`.
-- **Ingestion cannot connect**: Qdrant `:6333` and Ollama `:11434` must be reachable; run `make ollama-pull-embed`.
-- **Dimension mismatch** after changing `EMBEDDING_MODEL`: run `main.py --ingest --force`.
+- **Ingestion cannot connect**: Qdrant `:6333` must be reachable, plus the embedding host: the Kaggle server at `KAGGLE_SERVER_URL` (`RAG_MODELS_HOST=kaggle`) or Ollama `:11434` with `make ollama-pull-embed` (`local`).
+- **Dimension mismatch or poor retrieval** after changing `EMBEDDING_MODEL` or `RAG_MODELS_HOST`: run `main.py --ingest --force`.
 
 ## Known issues
 

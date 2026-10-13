@@ -11,7 +11,9 @@ All commands come from the root `Makefile` unless noted. For what CI runs, see `
 | Frontend unit | `frontend/src/tests/` (13 Vitest files) | `cd frontend && pnpm run test` | jsdom; `make fe-test-cov` adds coverage |
 | Frontend typecheck | `frontend/` | `make fe-lint` | `tsc --noEmit` |
 | Frontend E2E | `frontend/cypress/e2e/` (14 specs) | `make fe-test` | Builds, then runs `vite preview` on :3000 (never the dev server). API calls are stubbed by `cy.useE2eApiFixtures()` in `cypress/support/e2e.ts`, so no backend is needed. |
-| RAG service | `services/rag/tests/` | `make rag-test`, `make rag-lint` | |
+| RAG service | `services/rag/tests/` | `make rag-test`, `make rag-lint` | Kaggle model paths mocked in `test_kaggle_models.py` |
+| Kaggle GPU server | `services/kaggle/test_server.py` | `cd backend && uv run pytest ../services/kaggle/test_server.py` | Models mocked; not run by CI |
+| Emotion service | `services/emotion/tests/test_segment_windows.py` | `cd services/emotion && pytest tests/test_segment_windows.py` | ML deps stubbed; the other files in `tests/` are manual scripts against a running service |
 | LLM-trigger slice | backend, RAG and frontend | `make llm-trigger-test` | Runs `test_llm_trigger_service.py`, `test_interactions_llm_triggers.py`, `test_sop_retrieval.py`, the RAG `test_ingest.py` and `AgentCallDetail.test.tsx` |
 | Quality benchmarks | `infra/scripts/eval/` | `make quality-eval-all` (or `quality-eval-{transcript,emotion,policy,rag,resolution}`) | By default scores the fixture `infra/benchmarks/fixtures/baseline_predictions.json` (not a live run; pass `--predictions` to score your own) against `infra/benchmarks/expected/` using `infra/benchmarks/schema/thresholds.json`. Exits non-zero on regression. |
 | Live local E2E | `infra/scripts/e2e_local_audio.py` | `make e2e-local-audio` | Needs the running stack: login, ingest, poll, assert |

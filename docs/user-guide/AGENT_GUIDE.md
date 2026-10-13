@@ -10,7 +10,7 @@ What a user with the **agent** role can see and do. Route and component map: [FR
 
 ## My Performance (`/agent`)
 
-- Stat cards: Overall Score, Total Calls, Resolution Rate and Avg Response.
+- Stat cards: Overall Score, Total Calls, Resolution Rate and Avg Response (Avg Response is empty for newly processed calls: response time is not computed yet).
 - **My Score Breakdown**: averages for Empathy Score, Policy Adherence and Resolution.
 - **My Weekly Trend**: chart of your interaction scores.
 - **My Recent Calls**: your calls, newest first.

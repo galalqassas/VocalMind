@@ -150,7 +150,37 @@ RESOLUTION_GRAPHS: dict[str, list[str]] = {
         "Apply waiver or open Manager Approval ticket",
         "Confirm outcome and document the case",
     ],
+    "aml_review": [
+        "Acknowledge customer without alerting to SAR review",
+        "Collect transaction context (purpose, source of funds)",
+        "Flag the account for AML / BSA review without disclosure",
+        "Open suspicious-activity ticket per regulation",
+        "Close call neutrally without confirming the review",
+    ],
+    "retention": [
+        "Acknowledge cancellation intent without resistance",
+        "Identify root cause for the cancellation",
+        "Offer the appropriate retention play (loyalty credit, plan change)",
+        "Confirm customer decision",
+        "Close: process cancellation OR confirm retention outcome",
+    ],
+    "wire_transfer": [
+        "Verify enhanced identity (5-of-5)",
+        "Confirm transfer details (amount, recipient, account)",
+        "Apply compliance check (CTR/BSA threshold)",
+        "Execute or hold transfer per policy",
+        "Confirm outcome and document case",
+    ],
+    "account_signers": [
+        "Verify account control person identity",
+        "Collect authorized signer details",
+        "Confirm signer is not a beneficial owner",
+        "Submit signer update request",
+        "Confirm completion and next steps",
+    ],
 }
+
+UNKNOWN_TOPIC = "unknown"
 
 STEP_KEY_TO_LABEL: dict[str, str] = {
     _step_key(desc): desc for steps in RESOLUTION_GRAPHS.values() for desc in steps
@@ -207,6 +237,17 @@ PROCESS_ADHERENCE_SYSTEM_CORE = (
     "- If evidence is insufficient to verify a step, include its key in missing_sop_steps.\n"
     "- DO NOT output free-text step names in missing_sop_steps; output only valid step_key values from the catalog.\n"
     "- If no steps are missing, missing_sop_steps MUST be an empty array [].\n"
+)
+
+# ── topic_classification (fast_classification stage) ─────────────────────────
+
+TOPIC_CLASSIFICATION_SYSTEM_CORE = (
+    "You classify a customer-service call transcript into exactly ONE topic. "
+    "Return strict JSON only: {{\"topic\": \"<topic_key>\"}}.\n\n"
+    "Allowed topic keys (with their expected SOP steps):\n"
+    + _escape_langchain_literal(RESOLUTION_GRAPH_CATALOG)
+    + f"\n\nChoose the topic matching the customer's PRIMARY issue. "
+    f"If none fits, return \"{UNKNOWN_TOPIC}\". Use only the keys above or \"{UNKNOWN_TOPIC}\".\n"
 )
 
 # ── nli_policy ────────────────────────────────────────────────────────────────

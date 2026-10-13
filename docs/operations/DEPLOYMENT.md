@@ -9,12 +9,19 @@ Settings and their precedence: [CONFIGURATION.md](../backend/CONFIGURATION.md). 
 
 ## Local
 
+Models run on the Kaggle GPU server by default; start its notebook first ([services/kaggle/README.md](../../services/kaggle/README.md)) and set `KAGGLE_SERVER_URL` in the root `.env` (or let the notebook register itself through `BACKEND_URL`).
+
 | Command | What it starts |
 |---|---|
-| `make build` then `make up` | All 9 compose services, CPU (`build-retry` exists for Windows Docker flakiness) |
-| `make up-gpu` | Same, plus the `docker-compose.gpu.yml` overlay for whisperx/emotion |
-| `make support-up` (`support-up-gpu`) | `db ollama qdrant vad emotion whisperx` only; run the backend and frontend natively (`make be-dev`, `make fe-dev`) |
-| `make ollama-pull-embed` | Pulls `snowflake-arctic-embed2` into the compose Ollama (needed once per volume) |
+| `make build` then `make up` | Default stack: `db`, `backend`, `frontend`, `qdrant`, `ingestion` (`IS_LOCAL=false`, `RAG_MODELS_HOST=kaggle`). `build-retry` exists for Windows Docker flakiness. |
+| `make up-local` | Default stack plus profile `local-ml` (`ollama`, `vad`, `emotion`, `whisperx`) on CPU, with `IS_LOCAL=true RAG_MODELS_HOST=local RAG_LOCAL_MODELS=true` |
+| `make up-gpu` | Same as `up-local` plus the `docker-compose.gpu.yml` overlay for whisperx/emotion |
+| `make support-up` | `db qdrant` only; run the backend and frontend natively (`make be-dev`, `make fe-dev`) with models on Kaggle |
+| `make support-up-local` (`support-up-gpu`) | `db ollama qdrant vad emotion whisperx`; for native dev with local models (`IS_LOCAL=true`, `RAG_MODELS_HOST=local`) |
+| `make ollama-pull-embed` | Pulls `snowflake-arctic-embed2` into the compose Ollama (needed once per volume, local models only) |
+| `make down` / `make logs` | Include the `local-ml` profile |
+
+Local models in the `ingestion` container need the image built with `RAG_LOCAL_MODELS=true` (Docling + cross-encoder). `make up-local` sets the variable but does not pass `--build`; rebuild once with `RAG_LOCAL_MODELS=true docker compose build ingestion`. After switching `RAG_MODELS_HOST`, re-ingest (`cd services/rag && uv run python main.py --ingest --force`) because the two hosts use different embedding models.
 
 Host ports:
 
@@ -22,14 +29,12 @@ Host ports:
 |---|---|
 | frontend | 3000 |
 | backend | 8000 (`/docs` for OpenAPI) |
-| emotion | 8001 → 8000 |
-| vad | 8002 |
-| whisperx | 8003 → 8000 |
 | qdrant | 6333 / 6334 |
-| ollama | 11434 |
 | Postgres | **5434 on the host → 5432 in the container** (`db:5432` from other containers) |
-
-Native dev without the speech containers: set `IS_LOCAL=false` with a running Kaggle notebook (`KAGGLE_SERVER_URL`; see `infra/fixtures/kaggle/README.md`).
+| emotion (`local-ml`) | 8001 → 8000 |
+| vad (`local-ml`) | 8002 |
+| whisperx (`local-ml`) | 8003 → 8000 |
+| ollama (`local-ml`) | 11434 |
 
 ## Production backend deploy (`.github/workflows/deploy-backend.yml`)
 
@@ -52,8 +57,8 @@ Native dev without the speech containers: set `IS_LOCAL=false` with a running Ka
 **What the workflow does not do:**
 
 - It never runs Alembic, the `infra/db` SQL files, or a frontend deploy.
-- `up backend` also starts its `depends_on` services (`db`, `ollama`) but not `vad`/`emotion`/`whisperx`/`qdrant`.
-- Compose hardcodes `IS_LOCAL=true` and in-network service URLs. Speech inference on the VM therefore needs those containers running, or a `POST /api/v1/internal/set-kaggle-url` after every restart (that switch is in memory only).
+- `up backend` also starts its `depends_on` service (`db`) but not `qdrant` or `ingestion`.
+- Compose defaults to `IS_LOCAL=false` and `RAG_MODELS_HOST=kaggle`, so inference needs a running Kaggle notebook and `KAGGLE_SERVER_URL` in the VM's root `.env` (or the notebook's `BACKEND_URL` registration, which is in memory only and lost on every backend restart).
 
 **VM prerequisites** (kept in the untracked `/opt/vocalmind/.env` and `/opt/vocalmind/backend/.env`):
 
@@ -62,7 +67,7 @@ Native dev without the speech containers: set `IS_LOCAL=false` with a running Ka
 - `SECRET_KEY`: non-placeholder.
 - `SEED_DEMO_DATA=false`.
 - LLM keys (`OLLAMA_API_KEY`, or `GROQ_API_KEY` with `LLM_PROVIDER=groq`).
-- `HF_TOKEN`.
+- `KAGGLE_SERVER_URL` (root `.env`).
 
 **Rollback:** the workflow always checks out `main`, so revert the commit on `main` and let CI redeploy it. A manual dispatch only redeploys the current head.
 

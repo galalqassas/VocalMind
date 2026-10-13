@@ -10,39 +10,41 @@ AI quality assurance for call centers. Upload a recorded call and VocalMind will
 |---|---|
 | Backend | FastAPI, SQLModel, PostgreSQL |
 | Frontend | React 18, Vite, Tailwind v4, MUI, Radix |
-| Speech | Silero VAD, WhisperX + pyannote, emotion2vec (FunASR) |
+| Speech & emotion | Whisper + pyannote, emotion2vec, DistilRoBERTa text emotion |
 | Reasoning | LangChain → Ollama Cloud (default) or Groq |
-| RAG | Docling, Ollama embeddings, Qdrant |
+| RAG | Docling, Snowflake Arctic embeddings, Qdrant |
 
-## Quick start (Docker)
+All models run on a **free Kaggle GPU notebook** by default, so your machine only runs the light app stack (Postgres, Qdrant, backend, frontend). A fully local mode is available.
+
+## Quick start
 
 You need:
 - Docker with Compose v2;
 - an `OLLAMA_API_KEY` (https://ollama.com/settings), or a `GROQ_API_KEY` with `LLM_PROVIDER=groq`;
-- an `HF_TOKEN` with access to pyannote.
+- a Kaggle account for the GPU server.
 
-```bash
-cp .env.example .env
-cp backend/.env.example backend/.env   # set OLLAMA_API_KEY, HF_TOKEN; for Docker set both DB URLs to host db:5432
-make build                             # first build downloads several GB (Windows: make build-retry)
-make up                                # or make up-gpu with the NVIDIA Container Toolkit
-make ollama-pull-embed                 # once: embedding model for RAG
-```
+1. **Start the GPU server.** Follow [services/kaggle/README.md](services/kaggle/README.md#run-on-kaggle): import the notebook, add the secrets, then run all cells.
+2. **Start the app:**
+   ```bash
+   cp .env.example .env                   # set OLLAMA_API_KEY (KAGGLE_SERVER_URL = your notebook tunnel)
+   cp backend/.env.example backend/.env   # for Docker, set both DB URLs to host db:5432
+   make build && make up                  # Windows: make build-retry
+   ```
+3. **Open the app:**
+   - UI: http://localhost:3000. Log in as `manager@nexalink.com` / `password123`; agents are `agent.<name>@nexalink.com`.
+   - API docs: http://localhost:8000/docs
 
-- UI: http://localhost:3000. Log in as `manager@nexalink.com` / `password123`; agents are `agent.<name>@nexalink.com`.
-- API docs: http://localhost:8000/docs
+Demo orgs (NexaLink, Meridian) are seeded at startup. Audio dropped into `storage/audio/<org>/` is ingested automatically when it follows the pattern `CALL_<NN>_<agent>_<scenario>.wav`. If the Kaggle notebook isn't running, new calls are marked **failed**; reprocess them once it is running.
 
-Demo orgs (NexaLink, Meridian) are seeded automatically at startup. Audio dropped into `storage/audio/<org>/` is ingested automatically, using the filename pattern `CALL_<NN>_<agent>_<scenario>.wav`.
+**Fully local models (no Kaggle; downloads several GB):** run `make up-local` (or `make up-gpu` with an NVIDIA GPU), then `make ollama-pull-embed`. You also need an `HF_TOKEN` with access to pyannote. Re-ingest the policy docs after switching (see [services/rag/README.md](services/rag/README.md)).
 
 ## Local development
 
 ```bash
-make support-up               # db, ollama, qdrant + inference containers
+make support-up                   # db + qdrant (support-up-local adds the model containers)
 make be-install && make be-dev    # backend on :8000
 make fe-install && make fe-dev    # frontend on :3000
 ```
-
-To skip the heavy inference containers, set `IS_LOCAL=false` in `backend/.env` (the default in `.env.example`). Inference then runs on the remote Kaggle server (`KAGGLE_SERVER_URL`), so instead of `make support-up` you only need `docker compose up -d db ollama qdrant`.
 
 **UI-only demo (no backend):** `cd frontend && VITE_USE_OFFLINE_DEMO=true pnpm run dev`.
 

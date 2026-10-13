@@ -214,3 +214,31 @@ def test_resolve_retrieved_sop_context_marks_retrieval_failure_and_logs(monkeypa
     assert context.source == "retrieval_error"
     assert context.text == ""
     assert "SOP retrieval failed for org=nexalink" in caplog.text
+
+
+def test_embed_query_uses_kaggle_when_rag_models_host_is_kaggle(monkeypatch):
+    monkeypatch.setattr(retrieval.settings, "RAG_MODELS_HOST", "kaggle")
+    monkeypatch.setattr(retrieval.settings, "KAGGLE_SERVER_URL", "https://kaggle.example/")
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"embeddings": [[0.1, 0.2]]})
+
+    with patch("app.llm_trigger.retrieval.httpx.post", return_value=response) as post:
+        vector = retrieval.QdrantRetriever(client=object())._embed_query("refund")
+
+    assert vector == [0.1, 0.2]
+    assert post.call_args.args[0] == "https://kaggle.example/embed"
+    assert post.call_args.kwargs["json"] == {"texts": ["refund"]}
+    assert post.call_args.kwargs["headers"]["ngrok-skip-browser-warning"] == "true"
+
+
+def test_embed_query_kaggle_failure_does_not_fall_back(monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(retrieval.settings, "RAG_MODELS_HOST", "kaggle")
+    monkeypatch.setattr(retrieval.settings, "KAGGLE_SERVER_URL", "https://kaggle.example")
+
+    with patch("app.llm_trigger.retrieval.httpx.post", side_effect=RuntimeError("down")) as post, pytest.raises(
+        ValueError, match="Kaggle /embed failed"
+    ):
+        retrieval.QdrantRetriever(client=object())._embed_query("refund")
+
+    assert post.call_count == 1

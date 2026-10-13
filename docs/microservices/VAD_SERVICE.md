@@ -1,6 +1,6 @@
 # VAD Service
 
-`services/vad/app.py` — FastAPI wrapper around Silero VAD with pydub slicing. Compose service `vad`, port 8002 (host and container); backend uses `VAD_API_URL`.
+`services/vad/app.py` — FastAPI wrapper around Silero VAD with pydub slicing. Compose service `vad` in profile `local-ml`, port 8002 (host and container); backend uses `VAD_API_URL` when `IS_LOCAL=true` (Kaggle `/vad` otherwise).
 
 The model is loaded lazily via `torch.hub.load("snakers4/silero-vad", "silero_vad")` on the first `/split` request (cached in the `vad_torch_cache` volume), so startup and `/health` do not need network access.
 

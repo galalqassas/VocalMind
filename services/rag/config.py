@@ -149,6 +149,11 @@ class Settings(BaseSettings):
         default=False,
         alias="OLLAMA_CLOUD_EMBED_ENABLED",
     )
+    # Where RAG models run (embeddings, Docling parsing, reranking):
+    #   local  — Ollama container + in-process Docling / cross-encoder
+    #   kaggle — the Kaggle GPU server (services/kaggle) at KAGGLE_SERVER_URL
+    RAG_MODELS_HOST: Literal["local", "kaggle"] = Field(default="local", alias="RAG_MODELS_HOST")
+    KAGGLE_SERVER_URL: str = Field(default="", alias="KAGGLE_SERVER_URL")
 
     # Sub-configs
     groq: GroqConfig = Field(default_factory=GroqConfig)
@@ -379,3 +384,32 @@ def embedding_http_headers() -> dict[str, str]:
     if settings.OLLAMA_CLOUD_EMBED_ENABLED and settings.OLLAMA_CLOUD_API_KEY:
         headers["Authorization"] = f"Bearer {settings.OLLAMA_CLOUD_API_KEY}"
     return headers
+
+
+# ── Kaggle GPU server (RAG_MODELS_HOST=kaggle) ────────────────────────────────
+
+KAGGLE_HEADERS = {"ngrok-skip-browser-warning": "true"}
+
+
+def use_kaggle_models() -> bool:
+    return settings.RAG_MODELS_HOST == "kaggle"
+
+
+def kaggle_post(path: str, timeout: float = 300.0, **kwargs) -> dict:
+    """POST to the Kaggle server and return its JSON body; raises on any failure."""
+    import httpx
+
+    base_url = settings.KAGGLE_SERVER_URL.rstrip("/")
+    if not base_url:
+        raise ValueError("RAG_MODELS_HOST=kaggle but KAGGLE_SERVER_URL is not set.")
+    response = httpx.post(f"{base_url}{path}", headers=KAGGLE_HEADERS, timeout=timeout, **kwargs)
+    response.raise_for_status()
+    return response.json()
+
+
+def kaggle_embed(texts: list[str]) -> list[list[float]]:
+    """Embed texts on the Kaggle server (snowflake-arctic-embed-l-v2.0, 1024-d)."""
+    vectors = kaggle_post("/embed", json={"texts": texts}).get("embeddings") or []
+    if len(vectors) != len(texts):
+        raise ValueError(f"Kaggle /embed returned {len(vectors)} vectors for {len(texts)} texts.")
+    return vectors

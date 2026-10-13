@@ -12,7 +12,7 @@
 
 ## Latency (server-side)
 
-Assumed load: ≤ 50 concurrent dashboard sessions and ≤ 5 concurrent uploads, on one backend replica and one WhisperX worker ([ADR-001](ADR-001-architecture.md)).
+Assumed load: ≤ 50 concurrent dashboard sessions and ≤ 5 concurrent uploads, on one backend replica and one model server (Kaggle or local) ([ADR-001](ADR-001-architecture.md)).
 
 | Endpoint class | p50 | p95 | p99 |
 |---|---|---|---|
@@ -29,7 +29,7 @@ Load scenario for the read endpoints: [infra/loadtest/README.md](../infra/loadte
 | Metric | Budget | Signal |
 |---|---|---|
 | API 5xx rate | ≤ 0.5 % per hour | `/metrics` (Prometheus, HTTP only) |
-| LLM trigger fallback rate | ≤ 5 % per day | Backend logs only (`llm_trigger/service.py` warnings) |
+| Reasoning-stage failures (LLM unavailable) | ≤ 5 % per day | `processing_jobs` rows with `stage = 'reasoning'` and `status = 'failed'` |
 | Pipeline failures | ≤ 2 % per day | `processing_jobs.status = 'failed'` |
 
 ## Rate limits (implemented)

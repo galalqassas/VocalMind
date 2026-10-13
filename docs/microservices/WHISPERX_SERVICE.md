@@ -1,6 +1,6 @@
 # WhisperX Service
 
-`services/whisperx/app.py` — FastAPI wrapper for WhisperX ASR, wav2vec2 alignment, and pyannote diarization. Compose service `whisperx`, host port 8003 → container 8000; backend uses `WHISPERX_API_URL` (`http://whisperx:8000` in compose). Models load at startup (`start_period: 300s` health grace).
+`services/whisperx/app.py` — FastAPI wrapper for WhisperX ASR, wav2vec2 alignment, and pyannote diarization. Compose service `whisperx` in profile `local-ml` (`make up-local`), host port 8003 → container 8000; the backend uses it only when `IS_LOCAL=true`, via `WHISPERX_API_URL` (`http://whisperx:8000` in compose). With `IS_LOCAL=false` (default) ASR and diarization run on the Kaggle server (openai-whisper `medium` + pyannote, no alignment or channel diarization; [services/kaggle/README.md](../../services/kaggle/README.md)). Models load at startup (`start_period: 300s` health grace).
 
 ## Configuration
 
@@ -36,4 +36,4 @@ Response: `{language, segments: [{start, end, text, speaker, overlap, speaker_me
 
 ## Backend use
 
-`transcription_client` (`backend/app/api/routes/transcription/service.py`) calls `/transcribe`; agent/customer roles are assigned in the backend — see [AUDIO_PROCESSING_PIPELINE.md](../architecture/AUDIO_PROCESSING_PIPELINE.md#speaker-roles). The backend counts only `SPEAKER_*` labels as clusters, so channel-mode `AGENT`/`CUSTOMER` labels are re-classified per segment from text.
+`transcription_client` (`backend/app/api/routes/transcription/service.py`) calls `/transcribe`; agent/customer roles are assigned in the backend — see [AUDIO_PROCESSING_PIPELINE.md](../architecture/AUDIO_PROCESSING_PIPELINE.md#speaker-roles). Channel-mode `AGENT`/`CUSTOMER` labels are kept as the roles; only `SPEAKER_*` clusters are classified.

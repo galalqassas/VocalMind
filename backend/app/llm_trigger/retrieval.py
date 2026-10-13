@@ -157,6 +157,20 @@ class QdrantRetriever:
         self._qdrant = client or _get_shared_qdrant_client()
 
     def _embed_query(self, text: str) -> list[float]:
+        if settings.RAG_MODELS_HOST == "kaggle":
+            # No fallback: another embedding model would produce vectors from a different space.
+            try:
+                response = httpx.post(
+                    f"{resolve_embedding_base_url()}/embed",
+                    json={"texts": [text]},
+                    headers=embedding_request_headers(),
+                    timeout=settings.EMBEDDING_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                return response.json()["embeddings"][0]
+            except Exception as exc:
+                raise ValueError(f"Kaggle /embed failed (RAG_MODELS_HOST=kaggle): {exc}") from exc
+
         if settings.OLLAMA_CLOUD_EMBED_ENABLED:
             try:
                 response = httpx.post(

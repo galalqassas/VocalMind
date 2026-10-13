@@ -15,11 +15,12 @@ The sidebar has Dashboard, Session Inspector, Review Queue, Knowledge Base, Mana
 - Search by agent name, date or interaction ID. Sort by score, date or duration. Results are paginated.
 - **Upload audio** creates an interaction (`POST /api/v1/interactions`), optionally assigned to an agent, and queues it for processing.
 - The row menu has **View details**, **Reprocess** and **Delete session** (asks for confirmation).
+- A call whose model or LLM step failed shows as failed with no scores (failed stages carry the error; later stages read `Not run`). **Reprocess** retries it once the models are reachable.
 
 ## Session detail (`/manager/inspector/:id`)
 
 - Audio player synced with the diarized transcript. Click a turn to seek the audio.
-- Analysis tabs: Emotion, Process (SOP adherence), Policy (NLI verdicts and violations) and Quality (agreement between audio, text and fused emotion).
+- Analysis tabs: Emotion, Process (SOP adherence), Policy (NLI verdicts and violations) and Quality (agreement between audio, text and fused emotion; greyed out when the text-emotion model is unreachable).
 - Evidence panel: each trigger links to transcript spans and to the retrieved policy or SOP chunk, with jump-to-timestamp buttons. See [EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md](../explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md).
 - **Correct** on an emotion event or compliance verdict opens a correction sheet. It writes a `reviewed` feedback row and notifies the agent; no agent flag is needed (`backend/app/api/routes/feedback.py`).
 - **Reprocess**: the header shows the knowledge version the call was judged against (e.g. `KB v3 · stale`). Reprocessing lets you choose that original version or the active one.
