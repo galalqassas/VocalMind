@@ -1,51 +1,31 @@
-# Audio Auto-Ingest Watcher Service
+# Audio Auto-Ingest Watcher
 
-VocalMind provides an automated background folder watcher to ingest call recordings without requiring manual manager dashboard uploads.
+Implementation: `backend/app/core/audio_folder_watcher.py`. It is started from the backend lifespan in `backend/app/main.py`.
 
----
+## Enabling
 
-## 1. Watcher Mechanics
+| Source | `AUDIO_FOLDER_WATCHER_ENABLED` |
+|---|---|
+| `Settings` default (`backend/app/core/config.py`) | `False` |
+| `backend/.env.example` and root `.env.example` | `true` |
 
-*   **Implementation File**: `backend/app/core/audio_folder_watcher.py`
-*   **Trigger Interval**: Automatically initializes during backend startup lifespan and loops every 15 seconds.
-*   **Watch Directory**: Scans the path `storage/audio/{org_slug}/` for audio files.
-*   **Supported File Types**: `.wav` and `.mp3`.
+When the variable is unset, the watcher is off. Copying either example env file turns it on, and compose loads both files into the backend. Set it to `false` to stop scanning.
 
----
+## Behaviour
 
-## 2. Filename Convention & Assignment
+- Every 15 s (`SCAN_INTERVAL_SECONDS`), it scans `storage/audio/<org_slug>/*.wav` and `*.mp3` for every organization. The root is the first of these that exists: `storage/audio`, then `<repo>/storage/audio`, then `/app/storage/audio`.
+- Orgs with no active agent users are skipped.
+- It skips any file whose `interactions.audio_file_path` already exists for that org. The stored path is `../storage/audio/<org_slug>/<file>`, the same form the seed scripts write, so seeded calls are not ingested twice.
+- For each new file it creates an `Interaction` (`processing_status=pending`, `uploaded_by` = the org's first manager, or the first agent if there is no manager), an empty `Transcript`, and the processing jobs. It then calls `enqueue_interaction_processing()` (in-process queue; see [ADR-002](../ADR-002-job-queue.md)).
+- Files that resolve outside the org directory (e.g. through symlinks) are skipped with a warning.
 
-The watcher extracts metadata from filenames to automatically assign the interaction to the correct agent:
+## Agent assignment
 
-*   **Expected Pattern**: `CALL_<NN>_<agent>_<scenario>.<ext>`
-    *   Example: `CALL_03_priya_billing_issue.wav`
-*   **Assignment Logic**:
-    *   The watcher extracts the `agent` name token from the filename.
-    *   It checks the organization's user database to find a matching agent account.
-    *   If matched, the interaction is created with `agent_id` set to that user.
-*   **Fallback Logic**: If the filename does not conform to the pattern or the agent name cannot be resolved, the interaction is still ingested. It is assigned to a deterministic fallback agent and a warning is logged in the backend.
+- The filename must match `^CALL_\d{2}_<agent>_`, e.g. `CALL_03_priya_billing_issue.wav`. The `<agent>` token is lowercased and matched against the lowercased `name` of the org's active agents.
+- When there is no match, the call goes to a fallback agent, `agents[hash(filename) % len(agents)]`, and a warning is logged. Python string hashing is randomized per process, so the fallback agent can change between backend restarts.
 
----
+## Related settings
 
-## 3. Ingest Lifecycle
-
-When a new file is discovered:
-
-```mermaid
-graph TD
-    File[New File in storage/audio/org_slug/] --> Scan[Watcher Scanner Detects File]
-    Scan --> CheckDB{Already Ingested?}
-    CheckDB -- Yes --> Ignore[Skip File]
-    CheckDB -- No --> Parse[Parse Filename and Org Slug]
-    Parse --> DB[Create Interaction row & 6 ProcessingJobs in DB]
-    DB --> Enqueue[Enqueue Interaction ID to Worker]
-    Enqueue --> Log[Log Ingest Success Event]
-```
-
----
-
-## 4. Watcher Controls
-
-*   **Enable/Disable Switch**: In `backend/.env`, set `AUDIO_FOLDER_WATCHER_ENABLED=false` to turn off the scanner.
-*   **`EXTRA_AUDIO_ROOTS`**: If you run the backend natively from a separate directory while call audio lives in a sibling workspace, set `EXTRA_AUDIO_ROOTS` (semicolon-separated absolute paths) in your environment to add search roots.
-*   **Manual Alternative**: If the watcher is disabled, managers can upload call recordings using the **Upload Call** button in the dashboard, which triggers `POST /api/v1/interactions`.
+- `EXTRA_AUDIO_ROOTS` (`;`-separated absolute paths) adds trusted roots for *resolving* stored audio paths during processing (`backend/app/core/audio_resolver.py`). The watcher does not scan these roots.
+- Manual alternative: **Upload audio** in the Session Inspector (`POST /api/v1/interactions`).
+- `infra/scripts/ingest_audio_folder.py` is a separate CLI ingester for one-off batches.

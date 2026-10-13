@@ -1,55 +1,62 @@
-# VocalMind Backend Security Guide
+# Backend Security
 
-This document outlines the security architecture, authorization mechanisms, and data protection practices implemented in the VocalMind API gateway.
+This page covers how the backend handles authentication, authorization, tenant isolation, and hardening. Per-route auth is listed in [REST_API_REFERENCE.md](../api/REST_API_REFERENCE.md).
 
----
+## Authentication
 
-## 1. Authentication & Session Management
+- **Passwords:** hashed with bcrypt (`hashpw`/`checkpw`) in `backend/app/core/security.py`.
+- **JWT:** HS256, signed with `SECRET_KEY`. The claim `sub` holds the user id and `exp` comes from `ACCESS_TOKEN_EXPIRE_MINUTES` (default 30). The backend refuses to start while `SECRET_KEY` is the placeholder (`validate_startup_settings` in `backend/app/core/config.py`).
+- **Transport:**
+  - Login returns the token in the body and also sets the `vocalmind_token` cookie: HttpOnly, `SameSite=lax`, and `secure=False` hardcoded in `routes/auth/router.py`.
+  - `get_token` in `backend/app/api/deps.py` checks the cookie first, then `Authorization: Bearer`.
+  - The frontend also keeps the token in `sessionStorage` and sends it as a Bearer header for cross-origin use (`frontend/src/app/services/api.ts`).
+- **Error codes:** a missing token returns 401; an invalid token returns 403; an inactive user returns 400.
+- **Google OAuth:** the redirect flow stores its `state` values in an in-process set, so it only works with a single backend process.
 
-Authentication is managed via JSON Web Tokens (JWT) and Google OAuth 2.0.
+## Authorization
 
-### 1.1 Password Hashing & Encryption
-*   **Bcrypt**: User passwords are never stored in plain text. They are hashed using `bcrypt` with a salt round during registration.
-*   **Verification**: Password validation is performed using `bcrypt.checkpw()` on login inputs.
+There is no global auth dependency. Each handler declares `CurrentUser` and checks the role itself.
 
-### 1.2 JWT Access Tokens
-*   **Token Creation**: Upon successful login, `create_access_token` generates a JWT. The subject (`sub`) claim contains the user's UUID.
-*   **Expiration**: Access tokens expire after 30 minutes (`ACCESS_TOKEN_EXPIRE_MINUTES`).
-*   **Storage**: Access tokens are delivered to the frontend via an **HttpOnly cookie**. This mitigates Cross-Site Scripting (XSS) risks by preventing JavaScript from reading the token.
+- **Manager-only:**
+  - `/assistant/*`
+  - `/reviews/*`
+  - `/feedback/*`
+  - `/knowledge/versions*`
+- **Agent-only:** creating a dispute (`POST .../dispute`). Agents may retract only their own disputes.
+- **Agent self-scoping:**
+  - `/interactions*` adds `agent_id = caller` for agents (`_interaction_scope_filters`).
+  - `/agents` and `/agents/{id}` return only the calling agent.
+- **Tenant isolation:** queries filter on `current_user.organization_id`. This is covered by the `backend/tests/test_*isolation*.py` and `test_assistant_tenant_guard.py` tests.
 
-### 1.3 Google OAuth 2.0
-*   Managers and agents can log in via Google OAuth. The gateway validates Google ID tokens via `/auth/google`.
-*   If the Google email matches an active user, the gateway issues a session cookie and logs them in.
+## Assistant text-to-SQL guard (`backend/app/api/routes/assistant.py`)
 
----
+1. `_validate_sql_structure` requires:
+   - exactly one statement, `SELECT` or `WITH … SELECT`;
+   - only tables in the allowlist;
+   - only columns in the allowlist.
+2. `_is_org_scoped_sql` requires a literal `organization_id = '<caller org id>'` binding.
+3. Execution uses a separate engine on `ASSISTANT_DATABASE_URL`. That URL should use the `vocalmind_readonly` role, which has column-level `SELECT` grants only (`infra/db/04_assistant_readonly_role.sql`).
 
-## 2. Authorization & RBAC
+## LLM prompt-injection guard
 
-VocalMind enforces strict Role-Based Access Control (RBAC) and tenant separation at the endpoint level using dependencies.
+`INJECTION_GUARD` (`backend/app/llm_trigger/prompt_constants.py`) is appended to the system prompts of the three trigger chains in `backend/app/llm_trigger/prompts.py`. It tells the model to treat all transcript and user text as untrusted data. The RAG service has its own copy in `services/rag/prompt_safety.py`. Do not remove either.
 
-### 2.1 Multi-Tenant Data Scoping
-All query controllers verify that data is filtered by `organization_id` derived from the active user's DB record. This prevents users from accessing or modifying data belonging to another tenant.
+## HTTP hardening (`backend/app/main.py`)
 
-### 2.2 Endpoint Role Guards
-FastAPI routes inspect the user's `UserRole` before permitting execution:
-*   **Manager Routes**: Enforce that `user.role == UserRole.manager`. Routes like policy ingestion, dispute resolution, settings updates, and AI assistant queries will raise a `403 Forbidden` if executed by an agent.
-*   **Agent Routes**: Restrict data returns. When an agent calls `/interactions`, the query injected in `get_db` filters by `agent_id = user.id`. Agents cannot inspect other agents' calls.
+- **Response headers:** every response gets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `X-Request-ID` (echoed from the request or generated).
+- **CORS:** allows `FRONTEND_URL` plus `localhost`/`127.0.0.1` on ports 3000 and 5173, with credentials enabled.
+- **Rate limiting:** 60 requests/min per IP via slowapi (`backend/app/core/rate_limit.py`). The client IP is the first `X-Forwarded-For` hop, so it is only trustworthy behind a proxy that sets that header.
+- **Error masking:** unhandled exceptions return a generic 500 with an `error_id`; the details go only to the logs.
 
----
+## Known gaps (as of this writing)
 
-## 3. Threat Mitigation & Hardening
-
-VocalMind incorporates specialized guards to defend against common attack vectors:
-
-### 3.1 LLM Prompt Injection Guard (`_INJECTION_GUARD`)
-All LLM trigger templates in `app/llm_trigger/prompts.py` append an injection guard instruction. This instructs the judging model to treat transcript data as untrusted text rather than instructions.
-
-### 3.2 Read-Only SQL Enforcement
-The AI Manager Assistant (`assistant.py`) translates natural language queries into SQL. To prevent SQL Injection or database modifications:
-*   The Assistant parses the generated SQL and throws an exception if it contains writing keywords (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE`).
-*   The query is executed using a read-only database cursor transaction.
-
-### 3.3 Security Headers Middleware
-An HTTP middleware in `app/main.py` adds safety headers to all responses:
-*   `X-Content-Type-Options: nosniff`: Prevents browsers from MIME-sniffing responses.
-*   `X-Frame-Options: DENY`: Mitigates clickjacking attacks by blocking the API from being embedded in frames.
+- **Unauthenticated routes:**
+  - the inference passthroughs (`/vad`, `/transcription`, `/diarization`, `/emotion`, `/full`; the `*-local` variants read server-side file paths);
+  - the ad-hoc `/llm-trigger/*` chains;
+  - `/internal/set-kaggle-url`, which reroutes all inference;
+  - `/health/circuit-breakers` and `/metrics`.
+- **Missing manager checks:**
+  - Knowledge policy/SOP/KB create, update, toggle, and delete need only an authenticated user.
+  - `/dashboard/stats` returns org-wide data to agents.
+- **Rate limits:** `rate_limit.py` describes a tighter 10/min limit for auth endpoints, but no `@limiter.limit` decorator is applied anywhere.
+- **Google sign-in for unknown emails:** `_get_or_create_user` tries to create the user in the first organization row it finds, without setting a role.

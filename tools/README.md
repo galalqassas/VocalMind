@@ -1,52 +1,43 @@
 # Pipeline Evaluation Tools
 
-Reproducible harness for comparing the LLM-trigger pipeline output against
-the synthesized ground-truth scripts in `storage/audio/<org>/evaluation/`.
+A harness that compares live pipeline output with the ground-truth call JSONs in `storage/audio/<org>/evaluation/`. For an overview of all harnesses, see [docs/operations/EVALUATION_HARNESS.md](../docs/operations/EVALUATION_HARNESS.md). Outputs go to `tools/reports/`, which is gitignored.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `reprocess_and_compare.py` | Logs into the backend as the org manager, optionally `POST /reprocess` per call, polls the processing status, then `GET /interactions/{id}?include_llm_triggers=true&llm_force_rerun=true` and writes the full detail + ground truth + summary diff to `tools/reports/<org>/`. |
-| `evaluate_pipeline.py` | Reads the per-call detail JSON from `tools/reports/<org>/` and the matching `storage/audio/<org>/evaluation/<call>_*.json`, then computes 8 axis scores (agent match, topic, SOP retrieval, resolution, turn ratio, diarization delta, emotion cosine, coverage recall) and writes `tools/reports/EVAL_REPORT.{md,json}`. |
-| `compare_summary.py` | Pretty-prints the per-call comparison from `tools/reports/<org>/_all_compare.json`. |
-
-`tools/reports/` is **gitignored** — outputs are regenerable.
+| `reprocess_and_compare.py` | Logs in as the seeded org manager. Optionally calls `POST /interactions/{id}/reprocess` (retries with `?force=true` on 409) and polls `/processing-status`. Then fetches `GET /interactions/{id}?include_llm_triggers=true&llm_force_rerun=true` and writes `tools/reports/<org>/<CALL>_{detail,gt,compare}.json`. |
+| `evaluate_pipeline.py` | Scores the `*_detail.json` files against ground truth for a fixed 9-call set (nexalink CALL_01/06/07/15, meridian CALL_21/22/24/30/35); missing files are skipped. Writes `tools/reports/EVAL_REPORT.{md,json}`. |
+| `compare_summary.py` | Prints the per-call table from `tools/reports/<org>/_all_compare.json`. |
+| `download_mlflow_model.py` | Lists or downloads runs of the `customer-agent-classification` experiment on DagsHub MLflow. Needs `MLFLOW_TRACKING_PASSWORD`. Its default `--output-dir` (`services/whisperx/models/speaker_role`) is not used at runtime; the backend loads `backend/app/core/model.pkl` + `vectorizer.pkl`. |
+| `sync_remote_supabase.sql` | One-off SQL that deletes the legacy NileTech/CairoConnect orgs from a Supabase database. |
 
 ## Usage
 
 ```bash
-# 1) Reprocess (re-transcribe + re-run LLM triggers) on a comma-separated list of calls
 python tools/reprocess_and_compare.py --org nexalink --calls CALL_01,CALL_07,CALL_15
-python tools/reprocess_and_compare.py --org meridian --calls CALL_21,CALL_24,CALL_30
-
-# 1b) Refresh just the LLM trigger output (no retranscribe) — much faster
-python tools/reprocess_and_compare.py --org nexalink --calls CALL_01 --no-reprocess
-
-# 2) Score against ground truth
+python tools/reprocess_and_compare.py --org nexalink --calls CALL_01 --no-reprocess   # LLM triggers only
 python tools/evaluate_pipeline.py
-#    → tools/reports/EVAL_REPORT.md   (markdown table)
-#    → tools/reports/EVAL_REPORT.json (machine-readable)
-
-# 3) Optional: pretty-print one org's per-call diff
 python tools/compare_summary.py --org nexalink
 ```
 
-## What the eval measures
+Run the commands from the repo root; the scripts use relative paths.
 
-| axis | what it scores | source of truth |
+## Axes (`evaluate_pipeline.py`)
+
+| Axis | Scores | Source |
 |---|---|---|
-| `agent_match` | did the pipeline assign the right agent? | `gt.primary_agent` vs `interaction.agentName` |
-| `topic_match` | did `processAdherence.detectedTopic` match the SOP family the call should follow? | regex over `gt.sop_primary` → expected topic |
-| `sop_retrieval_match` | did the pipeline cite the correct SOP source_file? | substring search across `triggerAttributions.policyReference.reference`, `claimProvenance.retrievedPolicy.reference`, and `processAdherence.citations[source=sop].quote` |
-| `resolution_match` | did the pipeline correctly mark the call resolved or escalated? | prefers `processAdherence.isResolved`, falls back to `interaction.resolved` |
-| `turn_ratio` | over/under-segmentation, `PR utts / GT turns` (1.0 ideal) | `len(utterances)` vs `gt.turn_count` |
-| `diar_share_delta` | how off is the agent/customer ratio? | `|PR agent_share − GT agent_share|` |
-| `emotion_cosine_fused` | how close is the PR emotion distribution to GT? cosine over canonical 7 labels | `emotionComparison.distributions.fused` vs `gt.emotion_distribution` |
-| `coverage_recall` | for each GT coverage element, did the transcript actually contain it? | loose token overlap (≥ 30 %) or a verbatim rule-ID match |
+| `agent_match` | Right agent assigned | `gt.primary_agent` vs `agentName` |
+| `topic_match` | Detected topic matches the expected SOP family | `processAdherence.detectedTopic` vs topic derived from `gt.sop_primary` |
+| `sop_retrieval_match` | Correct SOP file cited | Trigger attributions, claim provenance, and `processAdherence.citations` |
+| `resolution_match` | Resolved/escalated matches GT | `processAdherence.isResolved`, falling back to `interaction.resolved` |
+| `turn_ratio` | Over/under-segmentation (1.0 ideal) | Utterance count / `gt.turn_count` |
+| `diar_share_delta` | Agent talk-share error (0 ideal) | \|PR agent share − GT agent share\| |
+| `emotion_cosine_fused` | Emotion distribution similarity over 7 canonical labels | `emotionComparison.distributions.fused` vs `gt.emotion_distribution` |
+| `coverage_recall` | GT coverage elements present in the transcript | ≥ 30 % token overlap, or a verbatim rule-ID match |
 
-## Prereqs
+## Prerequisites
 
-- Backend running on `http://localhost:8000` (native or Docker)
-- Audio files accessible to the backend — either via `LOCAL_AUDIO_STORAGE_DIR` mount or via `EXTRA_AUDIO_ROOTS` env var
-- For ground-truth lookup, the `storage/audio/<org>/evaluation/` folder needs to be present in the worktree (junction-linked from the original repo is fine)
+- Backend on `http://localhost:8000` with the seeded NexaLink/Meridian managers (password `password123`).
+- The backend can resolve the audio files, via `LOCAL_AUDIO_STORAGE_DIR` or `EXTRA_AUDIO_ROOTS`.
+- `storage/audio/<org>/evaluation/` is present for ground-truth lookup.

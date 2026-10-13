@@ -1,130 +1,102 @@
-# VocalMind Operations, Setup & Developer Guide
+# Deployment
 
-VocalMind is a modular, multi-service AI application. It coordinates transcription (WhisperX), voice activity detection (Silero VAD), speech emotion recognition (emotion2vec), vector storage (Qdrant), and LLM reasoning (Ollama Cloud in production, with Gemini and Groq as alternative providers) to evaluate call center interactions.
+Two environments:
 
-This operations manual details deployment patterns, environment configurations, background processes, testing, and continuous integration.
+- **Local:** the full Docker Compose stack, or the backend run natively against compose infrastructure.
+- **Production:** only the backend is deployed by this repo. It runs on an Azure VM, uses Supabase Postgres and Supabase Storage, and is deployed by GitHub Actions.
 
----
+Settings and their precedence: [CONFIGURATION.md](../backend/CONFIGURATION.md). Tests and CI: [TESTING.md](../backend/TESTING.md).
 
-## 1. System Architecture & Port Mapping
+## Local
 
-When executing the multi-container stack, services communicate across the internal Docker network. The following host ports are exposed:
+| Command | What it starts |
+|---|---|
+| `make build` then `make up` | All 9 compose services, CPU (`build-retry` exists for Windows Docker flakiness) |
+| `make up-gpu` | Same, plus the `docker-compose.gpu.yml` overlay for whisperx/emotion |
+| `make support-up` (`support-up-gpu`) | `db ollama qdrant vad emotion whisperx` only; run the backend and frontend natively (`make be-dev`, `make fe-dev`) |
+| `make ollama-pull-embed` | Pulls `snowflake-arctic-embed2` into the compose Ollama (needed once per volume) |
 
-| Service | Port | Description |
-| :--- | :--- | :--- |
-| **Frontend** | `:3000` | React Single Page Application (Vite dev server or preview). |
-| **Backend** | `:8000` | FastAPI Gateway. Exposes OpenAPI docs at `/docs`. |
-| **VAD Service** | `:8002` | Silero Voice Activity Detection microservice. |
-| **WhisperX** | `:8003` | Speech-to-Text alignment and diarization microservice. |
-| **Emotion Service**| `:8001` | funASR emotion2vec speech emotion recognition microservice. |
-| **Qdrant** | `:6333` | Vector Database storing parsed Policy, SOP, and KB chunks. |
-| **Ollama** | `:11434` | Running Snowflake Arctic Embed2 for RAG vector encodings. |
-| **PostgreSQL** | `:5432` | Relational storage for transactional tables. |
+Host ports:
 
----
+| Service | Port |
+|---|---|
+| frontend | 3000 |
+| backend | 8000 (`/docs` for OpenAPI) |
+| emotion | 8001 → 8000 |
+| vad | 8002 |
+| whisperx | 8003 → 8000 |
+| qdrant | 6333 / 6334 |
+| ollama | 11434 |
+| Postgres | **5434 on the host → 5432 in the container** (`db:5432` from other containers) |
 
-## 2. Environment Variables Configuration
+Native dev without the speech containers: set `IS_LOCAL=false` with a running Kaggle notebook (`KAGGLE_SERVER_URL`; see `infra/fixtures/kaggle/README.md`).
 
-VocalMind coordinates settings via two configurations:
+## Production backend deploy (`.github/workflows/deploy-backend.yml`)
 
-### 2.1 Root `.env`
-Used by Docker Compose to pass variables into containers.
-*   `OLLAMA_API_KEY`: Required for the production provider (`LLM_PROVIDER=ollama_cloud`). Authenticates calls to Ollama Cloud for the LLM trigger chains.
-*   `GROQ_API_KEY`: Required only when `LLM_PROVIDER=groq` (alternative provider). Authenticates calls to Groq Cloud.
-*   `HF_TOKEN`: Required. Authenticates pyannote model downloads inside the WhisperX container.
+**Trigger:**
 
-### 2.2 Backend `.env` (`backend/.env`)
-Used when running the FastAPI backend gateway natively on the host:
-*   `IS_LOCAL`: Boolean flag. `true` directs inference requests to local Docker microservices (`:8001`, `:8002`, `:8003`). `false` redirects inference to a remote Kaggle environment via a secure fallback client.
-*   `DATABASE_URL`: Connection string. Defaults to `postgresql+asyncpg://vocalmind:vocalmind_dev@db:5432/vocalmind` in Docker, and `postgresql+asyncpg://...` or SQLite fallback for unit tests.
-*   `ASSISTANT_LLM_PROVIDER`: Provider for NL-to-SQL Assistant (`gemini`, `groq`, or `ollama`).
-*   `AUDIO_FOLDER_WATCHER_ENABLED`: Set to `true` to enable automatic background file ingestion.
+- A `workflow_run` of **"Backend CI"** (`.github/workflows/backend.yml`) on `main` that concludes `success`, or a manual `workflow_dispatch`.
+- Backend CI only runs for pushes that touch `backend/**` or its own workflow file. So every merge to `main` that changes the backend and passes ruff + pytest + the quality benchmarks is deployed automatically.
+- The concurrency group `deploy-backend` cancels a deploy that is still running.
 
----
+**Steps** (`appleboy/ssh-action` with password auth; secrets `AZURE_VM_HOST`, `AZURE_VM_USER`, `AZURE_VM_PASSWORD`):
 
-## 3. Deployment & Execution Modes
+1. `cd /opt/vocalmind && git fetch origin main && git checkout main && git reset --hard <CI head SHA>`. This discards any edits to tracked files on the VM; the untracked `.env` files survive.
+2. An inline Python script rewrites these keys in `backend/.env` from GitHub secrets and keeps every other line:
+   - `AUDIO_STORAGE_BACKEND=supabase`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_KEY`
+   - `SUPABASE_AUDIO_BUCKET` (default `recordings`)
+3. `docker compose up -d --build backend`.
 
-### 3.1 Option A: Full Stack in Docker (CPU Mode)
-Ideal for quick evaluations. Starts the entire system inside Docker containers:
-```bash
-make build           # Builds all service images
-make up              # Launches all containers in the background
-# Initialize embedding models:
-docker exec vocalmind-ollama ollama pull snowflake-arctic-embed2
-make seed            # Seeds NileTech/CairoConnect (SQL) + Nexalink/Meridian (Python scripts)
-```
+**What the workflow does not do:**
 
-### 3.2 Option B: Local Developer Mode (Hybrid)
-Runs heavy ML pipelines and databases in Docker, while running backend and frontend code natively on the host for hot-reloading:
-1.  Launch infra services: `make support-up`.
-2.  Launch Backend:
-    ```bash
-    cd backend
-    uv sync
-    uv run uvicorn app.main:app --reload --port 8000
-    ```
-3.  Launch Frontend:
-    ```bash
-    cd frontend
-    pnpm install
-    pnpm run dev
-    ```
+- It never runs Alembic, the `infra/db` SQL files, or a frontend deploy.
+- `up backend` also starts its `depends_on` services (`db`, `ollama`) but not `vad`/`emotion`/`whisperx`/`qdrant`.
+- Compose hardcodes `IS_LOCAL=true` and in-network service URLs. Speech inference on the VM therefore needs those containers running, or a `POST /api/v1/internal/set-kaggle-url` after every restart (that switch is in memory only).
 
-### 3.3 Option C: GPU Acceleration
-To utilize an NVIDIA graphics card, run the GPU compose overlay:
-```bash
-make up-gpu           # Full stack with CUDA bindings
-make support-up-gpu   # Supporting infra only with CUDA bindings
-```
-*   **Performance Note**: Processing a 3-minute call takes ~30+ minutes on CPU, but drops to ~2 minutes using a GPU.
+**VM prerequisites** (kept in the untracked `/opt/vocalmind/.env` and `/opt/vocalmind/backend/.env`):
 
----
+- `DATABASE_URL`: the Supabase pooler URI.
+- `ASSISTANT_DATABASE_URL`: a read-only role.
+- `SECRET_KEY`: non-placeholder.
+- `SEED_DEMO_DATA=false`.
+- LLM keys (`OLLAMA_API_KEY`, or `GROQ_API_KEY` with `LLM_PROVIDER=groq`).
+- `HF_TOKEN`.
 
-## 4. Audio Auto-Ingest Scanner
+**Rollback:** the workflow always checks out `main`, so revert the commit on `main` and let CI redeploy it. A manual dispatch only redeploys the current head.
 
-The backend contains a background folder watcher process (`backend/app/core/audio_folder_watcher.py`) that runs on startup and loops every 15 seconds:
-*   **Drop Location**: Scans directory paths matching `storage/audio/{org_slug}/` for `.wav` or `.mp3` files.
-*   **Filename Convention**: Expects files named `CALL_<NN>_<agent>_<scenario>.<ext>` (e.g. `CALL_01_priya_refund_outage.wav`). 
-*   **Ingestion Mechanics**: The scanner extracts the agent's name, creates a new `Interaction` row in the database assigned to that agent, creates the 6 sequential `ProcessingJob` stages, and enqueues the interaction into the memory-processing worker loop.
+**Frontend:** `frontend/vercel.json` (SPA rewrite) exists, but no workflow in this repo deploys the frontend. A hosted build must set `VITE_API_URL` to the backend's public origin. If unset it falls back to `http://localhost:8000`; an empty string means same-origin (`frontend/src/app/services/api.ts`).
 
----
+## Production database (Supabase Postgres)
 
-## 5. Testing & Verification Suites
+- `DATABASE_URL` is the Supabase **connection-pooler** URI: `postgresql+asyncpg://postgres.<ref>:<password>@<pooler-host>:6543/postgres`. `backend/app/core/database.py` disables asyncpg statement caches, which pgbouncer pooling requires.
+- `SUPABASE_DB_URL` is used only by `backend/scripts/verify_supabase_schema.py`, which lists the remote tables and the `users`/`policy_compliance` columns.
 
-VocalMind enforces quality checks across three separate test suites:
+### Bootstrapping a new Supabase database
 
-### 5.1 Backend Pytests
-Verifies API gateway routers, emotion fusion math, and database models using an in-memory SQLite backend:
-```bash
-make be-test
-```
+Read the "Schema sources" section of [DATABASE_SCHEMA.md](../architecture/DATABASE_SCHEMA.md) first: `01_schema.sql` lags the models.
 
-### 5.2 Frontend Unit Tests
-Verifies component rendering, auth contexts, and details layouts:
-```bash
-cd frontend && pnpm run test
-```
+1. Apply `infra/db/01_schema.sql`, either through psql or with `DATABASE_URL` exported and `make migrate` (which also sends `NOTIFY pgrst`). Apply `infra/db/05_interactions_org_audio_unique.sql` as well; `03` and `06` are already folded into `01`.
+2. Apply `infra/db/04_assistant_readonly_role.sql`, change the role's dev password, and point `ASSISTANT_DATABASE_URL` at it.
+3. Before the backend's first boot, from `backend/`: `uv run alembic stamp 0002_notif_and_dispute` and then `uv run alembic upgrade head`.
+   - Stamp `0002` because `01_schema.sql` already contains the 0002 objects, and 0002's `create_table("notifications")` is not guarded.
+   - Run it before the first boot, because `create_all` at startup would create `assistant_sessions` and `knowledge_versions` and break the later migrations.
+4. Boot once with `SEED_DEMO_DATA=true` to create NexaLink and Meridian (`backend/scripts/seed_nexalink.py`, `seed_meridian.py`), then set it to `false` and redeploy.
 
-### 5.3 Cypress End-to-End (E2E)
-Spins up a headless browser to walk through login, call reviews, AI Assistant chats, and disputes. Requires building the frontend first:
-```bash
-make fe-test
-```
+### Existing Supabase database with legacy demo orgs
 
-### 5.4 Quality Benchmark Evaluations
-Evaluates the ML pipeline output against expected gold-standard outputs (ground truths) located in `infra/benchmarks/expected/`:
-```bash
-make quality-eval-all
-```
-This runs the script `infra/scripts/eval/eval_all.py` and checks metrics like topic classification correctness, SOP step coverage recall, and speaker turn segment ratios.
+1. Back it up (Supabase dashboard → Database → Backups).
+2. Run `tools/sync_remote_supabase.sql` in the Supabase SQL editor. It deletes the NileTech and CairoConnect organizations (by id or slug) and every row that cascades from them. The schema is left untouched, and the script is idempotent.
+3. Bring the schema up to date with Alembic (`stamp` the revision that matches the DB, check with `verify_supabase_schema.py`, then `upgrade head`).
+4. Boot once with `SEED_DEMO_DATA=true`, then set it to `false`.
 
----
+**Do not** run `make seed` with production credentials. It runs `infra/scripts/seed/seed_database.py`, a legacy seeder that writes fake data straight to the Supabase project named in `backend/.env`.
 
-## 6. Continuous Integration (GitHub Workflows)
+## Runtime checks
 
-CI pipelines are separated into distinct YAML workflows under `.github/workflows/`:
-1.  `ci.yml`: Performs Gitleaks security scans to prevent API key leaks.
-2.  `backend.yml`: Automatically triggers on backend changes. Runs Ruff checks, Pytest, and Pip-licenses audits.
-3.  `frontend.yml`: Runs type validation (`tsc --noEmit`), builds the React bundle, and runs Cypress E2E tests.
-4.  `rag_ci.yml`: Validates LlamaIndex ingestion files and searches.
-5.  `quality-benchmarks.yml`: Run manually to compare current pipeline scores against baseline records.
+- `GET /health`: DB connectivity (503 when unreachable).
+- `GET /health/circuit-breakers`: LLM breaker state.
+- `GET /metrics`: Prometheus.
+
+All three are unauthenticated. Audio drop-folder ingestion is optional and off by default in `config.py`; see [AUDIO_AUTO_INGEST.md](AUDIO_AUTO_INGEST.md).

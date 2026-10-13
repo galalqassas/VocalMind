@@ -1,51 +1,40 @@
-# Evaluation Harness & Benchmark Tools
+# Evaluation Harnesses
 
-VocalMind includes a command-line evaluation harness to benchmark transcription, speaker alignment, emotion detection, and compliance reasoning against gold-standard ground truths.
+There are two independent harnesses:
 
----
+| Harness | Location | Input | Output |
+|---|---|---|---|
+| Component quality gates | `infra/scripts/eval/` | Gold files in `infra/benchmarks/expected/` and a predictions JSON | `infra/benchmarks/reports/*_report.json`; exits 1 on regression |
+| Pipeline vs ground truth | `tools/` | Live backend API and `storage/audio/<org>/evaluation/*.json` | `tools/reports/EVAL_REPORT.{md,json}` (gitignored) |
 
-## 1. Directory Structure & Files
+RAGAS evaluation of the RAG service is a separate tool: [RAGAS_EVALUATION.md](../rag/RAGAS_EVALUATION.md).
 
-The evaluation scripts are located under `tools/` and reference ground truth transcripts and benchmark reports:
+## 1. Component quality gates (`infra/scripts/eval/`)
 
-*   **Ground Truth Files**: Located in `storage/audio/{org}/evaluation/` (contains transcripts, speaker divisions, and emotion labels verified by human supervisors).
-*   **Evaluation Outputs**: Written to `tools/reports/EVAL_REPORT.md` and `EVAL_REPORT.json`.
+| Command | Script | Measures |
+|---|---|---|
+| `make quality-eval-transcript` | `eval_transcript.py` | WER and speaker accuracy |
+| `make quality-eval-emotion` | `eval_emotion.py` | Emotion label F1 and shift F1 |
+| `make quality-eval-policy` | `eval_policy.py` | Violation precision/recall and policy attribution |
+| `make quality-eval-rag` | `eval_rag.py` | Answer correctness and evidence coverage |
+| `make quality-eval-resolution` | `eval_resolution.py` | Resolved accuracy and missing-step F1 |
+| `make quality-eval-all` | `eval_all.py` | All five above; writes `aggregate_report.json` |
 
----
+- Thresholds live in `infra/benchmarks/schema/thresholds.json`, and a component fails when it misses one.
+- Every script takes `--predictions`. The default is `infra/benchmarks/fixtures/baseline_predictions.json`, a committed snapshot, so `make quality-eval-all` checks the evaluators against that snapshot and does not run the live pipeline.
+- To score live output, run `extract_pipeline_predictions.py --token <JWT> --pair CALL_01=<uuid> ...`. It **overwrites** `baseline_predictions.json` unless you pass `--output`. Known issue: the script requests `/api/interactions/{id}` without the `/v1` prefix, so it currently fails against the backend.
 
-## 2. Key Evaluation Scripts
+Supporting scripts:
 
-*   **`tools/evaluate_pipeline.py`**: Runs the complete audio file pipeline against all evaluation call samples, computing precision, recall, and diarization accuracy metrics.
-*   **`tools/reprocess_and_compare.py`**: Reprocesses a specific call and diffs its text output, sentiment flags, and compliance triggers directly against ground truths.
-*   **`tools/compare_summary.py`**: Compares two evaluation report files to analyze performance changes (verifies no regressions occurred).
-*   **`tools/download_mlflow_model.py`**: Script used to download the speaker classifier model assets directly from DagsHub.
+- `generate_nexalink_gold.py` rebuilds `expected/*_gold.json` from `storage/audio/nexalink/evaluation/CALL_01`–`CALL_05`.
+- `make_oracle_predictions.py` writes `fixtures/oracle_predictions.json`, which mirrors the gold files and should score 100%. Use it to check that the evaluators are wired correctly.
+- `eval_pipeline_audio_live.py` and `build_transcript_predictions_from_db.py` read stored utterances straight from Postgres (`localhost:5434`) to measure real WER and speaker accuracy. Both hardcode interaction UUIDs in `CALL_MAP`; edit the map for your database.
+- `eval_diarization.py` downloads VoxConverse and computes DER against the WhisperX service (`--server-url`, default `http://localhost:8003`).
 
----
+## 2. Pipeline vs ground truth (`tools/`)
 
-## 3. The 8 Evaluation Axes
+Logs in as the org manager, optionally reprocesses selected calls, fetches the full detail with LLM triggers, and scores 8 axes: agent, topic, resolution, SOP retrieval, turn ratio, diarization share delta, fused emotion cosine and coverage recall. Usage and axis definitions: [tools/README.md](../../tools/README.md). Dated results: [PIPELINE_FINDINGS.md](../eval/PIPELINE_FINDINGS.md).
 
-The harness measures pipeline success across 8 distinct axes:
+## Rate limits
 
-1.  **`agent_match`**: Accuracy of assigning the interaction to the correct agent.
-2.  **`topic_match`**: Precision of the topic classification engine.
-3.  **`resolution_match`**: Correctness of call resolution heuristic outcomes.
-4.  **`sop_retrieval_match`**: Relevance and precision of SOP document retrieval.
-5.  **`avg_turn_ratio`**: Correctness of speaker turn segment divisions.
-6.  **`avg_emotion_cosine_fused`**: Sentiment prediction cosine similarity against human labels.
-7.  **`avg_diar_share_delta`**: Speaker speak-time duration share accuracy.
-8.  **`avg_coverage_recall`**: Recall rate of SOP steps matched in the call.
-
----
-
-## 4. Operational Commands
-
-### 4.1 Running the Full Evaluation
-To evaluate the active codebase against all benchmark files:
-```bash
-make quality-eval-all
-# OR execute the script directly:
-python tools/evaluate_pipeline.py
-```
-
-### 4.2 Groq Rate Limits Note
-Because the compliance judging engine executes three LLM chains per call, running evaluations sequentially can hit Groq API rate limits (TPD/RPM). The LangChain wrappers in `app/llm_trigger/chains.py` implement exponential backoff retry algorithms to handle rate limits.
+Each processed call runs three LLM chains. `_invoke_chain_with_retry` in `backend/app/llm_trigger/chains.py` makes up to 3 attempts on transient errors (rate limit, timeout, connection), with exponential backoff between them. If the provider stays rate-limited, the trigger stage falls back to its deterministic heuristics, which skews scores, so check the backend logs before trusting a run.

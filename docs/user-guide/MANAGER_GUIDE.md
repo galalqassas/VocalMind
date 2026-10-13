@@ -1,78 +1,45 @@
-# VocalMind Manager Guide & Manual
+# Manager Guide
 
-This guide describes the workflow, KPIs, and tool features available to users with the **Manager** role in the VocalMind platform.
+What a user with the **manager** role can see and do. All data is scoped to the manager's organization. Route and component map: [FRONTEND_ARCHITECTURE.md](../frontend/FRONTEND_ARCHITECTURE.md).
 
----
+The sidebar has Dashboard, Session Inspector, Review Queue, Knowledge Base, Manager Assistant and Settings. Notifications are under the header bell (`/manager/notifications`).
 
-## 1. Manager Dashboard & KPIs
+## Dashboard (`/manager`)
 
-Upon logging in, managers see the main dashboard, which rolls up performance metrics across the entire organization:
+- KPI cards: Average Score, Calls Processed, Resolution Rate and Policy Violations.
+- Weekly Score Trends, Emotion Distribution, Agent Leaderboard and Recent Interactions.
+- The backend caches dashboard stats per organization for 5 minutes (`dashboard_cache` in `backend/app/core/cache.py`). New or reprocessed calls can take up to 5 minutes to show up.
 
-*   **Empathy Score**: Measures acoustic emotion trends and agent empathy during calls.
-*   **Policy Compliance**: Percentage of calls conforming to active organization compliance rules.
-*   **Resolution Score**: Success rate of agents resolving customer issues.
-*   **Overall Score**: Weighted average of all metrics.
-*   **Leaderboard**: Ranks agents (both human and AI) by their overall performance, highlighting top performers and coaching opportunities.
+## Session Inspector (`/manager/inspector`)
 
-> [!NOTE]
-> The dashboard stats employ a **5-minute TTL cache** server-side. Seeding new calls or reprocessing interactions will not update the dashboard metrics immediately until the cache expires.
+- Search by agent name, date or interaction ID. Sort by score, date or duration. Results are paginated.
+- **Upload audio** creates an interaction (`POST /api/v1/interactions`), optionally assigned to an agent, and queues it for processing.
+- The row menu has **View details**, **Reprocess** and **Delete session** (asks for confirmation).
 
----
+## Session detail (`/manager/inspector/:id`)
 
-## 2. Session Inspector (Call Search)
+- Audio player synced with the diarized transcript. Click a turn to seek the audio.
+- Analysis tabs: Emotion, Process (SOP adherence), Policy (NLI verdicts and violations) and Quality (agreement between audio, text and fused emotion).
+- Evidence panel: each trigger links to transcript spans and to the retrieved policy or SOP chunk, with jump-to-timestamp buttons. See [EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md](../explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md).
+- **Correct** on an emotion event or compliance verdict opens a correction sheet. It writes a `reviewed` feedback row and notifies the agent; no agent flag is needed (`backend/app/api/routes/feedback.py`).
+- **Reprocess**: the header shows the knowledge version the call was judged against (e.g. `KB v3 · stale`). Reprocessing lets you choose that original version or the active one.
 
-The **Session Inspector** is the primary search portal for call recordings:
-*   **Filters**: Filter calls by Agent, Topic, Score Range, and status (`completed`, `pending`, `processing`, `failed`).
-*   **Reprocess Action**: Reruns the entire audio processing pipeline for a call. Use this after uploading new SOP files or editing active policies to update scores.
+## Review Queue (`/manager/reviews`)
 
----
+Lists AI findings that agents flagged, with tabs for All, Emotion and Compliance.
 
-## 3. Session Detail & Explainability Panel
+- **Accept flag** records a correction: a corrected emotion and justification, or a corrected compliance verdict and an optional 0–1 score. It writes a `reviewed` feedback row.
+- **Reject** clears the flag and keeps the AI verdict. No feedback row is written.
+- Both actions notify the agent (`backend/app/api/routes/reviews.py`).
 
-Clicking a call opens the **Session Detail** view. This interface houses the core evaluation tools:
+## Knowledge Base (`/manager/knowledge`)
 
-### 3.1 Diarized Transcript
-*   Divides conversation turns between the **Agent** and **Customer**.
-*   Utterances are synced with the audio player. Clicking a transcript segment jumps the audio playhead directly to that second.
+- Tabs: **Policies**, **SOPs**, **Knowledge Base** and **Versions**.
+- Upload, replace, toggle (active/inactive) or delete PDFs. Uploads are saved under `storage/docs/<org>/` for the ingestion service to index. See [KNOWLEDGE_BASE_MANAGEMENT.md](../operations/KNOWLEDGE_BASE_MANAGEMENT.md).
+- **Versions**: every knowledge change creates a version. **Activate** an older version to roll back. **Reprocess stale results** re-judges calls that were scored against an older version.
 
-### 3.2 Evidence Cards
-The **Evidence-Anchored Explainability** panel bridges verdicts to actual call context:
-*   **Trigger Attributions**: Amber warning cards highlighting specific triggers (e.g. *Sarcasm Detected*, *SOP Step Missed*) linked to precise transcript lines.
-*   **Retrieval Provenance**: Blue cards linking RAG compliance verdicts to the source policy document, H1/H2 header section, and matching text chunk. Surfaces similarity scores.
-*   **Interactive Jump**: Clicking the jump-to-timestamp icon on any card scrolls the transcript, highlights the turn, and seeks the audio.
+## Manager Assistant (`/manager/assistant`)
 
----
-
-## 4. AI Manager Assistant
-
-The **Assistant** page provides a secure, natural-language-to-SQL interface:
-*   **Example Queries**: Type queries like *"Show me Daniel's average score this week"* or *"List calls with hold time violations"*.
-*   **Session Memory**: The Assistant retains context. You can ask follow-ups like *"Show the details for the second one"*.
-*   **Read-Only Safety**: The generated SQL is executed in read-only mode. Commands like `UPDATE` or `DELETE` are blocked.
-
----
-
-## 5. Knowledge Base & Document Ingestion
-
-Managers upload and manage documents used to ground RAG retrievals:
-*   **Company Policies**: Upload compliance PDFs. Toggling a policy active/inactive controls whether NLI trigger evaluations check it.
-*   **SOP Procedures**: Ingest step-by-step resolution workflows. The system maps these to expected step graphs to calculate process adherence.
-*   **FAQ & Knowledge Base**: Manage FAQ question/answer pairs and reference documents for Q&A query synthesis.
-
----
-
-## 6. Manager Review Queue (Dispute Management)
-
-Managers act as the final authority on agent disputes. The **Review Queue** lists all pending disputes:
-*   **Emotion Review**: Shows agent disputes on segment-level acoustic emotions. Managers can **Accept** the dispute (and select the corrected emotion label/write a justification) or **Reject** the dispute.
-*   **Compliance Review**: Shows agent disputes on policy compliance verdicts. Managers can **Accept** (correcting the compliance score and boolean status) or **Reject** the dispute.
-*   **Training Loop Integration**: Accepting a dispute automatically updates the database and creates a review feedback record. Approved changes are queued to be exported to the model fine-tuning dataset.
-
----
-
-## 7. Manager Direct Feedback & Corrections
-
-Managers can make direct corrections to any call evaluation even if the agent has not disputed it:
-*   **Direct Emotion Correction**: Click **Correct Emotion** on any utterance, select the correct label, and enter the reason.
-*   **Direct Compliance Correction**: Click **Correct Compliance** on any policy card, specify if the agent was compliant, and enter a note.
-*   These actions bypass the dispute queue and immediately log a `reviewed` feedback record for model retraining.
+- Ask questions in plain English. The backend turns each question into one `SELECT` (or `WITH … SELECT`), validates it, and runs it on a read-only database connection (`ASSISTANT_DATABASE_URL`).
+- Suggested questions appear on an empty chat. Follow-ups such as "the second one" reuse the previous result.
+- Chats are saved per user and can be renamed or deleted. Details: [MANAGER_ASSISTANT.md](../llm_trigger/MANAGER_ASSISTANT.md).

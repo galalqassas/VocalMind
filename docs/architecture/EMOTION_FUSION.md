@@ -1,40 +1,42 @@
-# Emotion Fusion Architecture
+# Emotion Fusion
 
-This document describes the dual-signal emotion fusion algorithm that combines acoustic and textual emotion signals to produce a unified sentiment analysis.
+Implementation: `backend/app/core/emotion_fusion.py`. Labels are normalized by `normalize_emotion_label` (`backend/app/core/inference_contracts.py`).
 
----
+## Where emotion labels come from
 
-## 1. Dual-Signal Architecture
+| Signal | Source | Stored? |
+|---|---|---|
+| Per-utterance `Utterance.emotion` | Local mode: keyword heuristic `build_deterministic_emotion_analysis` on the segment text (the Emotion service returns one clip-level label, which never reaches segments). Remote mode: per-segment scores from Kaggle `/full`, same heuristic for missing ones. | Yes |
+| Clip-level acoustic label | Emotion service `/predict` (emotion2vec, first 30 s, mono 16 kHz) | Only `top_score`, written to `Transcript.overall_confidence` |
+| Text emotion | `infer_text_emotion_with_provider` (below) | No |
+| Fused emotion | `fuse_emotion_signals` | No — computed on read |
 
-Traditional speech classification systems rely solely on acoustic features (which miss conversational context) or text sentiment (which misses vocal inflections). VocalMind implements a **dual-signal fusion framework**:
+Fusion runs at read time in: `GET /api/v1/interactions/{id}` (per-utterance `textEmotion`, `fusedEmotion`, `fusedConfidence`, `fusionModel`), `GET /api/v1/interactions/{id}/emotion-comparison`, `POST /api/v1/emotion/fuse`, and `_derive_llm_inputs` in `llm_trigger/service.py` (customer-level fused label fed to the emotion-shift chain).
 
-```text
-[Audio Turn segment] ──────────────────────────► emotion2vec (Acoustic) ──┐
-                                                                           ├─► [Fusion Algorithm] ──► Fused Emotion
-[Segment Transcript] ──► DistilRoBERTa / Lexicon ──► NLP Sentiment (Text) ─┘
-```
+## Text emotion provider (`TEXT_EMOTION_PROVIDER`)
 
----
+- `rule_based` (Settings default): `infer_text_emotion` — lexicon tokens +1, phrases +2, frustration cues +1, `!` adds +1 to angry and frustrated; confidence `min(0.97, 0.42 + 0.14 × score)`; no hit → `neutral` 0.3; empty → `neutral` 0.2.
+- `hf_transformers` (compose default): POST `{EMOTION_API_URL}/predict_text` (or Kaggle `/predict_text` when `IS_LOCAL=false`), model `j-hartmann/emotion-english-distilroberta-base`. The first failure sets `_HF_PROVIDER_DISABLED_REASON` and the process uses `rule_based` until restart.
 
-## 2. The Fusion Algorithm
+## Fusion rule (`fuse_emotion_signals`)
 
-The core fusion logic is implemented in `backend/app/core/emotion_fusion.py` using the following rules:
+Weights: acoustic 0.55, text 0.45. Missing acoustic confidence defaults to 0.7.
 
-### 2.1 Weight Allocations
-The fused score is calculated by combining normalized confidence scores:
-*   **Acoustic Signal Weight**: `0.55`
-*   **Text Signal Weight**: `0.45`
+- Labels agree: label kept, confidence `min(0.99, 0.45·text + 0.55·acoustic + 0.08)`.
+- Labels differ: label of the higher-confidence modality, confidence `max(0.35, 0.45·text + 0.55·acoustic − 0.12)`.
+- Non-neutral amplification: when fused confidence ≥ 0.45, a combined score map (neutral base 0.15 plus each modality's weighted score) is re-ranked; if `neutral` tops it and the runner-up is non-neutral with score ≥ 0.38, the runner-up wins with `min(0.95, score × 1.4)` when that exceeds neutral.
+- `model` = `<TEXT_EMOTION_PROVIDER>_text_acoustic_fusion_v2`.
 
-### 2.2 Agreement Bonus & Disagreement Penalty
-*   **Agreement Bonus**: If the acoustic label and text label agree (e.g. both are classified as `happy`), the fused confidence is rewarded:
-    \[C_{\text{fused}} = \text{Min}(0.99, (C_{\text{text}} \times 0.45) + (C_{\text{acoustic}} \times 0.55) + 0.08)\]
-*   **Disagreement Penalty**: If the modalities contradict (e.g. text is `happy` but acoustic is `angry`), the confidence is penalized:
-    \[C_{\text{fused}} = \text{Max}(0.35, (C_{\text{text}} \times 0.45) + (C_{\text{acoustic}} \times 0.55) - 0.12)\]
-    The fused label defaults to the modality that yielded the higher confidence score.
+Changing the weights requires re-running `make quality-eval-emotion`.
 
----
+## Label normalization
 
-## 3. Modality Heuristics & Fallbacks
+| Map | Rules |
+|---|---|
+| Acoustic (`EMOTION_NORMALIZATION`) | joy, satisfied → happy; calm → neutral; fear, disgust → frustrated |
+| Text (`TEXT_LABEL_NORMALIZATION`) | joy, happiness → happy; anger → angry; sadness → sad; fear, disgust, annoyance → frustrated; surprise → neutral |
+| Service responses (`normalize_emotion_label`) | as above, but surprise → surprised; other, `<unk>` → unknown |
 
-*   **Acoustic Text Fallback**: Acoustic speech turn classifiers frequently yield `neutral` on flat vocal inflections even when the words are emotionally charged (e.g. *"This is terrible, I'm leaving"*). If the acoustic signal is `neutral` but the text classifier detects active lexical tokens, the text emotion overrides the acoustic neutral.
-*   **Min-Duration Gate**: Acoustic classification on segments shorter than 1.0 second is highly unstable. To prevent noise spikes, turns under 1.0 second inherit the classification of the preceding turn.
+## Min-duration gate
+
+`apply_emotion_min_duration_gate` (`interaction_processing.py`): segments shorter than `EMOTION_MIN_SEGMENT_SECS` (default 1.0 s) inherit the previous segment's emotion and scores; a replaced label is kept in the segment dict as `_emotion_original` (not persisted).

@@ -1,53 +1,20 @@
 # Alembic migrations
 
-The canonical fresh-DB bootstrap is still
-[`infra/db/01_schema.sql`](../../infra/db/01_schema.sql). Alembic owns
-**incremental** schema changes on top of that baseline.
+Alembic manages incremental schema changes. It reads `DATABASE_URL` through `app.core.config.settings` (`env.py`) and runs nothing automatically: compose, CI, the deploy workflow and the backend image all leave it out. How Alembic relates to `infra/db/01_schema.sql` and to `create_all` at startup, including the known gaps, is covered in [docs/architecture/DATABASE_SCHEMA.md](../../docs/architecture/DATABASE_SCHEMA.md).
 
-## Apply pending migrations
-
-```bash
-cd backend
-uv run alembic upgrade head
-```
-
-Reads `DATABASE_URL` from `.env` (same one the API uses).
-
-## First-time setup against an existing DB
-
-If your database was bootstrapped from `infra/db/01_schema.sql` and has
-not yet been touched by Alembic, mark it as having the baseline
-migration before applying any newer ones:
-
-```bash
-uv run alembic stamp 0001_baseline
-uv run alembic upgrade head
-```
-
-The `stamp` writes a row into the `alembic_version` table without
-running any SQL — it just tells Alembic "trust me, the schema is
-already at this revision."
-
-## Day-to-day commands
+Run every command from `backend/`.
 
 | Goal | Command |
 |---|---|
-| New empty migration | `uv run alembic revision -m "what changed"` |
-| Autogenerate from model diff | `uv run alembic revision --autogenerate -m "..."` |
 | Apply pending | `uv run alembic upgrade head` |
-| Roll back one revision | `uv run alembic downgrade -1` |
-| Show current revision | `uv run alembic current` |
-| Show history | `uv run alembic history` |
+| Current / history | `uv run alembic current` / `uv run alembic history` |
+| Mark a DB as already at a revision | `uv run alembic stamp <rev>` (writes `alembic_version` only) |
+| New migration from a model diff | `uv run alembic revision --autogenerate -m "..."` |
+| Roll back one | `uv run alembic downgrade -1` |
 
 ## Conventions
 
-- One revision = one logical change. Don't bundle unrelated ALTERs.
-- Always provide a working `downgrade()` unless the migration is
-  irreversible (and say so in the docstring).
-- `compare_type=True` + `compare_server_default=True` are on in
-  `env.py`, so autogenerate will catch most column-shape changes,
-  but always read the generated file before committing.
-- For new tables, prefer model-first: update `app/models/*.py`, then
-  `--autogenerate`. Hand-edit the autogen output to remove SQLModel-isms
-  that don't translate (e.g. drop `if_not_exists` clauses Alembic
-  doesn't emit).
+- Change the SQLModel in `app/models/` first, then autogenerate. Always read the generated file. `env.py` enables `compare_type` and `compare_server_default`, but autogenerate still misses things such as CHECK constraints and partial indexes.
+- Keep one logical change per revision, and provide a working `downgrade()`.
+- Prefer idempotent DDL (`IF NOT EXISTS`) when a target DB may already have the object, for example from `create_all` or `infra/db/*.sql`.
+- File names follow `alembic.ini`: `YYYYMMDD_HHMM_<rev>_<slug>.py`. A Ruff format hook runs on new revisions.

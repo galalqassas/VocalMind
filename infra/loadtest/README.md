@@ -1,55 +1,32 @@
 # Load testing
 
-Locust scenario exercising the user-facing read endpoints. Lives outside
-the backend venv so installing Locust doesn't pollute the runtime image.
-
-## Setup
+`locustfile.py` simulates managers browsing read endpoints. Locust is not a backend dependency, so install it in a separate venv.
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install locust
+python -m venv .venv && .venv/bin/pip install locust
+make up                                   # repo root
+cd infra/loadtest && locust -f locustfile.py --host http://localhost:8000   # UI on :8089
 ```
 
-## Run against a local stack
+Headless run, writing `reports/baseline_stats.csv` and `reports/baseline_failures.csv`:
 
 ```bash
-make up                                  # in repo root
-cd infra/loadtest
-locust -f locustfile.py --host http://localhost:8000
-# open http://localhost:8089
+locust -f locustfile.py --host http://localhost:8000 --headless --users 50 --spawn-rate 5 --run-time 5m --csv reports/baseline
 ```
 
-## Headless run (CI / baseline capture)
+Credentials come from `VM_LOAD_USERNAME` / `VM_LOAD_PASSWORD` (default: seeded `manager@nexalink.com` / `password123`).
 
-```bash
-mkdir -p reports
-locust -f locustfile.py --host http://localhost:8000 \
-    --headless --users 50 --spawn-rate 5 --run-time 5m \
-    --csv reports/baseline
-```
+## Task mix (weights)
 
-Produces `reports/baseline_stats.csv` + `reports/baseline_failures.csv`.
-Commit the CSVs alongside a `reports/<date>_<sha>.md` summary noting
-which commit / environment they came from.
+| Endpoint | Weight | p95 target ([SLA.md](../../docs/SLA.md)) |
+|---|---|---|
+| `GET /api/v1/dashboard/stats` | 5 | 800 ms |
+| `GET /api/v1/interactions/{id}` | 4 | 1.2 s |
+| `GET /api/v1/interactions` | 3 | 1.2 s |
+| `GET /api/v1/notifications/unread-count` | 2 | 600 ms |
+| `GET /api/v1/reviews/queue` | 1 | 600 ms |
 
-## Targets
+## Caveats
 
-From [`docs/SLA.md`](../../docs/SLA.md) §2:
-
-| Endpoint | p95 budget |
-|---|---|
-| `GET /dashboard/stats` | 800 ms |
-| `GET /interactions` | 1.2 s |
-| `GET /interactions/{id}` | 1.2 s |
-| `GET /notifications/unread-count` | 600 ms |
-| `GET /reviews/queue` | 600 ms |
-
-A run is a regression if any p95 doubles vs. the last committed baseline.
-
-## What's deliberately out of scope
-
-- **Audio uploads + pipeline runs** — GPU-bound, tested separately via
-  [`infra/scripts/e2e_local_audio.py`](../scripts/e2e_local_audio.py).
-- **Auth burst tests** — `/auth/login/access-token` has its own rate
-  limit; load-testing it is a separate scenario.
-- **Realtime delivery** — there isn't any yet; the bell polls at 30 s.
+- The backend applies a global slowapi limit of 60 requests/minute per client IP (`backend/app/core/rate_limit.py`). A single-host run with many users gets HTTP 429s that measure the limiter, not the endpoints. Either distribute the load across IPs or raise the limit for the test.
+- Not covered: audio upload and pipeline runs (see `infra/scripts/e2e_local_audio.py`) and login bursts.

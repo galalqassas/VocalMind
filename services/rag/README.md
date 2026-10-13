@@ -1,156 +1,76 @@
-# VocalMind RAG
+# VocalMind RAG Service
 
-**Dual-granularity Policy Compliance & Answer Scoring with Docling, Qdrant, and Ollama Cloud (Groq fallback)**
+Document ingestion, Qdrant retrieval, optional answer synthesis, and policy/answer judges. Python ≥ 3.11, managed with `uv`. In compose it runs as the `vocalmind-ingestion` container (`python main.py --watch`); the backend imports `query_engine.py` and `evaluator.py` from the `/app/rag` mount.
 
-A robust Retrieval-Augmented Generation (RAG) system for policy document analysis, featuring:
+Concepts and collection roles: [docs/rag/RAG_OVERVIEW.md](../../docs/rag/RAG_OVERVIEW.md). Pipeline details: [docs/rag/INGESTION_PIPELINE.md](../../docs/rag/INGESTION_PIPELINE.md). Evaluation: [docs/rag/RAGAS_EVALUATION.md](../../docs/rag/RAGAS_EVALUATION.md).
 
-- Dual-granularity chunking (full sections & precision snippets)
-- Policy compliance and answer correctness evaluation
-- Hybrid architecture (Docling, Ollama embeddings, Qdrant, Ollama Cloud synthesis with Groq fallback)
-- Per-organization document support
+## Modules
 
----
+| File | Role |
+|---|---|
+| `main.py` | CLI entry point |
+| `ingest.py` | `DocumentIngestionPipeline`: Docling → clean → parent/child chunks → Ollama embeddings → Qdrant |
+| `query_engine.py` | `RAGQueryEngine`: org-filtered retrieval, rerank, optional LlamaIndex synthesis, query logs |
+| `reranker.py` | Cross-encoder rerank (`BAAI/bge-reranker-v2-m3`), dense-order fallback |
+| `evaluator.py` | `PolicyComplianceEvaluator` (parents) and `AnswerCorrectnessEvaluator` (children) LLM judges |
+| `prompt_safety.py` | `sanitize_prompt_text`, `with_injection_guard`, `INJECTION_GUARD` |
+| `llm_circuit_breaker.py` | Circuit breakers for judge and embedding calls (the backend's `app.core.llm_circuit_breaker` is preferred when importable) |
+| `config.py` | `Settings` (env from `services/rag/.env`, repo `.env`, `backend/.env`); stage → model resolution |
+| `ragas_eval.py` | RAGAS evaluation |
 
-## Features
+## Collections
 
-- **Mixed Collection RAG**: Ingests policy PDFs into two Qdrant collections (parents + children), while SOP and KB documents are indexed only into a parent collection:
-	- **Policy Parents**: Full policy sections (for compliance checks)
-	- **Policy Children**: Fine-grained snippets (for answer fact-checking)
-	- **SOP + KB Parents**: Procedure and reference sections (no child collection)
-- **AI-powered PDF Parsing**: Uses Docling for accurate PDF-to-Markdown conversion
-- **Local Embeddings**: Embeddings generated via Ollama (snowflake-arctic-embed2)
-- **LLM Synthesis**: Uses Ollama Cloud in production for high-quality LLM responses (Groq supported as a fallback provider)
-- **Per-Organization Filtering**: Each org’s docs are indexed with metadata for targeted queries
-- **Policy Compliance & Answer Scoring**: Built-in evaluators for both transcript compliance and answer correctness
-- **Detailed Logging**: All queries and evaluations are logged as JSON in `logs/`
-- **Evaluation Suite**: Automated scoring and reporting for compliance and answer accuracy
-- **Explainability Hooks**: Retrieval provenance can be surfaced to manager UI and API consumers
+| Collection | Content |
+|---|---|
+| `vocalmind_parents` | Policy H1/H2/H3 sections |
+| `vocalmind_children` | Policy children (atomic rule rows, atomic tables, 400/80 text splits) |
+| `vocalmind_sop_parents` | SOP and KB sections (no children) |
 
-## Documentation
+All vectors: `snowflake-arctic-embed2`, 1024-d, cosine. Every point carries `org` (org folder name) and `doc_type` (`policy` / `sop` / `kb`).
 
-Team-facing RAG documentation is maintained in:
+## Documents
 
-1. **[RAG Overview](../../docs/rag/RAG_OVERVIEW.md)**
-2. **[Ingestion Pipeline](../../docs/rag/INGESTION_PIPELINE.md)**
-3. **[Evidence-Anchored Explainability Layer](../../docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)**
-
----
-
-## Setup
-
-1. **Install Dependencies**
-	 - Requires Python 3.11+
-	 - Install with:
-		 ```bash
-		 uv sync
-		 ```
-
-2. **Environment Configuration**
-	 - Copy `.env.example` to `.env` and fill in:
-		 - `GROQ_API_KEY` (Groq LLM)
-		 - `QDRANT_URL` (Qdrant vector DB, default: `http://localhost:6333`)
-		 - `OLLAMA_BASE_URL` (Ollama embeddings, default: `http://localhost:11434`)
-
-3. **Prepare Policy/SOP Documents**
-	 - Place PDFs under `storage/docs/`:
-		 ```
-		 storage/docs/
-		 └── nexalink/
-			 ├── policy-docs/
-			 │   ├── POLICY_01_call_conduct.pdf
-			 │   └── POLICY_02_data_privacy.pdf
-			 ├── sop-procedures/
-			 │   └── SOP_01_refund_request_processing.pdf
-			 └── knowledge-base/
-				 └── KB_01_product_technical_reference.pdf
-		 ```
-	 - Parsed markdown outputs are written to type-specific subdirectories under `storage/docs/{org}/parsed-docs/`:
-		 - `storage/docs/{org}/parsed-docs/policies/*.md` (policy docs)
-		 - `storage/docs/{org}/parsed-docs/sops/*.md` (SOP docs)
-		 - `storage/docs/{org}/parsed-docs/kb/*.md` (knowledge base docs)
-
-4. **Start Services**
-	 - Ensure Qdrant and Ollama are running (see their docs for Docker or local start).
-
----
-
-## Usage
-
-Run from the `final-rag` directory:
-
-### 1. Ingest Documents
-
-```bash
-python main.py --ingest
 ```
-Use `--force` to wipe and re-index:
-```bash
-python main.py --ingest --force
+storage/docs/<org>/policy-docs/*.pdf      → policy
+storage/docs/<org>/sop-procedures/*.pdf   → sop   (legacy: faq-docs/)
+storage/docs/<org>/knowledge-base/*.pdf   → kb    (legacy: kb/)
 ```
 
-### 2. Querying
+Parsed output goes to `storage/docs/<org>/parsed-docs/{policies,sops,kb}/`.
 
-- **Single Query:**
-	```bash
-	python main.py -q "What is the refund policy?" --org org1
-	```
-- **Interactive Mode:**
-	```bash
-	python main.py
-	```
+## CLI (run from `services/rag`)
 
-### 3. Policy Compliance Check
+| Command | Action |
+|---|---|
+| `uv run python main.py --ingest [--force]` | Ingest all PDFs; `--force` drops and recreates the three collections first |
+| `uv run python main.py --watch [--interval 60]` | Poll for PDF changes and re-run ingestion (container default) |
+| `uv run python main.py -q "question" --org nexalink [--parents]` | Retrieve + synthesize from children (or parents) |
+| `uv run python main.py --compliance "transcript" --org nexalink` | `PolicyComplianceEvaluator` |
+| `uv run python main.py --check-answer --question "…" --answer "…" --org nexalink` | `AnswerCorrectnessEvaluator` |
+| `uv run python main.py` | Interactive mode |
 
-Evaluate if a transcript complies with policy:
-```bash
-python main.py --compliance "The agent promised a full refund with no questions asked." --org org1
-```
+`--org` must be the org folder name; without it, queries match nothing.
 
-### 4. Answer Correctness Check
+## Configuration
 
-Check if an agent’s answer is factually correct:
-```bash
-python main.py --check-answer --question "Refund window?" --answer "30 days" --org org1
-```
+Copy `.env.example` to `.env` (values from the repo `.env` and `backend/.env` are also read). Main variables:
 
----
+| Variable | Default | Purpose |
+|---|---|---|
+| `QDRANT_URL` | `http://localhost:6333` | Vector DB |
+| `QDRANT_COLLECTION_PARENTS` / `_CHILDREN` / `_SOP_PARENTS` | `vocalmind_parents` / `vocalmind_children` / `vocalmind_sop_parents` | Collection names |
+| `OLLAMA_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION` | `http://localhost:11434`, `snowflake-arctic-embed2`, `1024` | Embeddings |
+| `OLLAMA_CLOUD_EMBED_ENABLED` | `false` | Embed via Ollama Cloud instead |
+| `DOCS_DIR`, `POLICY_DOCS_DIR`, `KNOWLEDGE_DOCS_DIR`, `PARSED_DIR`, `PARSED_POLICY_DIR`, `PARSED_SOP_DIR` | `<repo>/storage/docs` | Source and output roots (relative paths resolve against `services/rag/`) |
+| `LLM_PROVIDER` | `groq` (compose: `ollama_cloud`) | Synthesis and judge provider |
+| `GROQ_API_KEY`, `LLM_MODEL` | —, `llama-3.3-70b-versatile` | Groq |
+| `OLLAMA_CLOUD_API_KEY` (or `OLLAMA_API_KEY`), `OLLAMA_CLOUD_FAST_MODEL`, `OLLAMA_CLOUD_HEAVY_MODEL`, `OLLAMA_MODEL_RAG_SYNTHESIS`, `OLLAMA_MODEL_RAG_JUDGE` | | Ollama Cloud models |
+| `SYNTHESIS_BASE_URL`, `SYNTHESIS_MODEL` | empty | Override synthesis with any OpenAI-compatible endpoint |
+| `SYNTHESIS_PROMPT_MODE` | `safe` | `safe` or `assertive` |
+| `RERANK_ENABLED`, `RERANK_MODEL`, `RERANK_CANDIDATE_K`, `RERANK_MIN_SCORE` | `true`, `BAAI/bge-reranker-v2-m3`, `20`, `-1000` | Reranking |
+| `HYDE_ENABLED` | `false` | HyDE query expansion |
+| `RAG_QUERY_LOG_ENABLED` | `false` | Write `logs/query_*.json` |
 
-## Evaluation & Logs
+## Tests
 
-- All queries and evaluations are logged in the `logs/` directory as JSON.
-- Each log includes:
-	- Timestamp, model info, org, and query type
-	- Retrieved chunks and metadata
-	- LLM response and evaluation scores
-
----
-
-## Notes
-
-- The ingestion pipeline discovers PDFs in `storage/docs/{org}/policy-docs`, `storage/docs/{org}/sop-procedures`, and `storage/docs/{org}/knowledge-base`.
-- Per-organization filtering is enabled via the `--org` flag.
-- For compliance and answer checks, replace the quoted text with your own queries or transcripts.
-
----
-
-## Testing
-
-Unit tests are provided for all core RAG modules (ingestion, query engine, evaluator, config). Tests are located in the `tests/` directory and cover:
-- Ingestion pipeline logic (cleaning, chunking, metadata)
-- Query engine node conversion and log writing
-- Evaluator result models and JSON parsing
-- Config and settings validation
-
-### Running Tests
-
-You can run all tests with:
-
-```bash
-uv run pytest tests/ -v --tb=short
-```
-Or, if not using `uv`:
-```bash
-pytest tests/ -v --tb=short
-```
-
-All tests are unit tests and do not require external services or network access.
+`make rag-test` (or `uv run pytest tests/ -v`) and `make rag-lint`. Tests: `test_config.py`, `test_ingest.py`, `test_query_engine.py`, `test_evaluator.py`, `test_ragas_eval.py`.
