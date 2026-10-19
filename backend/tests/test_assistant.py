@@ -3,7 +3,7 @@ Unit tests for the Manager Assistant endpoint.
 
 Test strategy:
 1. Schema validation tests (422 checks) — no DB required
-2. Unit tests for IntentResolver — mock Gemini directly, no HTTP or DB needed
+2. Unit tests for IntentResolver — mock the LLM call, no HTTP or DB needed
 """
 import asyncio
 
@@ -172,7 +172,7 @@ def test_deterministic_rank_answer_is_non_hallucinated():
 
 @pytest.mark.asyncio
 async def test_resolve_sql_returns_none_for_unknown():
-    """resolve_sql should return None when Gemini outputs UNKNOWN."""
+    """resolve_sql should return None when the LLM outputs UNKNOWN."""
     from app.api.routes.assistant import IntentResolver
 
     resolver = IntentResolver()
@@ -269,7 +269,7 @@ async def test_synthesize_answer_returns_string():
 
 @pytest.mark.asyncio
 async def test_synthesize_answer_fallback_on_exception():
-    """synthesize_answer should return a fallback string when Gemini call fails."""
+    """synthesize_answer should return a fallback string when the LLM call fails."""
     from app.api.routes.assistant import IntentResolver
 
     resolver = IntentResolver()

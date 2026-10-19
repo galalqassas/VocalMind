@@ -58,8 +58,8 @@ async def lifespan(app: FastAPI):
 
 
 tags_metadata = [
-    {"name": "auth", "description": "Authentication, Google OAuth, and session management."},
-    {"name": "emotion", "description": "Speech and text emotion analysis and dual-emotion fusion."},
+    {"name": "auth", "description": "Password and Google ID-token login, and logout."},
+    {"name": "emotion", "description": "Audio processing pipeline (VAD split, transcription, segment emotion)."},
     {"name": "emotion-events", "description": "Agent-disputed emotion events and manager reviews."},
     {"name": "dashboard", "description": "Call center performance indicators, trends, and leaderboard statistics."},
     {"name": "interactions", "description": "Call recording interactions upload, reprocessing, listing, and analysis details."},
@@ -67,12 +67,9 @@ tags_metadata = [
     {"name": "agents", "description": "Agent performance tracking and profile administration."},
     {"name": "assistant", "description": "Natural-language-to-SQL AI Manager Assistant chat and query processing."},
     {"name": "users", "description": "User profile management and password operations."},
-    {"name": "llm-trigger", "description": "Compliance, emotion shift, process adherence, and policy check LLM triggers."},
+    {"name": "llm-trigger", "description": "Run all LLM trigger checks for one interaction; dependency health."},
     {"name": "rag", "description": "RAG querying and vector DB retrieval proxy endpoints."},
-    {"name": "diarization", "description": "Voice activity detection and speaker diarization endpoints."},
-    {"name": "transcription", "description": "Speech-to-text transcription endpoints."},
     {"name": "vad", "description": "Audio voice activity detection split endpoints."},
-    {"name": "full", "description": "Unified pipeline (VAD + ASR + Emotion) execution endpoint."},
     {"name": "internal", "description": "Internal developer diagnostics, system status, and backend configuration."},
     {"name": "notifications", "description": "In-app notifications CRUD operations and polling endpoints."},
     {"name": "reviews", "description": "Agent compliance/emotion dispute coaching and review queue management."},

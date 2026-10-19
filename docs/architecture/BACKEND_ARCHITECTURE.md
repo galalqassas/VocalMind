@@ -7,9 +7,9 @@ FastAPI, async SQLModel/SQLAlchemy (asyncpg), Python 3.12. The backend installs 
 | Path | Role |
 |---|---|
 | `main.py` | App, lifespan, middleware (CORS, slowapi, security headers, request id), Prometheus `/metrics`, `/health` |
-| `api/main.py` | Registers the 20 domain routers under `/api/v1` |
-| `api/deps.py` | `get_db` / `SessionDep`, `get_current_user` / `CurrentUser`, `get_supabase` |
-| `api/routes/` | Route handlers. Inference passthroughs (`vad/`, `transcription/`, `diarization/`, `emotion/`, `full/`) each pair a `router.py` with a `service.py`. |
+| `api/main.py` | Registers the 17 domain routers under `/api/v1` |
+| `api/deps.py` | `get_db` / `SessionDep`, `get_current_user` / `CurrentUser` |
+| `api/routes/` | Route handlers. `vad/` and `emotion/` pair a `router.py` with a `service.py`; `transcription/` and `full/` hold only the `service.py` inference clients the pipeline uses. |
 | `core/config.py` | `Settings` + startup validation |
 | `core/database.py` | Async engine (pool 15 + 20 overflow, statement cache off), `get_session`, `create_db_and_tables` |
 | `core/security.py` | JWT and bcrypt |
@@ -17,8 +17,8 @@ FastAPI, async SQLModel/SQLAlchemy (asyncpg), Python 3.12. The backend installs 
 | `core/kaggle_client.py`, `core/inference_contracts.py` | Speech inference clients routed by `IS_LOCAL` (Kaggle server or local containers); response normalization |
 | `core/audio_resolver.py`, `core/audio_folder_watcher.py` | Audio lookup (local FS / Supabase Storage); `storage/audio/<org>/` auto-ingest |
 | `core/emotion_fusion.py` | Text emotion model call + acoustic/text fusion |
-| `core/knowledge_versioning.py`, `core/knowledge_seed.py` | Org knowledge snapshots / restore; KB seeding |
-| `core/notification_service.py`, `core/feedback_export.py` | In-app notifications; feedback export |
+| `core/knowledge_versioning.py` | Org knowledge snapshots / restore |
+| `core/notification_service.py` | In-app notifications |
 | `core/llm_circuit_breaker.py`, `core/rate_limit.py`, `core/cache.py`, `core/request_context.py` | LLM breaker, slowapi limiter, dashboard TTL cache (300 s), request-id logging |
 | `llm_trigger/` | `service.py` (trigger engine), `chains.py` (Ollama Cloud / Groq LangChain models), `prompts.py` + `prompt_constants.py`, `retrieval.py` (Qdrant), `scoring.py`, `schemas.py` |
 | `models/` | SQLModel tables and enums |
@@ -26,7 +26,7 @@ FastAPI, async SQLModel/SQLAlchemy (asyncpg), Python 3.12. The backend installs 
 
 Outside `app/`:
 
-- `backend/scripts/`: seeders (`seed_nexalink.py`, `seed_meridian.py`), `reset_local_db.py` and maintenance scripts. `scripts/manual/` holds ad-hoc probes that pytest does not collect.
+- `backend/scripts/`: seeders (`seed_nexalink.py`, `seed_meridian.py`) and `reset_local_db.py`. `scripts/manual/` holds `rag_smoke_probe.py`, which pytest does not collect.
 - `backend/alembic/`: migrations.
 
 ## Startup (`lifespan` in `app/main.py`)
@@ -44,7 +44,6 @@ On shutdown the watcher stops, then the worker.
 
 - `get_db` yields one `AsyncSession` per request.
 - `get_current_user` reads the `vocalmind_token` cookie (or the Bearer header), decodes the JWT, and loads an active `User`.
-- `get_supabase` builds a Supabase client from `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`.
 
 ## Processing worker (`core/interaction_processing.py`)
 

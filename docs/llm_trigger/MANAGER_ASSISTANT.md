@@ -30,9 +30,9 @@ Failures at steps 4–7 return HTTP 200 with `success: false, degraded: true` an
 
 | Value | Behaviour |
 |---|---|
-| `auto` (Settings default) | Gemini (`GOOGLE_API_KEY`, models from `ASSISTANT_GEMINI_MODEL`) → Groq (`GROQ_API_KEY`, `LLM_MODEL`) → Ollama Cloud |
-| `ollama_cloud` (compose default) | Ollama Cloud only. SQL uses `get_model_for_stage("text_to_sql")` (`OLLAMA_MODEL_TEXT_TO_SQL`, else the heavy model when `LLM_PROVIDER=ollama_cloud`); answers use `OLLAMA_CLOUD_FAST_MODEL` |
-| `groq` / `gemini` | That provider only |
+| `auto` (Settings default) | Groq (`GROQ_API_KEY`, `LLM_MODEL`) → Ollama Cloud |
+| `ollama_cloud` (compose default) | Ollama Cloud only. SQL uses `get_model_for_stage("text_to_sql")` (when `LLM_PROVIDER=ollama_cloud`: `OLLAMA_MODEL_TEXT_TO_SQL`, else the heavy model); answers use `OLLAMA_CLOUD_FAST_MODEL` |
+| `groq` | Groq only |
 | `ollama` | Local Ollama only (compose profile `local-ml`): `ASSISTANT_OLLAMA_MODEL` (default `qwen2.5:7b`) at `OLLAMA_BASE_URL`, then `http://host.docker.internal:11434` |
 
 Named providers do not fall back. Local Ollama is never part of `auto`. Groq, Ollama Cloud, and local Ollama calls go through circuit breakers (`backend/app/core/llm_circuit_breaker.py`) with 2 attempts on transient errors.

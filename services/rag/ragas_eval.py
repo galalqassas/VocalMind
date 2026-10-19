@@ -178,33 +178,7 @@ def _build_ragas_llm():
     """
     from ragas.llms import LangchainLLMWrapper
 
-    if settings.RAGAS_JUDGE_PROVIDER == "vertex":
-        from google.oauth2 import service_account
-        import google.auth.transport.requests as gtr
-        from langchain_openai import ChatOpenAI
-
-        creds = service_account.Credentials.from_service_account_file(
-            settings.VERTEX_SA_FILE,
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        creds.refresh(gtr.Request())
-        loc = settings.VERTEX_LOCATION
-        base_url = (
-            f"https://{loc}-aiplatform.googleapis.com/v1beta1/projects/"
-            f"{settings.VERTEX_PROJECT}/locations/{loc}/endpoints/openapi"
-        )
-        llm = ChatOpenAI(
-            model=settings.RAGAS_JUDGE_MODEL,
-            base_url=base_url,
-            api_key=creds.token,  # OAuth token, valid ~1h — ample for one run
-            temperature=0.0,
-            # Faithfulness decomposes verbose answers into many claims; a small
-            # cap truncates that step and yields NaN. Gemini handles large output.
-            max_tokens=8192,
-            request_timeout=180.0,
-        )
-        print(f"  Judge LLM: Vertex AI {settings.RAGAS_JUDGE_MODEL} @ {loc}")
-    elif settings.RAGAS_JUDGE_PROVIDER == "groq":
+    if settings.RAGAS_JUDGE_PROVIDER == "groq":
         from langchain_groq import ChatGroq
 
         judge_model = "llama-3.3-70b-versatile"
@@ -325,8 +299,7 @@ def run_reference_free_eval(
         Faithfulness(llm=evaluator_llm),
         # strictness=3 (RAGAS default): averages relevancy over 3 generated
         # reverse-questions, reducing single-sample noise. Requires a judge that
-        # honors n>1 — Vertex Gemini does; local LM Studio does NOT (it silently
-        # returns 1). Use strictness=1 only when judging on a local endpoint.
+        # honors n>1; local LM Studio does NOT (it silently returns 1).
         AnswerRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings, strictness=3),
         # Reference-free precision: the judge decides whether each retrieved
         # context was useful for the response (no ground truth required).

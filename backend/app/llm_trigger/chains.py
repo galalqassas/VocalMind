@@ -29,11 +29,6 @@ from app.llm_trigger.schemas import (
 
 logger = logging.getLogger(__name__)
 
-def _ensure_gemini_credentials():
-    import os
-    if settings.GOOGLE_APPLICATION_CREDENTIALS and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
-
 _lock = threading.Lock()
 _shared_model: BaseChatModel | None = None
 
@@ -86,27 +81,6 @@ def build_llm(fast: bool = False, stage: str | None = None) -> BaseChatModel:
             max_tokens=settings.LLM_MAX_TOKENS,
             request_timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS,
         )
-    if settings.LLM_PROVIDER == "gemini":
-        from langchain_google_vertexai import ChatVertexAI
-        
-        _ensure_gemini_credentials()
-        
-        if fast:
-            model = settings.GEMINI_FAST_MODEL or settings.GEMINI_MODEL
-        elif stage:
-            model = get_model_for_stage(stage)
-        else:
-            model = settings.GEMINI_MODEL
-            
-        return ChatVertexAI(
-            model=model,
-            project=settings.GEMINI_PROJECT or None,
-            location=settings.GEMINI_REGION or "us-central1",
-            temperature=0,
-            max_output_tokens=max(settings.LLM_MAX_TOKENS, settings.GEMINI_MAX_OUTPUT_TOKENS),
-            response_mime_type="application/json",
-        )
-        
     from langchain_groq import ChatGroq
 
     return ChatGroq(
@@ -119,15 +93,17 @@ def build_llm(fast: bool = False, stage: str | None = None) -> BaseChatModel:
 
 
 def get_model_for_stage(stage: str) -> str:
-    """Resolve Ollama Cloud model for a stage with class-based fallback."""
+    """Model for a stage: on Ollama Cloud the per-stage override or the heavy/fast default; on Groq LLM_MODEL."""
     key = stage.lower().replace("-", "_")
     if key == "nli":
         key = "nli_policy"
     if key not in _STAGE_MODEL_CLASS:
         allowed = ", ".join(sorted(_STAGE_MODEL_CLASS))
         raise ValueError(f"Unknown LLM stage '{stage}'. Allowed stages: {allowed}")
+    if settings.LLM_PROVIDER != "ollama_cloud":
+        return settings.LLM_MODEL
 
-    new_overrides = {
+    overrides = {
         "emotion_shift": settings.OLLAMA_MODEL_EMOTION_SHIFT,
         "process_adherence": settings.OLLAMA_MODEL_PROCESS_ADHERENCE,
         "nli_policy": settings.OLLAMA_MODEL_NLI_POLICY,
@@ -136,38 +112,12 @@ def get_model_for_stage(stage: str) -> str:
         "fast_classification": settings.OLLAMA_MODEL_FAST_CLASSIFICATION,
         "rag_synthesis": settings.OLLAMA_MODEL_RAG_SYNTHESIS,
     }
-    legacy_overrides = {
-        "emotion_shift": settings.OLLAMA_EMOTION_SHIFT_MODEL,
-        "process_adherence": settings.OLLAMA_PROCESS_ADHERENCE_MODEL,
-        "nli_policy": settings.OLLAMA_NLI_MODEL,
-    }
-
-    stage_override = (new_overrides.get(key) or "").strip()
-    if stage_override:
-        return stage_override
-
-    legacy_override = (legacy_overrides.get(key) or "").strip()
-    if legacy_override:
-        return legacy_override
-
-    stage_class = _STAGE_MODEL_CLASS[key]
-    if settings.LLM_PROVIDER == "gemini":
-        gemini_overrides = {
-            "emotion_shift": settings.GEMINI_MODEL_EMOTION_SHIFT,
-            "process_adherence": settings.GEMINI_MODEL_PROCESS_ADHERENCE,
-            "nli_policy": settings.GEMINI_MODEL_NLI_POLICY,
-        }
-        gemini_override = (gemini_overrides.get(key) or "").strip()
-        if gemini_override:
-            return gemini_override
-        if stage_class == _FAST_STAGE:
-            return settings.GEMINI_FAST_MODEL or settings.GEMINI_MODEL
-        return settings.GEMINI_MODEL
-    if settings.LLM_PROVIDER == "ollama_cloud":
-        if stage_class == _FAST_STAGE:
-            return settings.OLLAMA_CLOUD_FAST_MODEL
-        return settings.OLLAMA_CLOUD_HEAVY_MODEL
-    return settings.LLM_MODEL
+    override = (overrides[key] or "").strip()
+    if override:
+        return override
+    if _STAGE_MODEL_CLASS[key] == _FAST_STAGE:
+        return settings.OLLAMA_CLOUD_FAST_MODEL
+    return settings.OLLAMA_CLOUD_HEAVY_MODEL
 
 
 def recognized_stage_names() -> tuple[str, ...]:
@@ -195,15 +145,7 @@ def _get_shared_model() -> BaseChatModel:
 
 
 def _with_json_object_mode(model: BaseChatModel) -> BaseChatModel:
-    """Bind OpenAI-compatible JSON object mode (Ollama Cloud / ChatOpenAI / Groq).
-
-    Skipped for Vertex AI Gemini: the model is already built with
-    ``response_mime_type="application/json"``. Binding OpenAI's ``response_format``
-    onto ChatVertexAI makes LangChain force tool-calling mode, which conflicts with
-    native JSON output and makes Vertex reject the request with HTTP 400.
-    """
-    if settings.LLM_PROVIDER == "gemini":
-        return model
+    """Bind OpenAI-compatible JSON object mode (Ollama Cloud / Groq)."""
     bind = getattr(model, "bind", None)
     if bind is None:
         return model

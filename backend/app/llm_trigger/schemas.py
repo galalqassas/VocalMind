@@ -156,7 +156,7 @@ def _clean_citations(value: list | None) -> list:
 
 class EmotionShiftAnalysis(BaseModel):
     # NOTE: these four carry defaults so a partial-but-valid JSON object from the
-    # model (Gemini in particular routinely omits counterfactual_correction)
+    # model (models often omit counterfactual_correction)
     # still parses and we keep the model's dissonance_type signal, rather than
     # discarding the whole response and dropping empathy to the 0.8 fallback.
     is_dissonance_detected: bool = Field(
@@ -198,7 +198,7 @@ class EmotionShiftAnalysis(BaseModel):
         default=False,
         description="True when the analysis had to be downgraded due to missing or unmapped evidence.",
     )
-    # Optional: Gemini routinely omits confidence_score from otherwise-valid JSON.
+    # Optional: models often omit confidence_score from otherwise-valid JSON.
     # Keeping it required discarded the whole response and forced the degraded
     # heuristic fallback. Downstream code backfills None from a signal estimate.
     confidence_score: float | None = Field(
@@ -277,7 +277,7 @@ class ProcessAdherenceReport(BaseModel):
         default=False,
         description="True when process verdict could not be grounded to transcript evidence.",
     )
-    # Optional: see EmotionShiftAnalysis.confidence_score — Gemini omits this and a
+    # Optional: see EmotionShiftAnalysis.confidence_score — models omit this and a
     # required field was forcing the degraded heuristic fallback. Backfilled downstream.
     confidence_score: float | None = Field(
         default=None,
@@ -338,7 +338,7 @@ class NLIEvaluation(BaseModel):
         default=False,
         description="True when NLI verdict had insufficient policy-grounded evidence.",
     )
-    # Optional: see EmotionShiftAnalysis.confidence_score — Gemini omits this and a
+    # Optional: see EmotionShiftAnalysis.confidence_score — models omit this and a
     # required field was forcing the degraded heuristic fallback.
     confidence_score: float | None = Field(
         default=None,

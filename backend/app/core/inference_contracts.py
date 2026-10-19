@@ -165,22 +165,6 @@ def normalize_transcription_response(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_diarization_response(data: dict[str, Any]) -> dict[str, Any]:
-    raw_segments = data.get("segments", [])
-    diarized_segments: list[dict[str, Any]] = []
-    for item in raw_segments:
-        if "speaker" not in item:
-            continue
-        diarized_segments.append(
-            {
-                "start": float(item.get("start", item.get("start_time", 0.0)) or 0.0),
-                "end": float(item.get("end", item.get("end_time", 0.0)) or 0.0),
-                "speaker": item.get("speaker") or "UNKNOWN",
-            }
-        )
-    return {"segments": diarized_segments}
-
-
 def normalize_vad_response(data: dict[str, Any]) -> dict[str, Any]:
     if "speech_segments" in data:
         segments = data.get("speech_segments", [])

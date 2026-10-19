@@ -17,16 +17,15 @@ Per-interaction reasoning that produces the emotion-shift, process-adherence, an
 - `GET /api/v1/interactions/{id}?include_llm_triggers=true` returns the cached report as `emotionTriggers`, `ragCompliance`, `llmTriggers`, plus `knowledgeVersion` / `activeKnowledgeVersion` / `isStale`. Add `llm_force_rerun=true` to recompute and commit. Without a cache entry it returns `available: false`; while the interaction is processing it does not run.
 - `POST /api/v1/llm-trigger/interaction/{id}/run` — body `retrieved_sop_from_pinecone`, `ground_truth_policy`, `org_filter`, `force_rerun`. Pass the org slug as `org_filter`; without it retrieval is empty.
 - `POST /api/v1/knowledge/versions/reprocess` with `target=original` re-judges against a past knowledge snapshot ([KNOWLEDGE_BASE_MANAGEMENT.md](../operations/KNOWLEDGE_BASE_MANAGEMENT.md)).
-- Single-stage endpoints: `POST /api/v1/llm-trigger/emotion-shift`, `/process-adherence`, `/nli-policy-check`; `GET /api/v1/llm-trigger/health`.
-- Every `/llm-trigger/*` run endpoint returns **503** when an LLM (or the text-emotion model) is unavailable (`LLMUnavailableError`).
+- `GET /api/v1/llm-trigger/health`: Qdrant and embedding-host check.
+- The run endpoint returns **503** when an LLM (or the text-emotion model) is unavailable (`LLMUnavailableError`).
 
 ## Providers and models
 
 `LLM_PROVIDER` (`backend/app/core/config.py`; startup fails if the matching key is missing):
 
-- `ollama_cloud` (compose default): `ChatOpenAI` against `OLLAMA_CLOUD_BASE_URL`. Model per stage: `OLLAMA_MODEL_<STAGE>` → legacy `OLLAMA_<STAGE>_MODEL` → class default. Heavy (`OLLAMA_CLOUD_HEAVY_MODEL`, default `kimi-k2.6:cloud`): `emotion_shift`, `process_adherence`, `text_to_sql`. Fast (`OLLAMA_CLOUD_FAST_MODEL`, default `ministral-3:8b`): `nli_policy`, `rag_judge`, `fast_classification`, `rag_synthesis`.
+- `ollama_cloud` (compose default): `ChatOpenAI` against `OLLAMA_CLOUD_BASE_URL`. Model per stage: `OLLAMA_MODEL_<STAGE>`, else the class default. Heavy (`OLLAMA_CLOUD_HEAVY_MODEL`, default `kimi-k2.6:cloud`): `emotion_shift`, `process_adherence`, `text_to_sql`. Fast (`OLLAMA_CLOUD_FAST_MODEL`, default `ministral-3:8b`): `nli_policy`, `rag_judge`, `fast_classification`, `rag_synthesis`.
 - `groq` (Settings default): `ChatGroq` with `LLM_MODEL` (default `llama-3.3-70b-versatile`) for every stage.
-- `gemini` (Vertex AI) branches remain in `chains.py` and `config.py`; legacy, not used by compose.
 
 Chains bind JSON-object mode and parse with `PydanticOutputParser`. `_invoke_chain_with_retry` makes 3 attempts with exponential backoff on rate-limit/timeout/connection errors; after that `_run_chain` raises `LLMUnavailableError`.
 

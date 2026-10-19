@@ -7,7 +7,6 @@ from app.llm_trigger.schemas import (
 from app.llm_trigger.service import (
     analyze_emotion_shift,
     evaluate_process_adherence,
-    run_nli_policy_check,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "InteractionLLMTriggerReport",
     "analyze_emotion_shift",
     "evaluate_process_adherence",
-    "run_nli_policy_check",
 ]

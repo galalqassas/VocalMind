@@ -34,7 +34,7 @@ Two independent switches:
 
 | Switch | Controls | `kaggle` / `false` (compose default) | Local |
 |---|---|---|---|
-| `IS_LOCAL` | Speech: ASR, diarization, speech emotion, text emotion | `false`: `KAGGLE_SERVER_URL` (or `KAGGLE_NGROK_URL`) endpoints `/full`, `/transcribe`, `/diarize`, `/emotion`, `/vad`, `/predict_text`, with header `ngrok-skip-browser-warning` | `true`: `WHISPERX_API_URL`, `EMOTION_API_URL`, `VAD_API_URL` |
+| `IS_LOCAL` | Speech: ASR, diarization, speech emotion, text emotion | `false`: `KAGGLE_SERVER_URL` (or `KAGGLE_NGROK_URL`) endpoints `/full`, `/emotion`, `/vad`, `/predict_text`, with header `ngrok-skip-browser-warning` | `true`: `WHISPERX_API_URL`, `EMOTION_API_URL`, `VAD_API_URL` |
 | `RAG_MODELS_HOST` | Embeddings (backend queries + ingestion), Docling PDF parsing, reranking | `kaggle`: `/embed`, `/parse`, `/rerank` on the Kaggle server | `local`: Ollama embeddings, in-process Docling + cross-encoder (`local-models` extra) |
 
 - Speech clients subclass `BaseKaggleClient` (`backend/app/core/kaggle_client.py`). `Settings` defaults are `IS_LOCAL=True` and `RAG_MODELS_HOST=local`; compose and both `.env.example` files set `false` / `kaggle`.

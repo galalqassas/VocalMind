@@ -12,7 +12,7 @@ PostgreSQL 17 runs in Docker locally. Production uses Supabase Postgres (see [DE
 
 Alembic chain: `0001_baseline` (empty marker) → `0002_notif_and_dispute` (notifications table and enum, `policy_compliance` dispute columns) → `0003_user_avatar` (`users.avatar_url`) → `f7ed8dd3ea71` (`assistant_sessions` and `assistant_queries.session_id`) → `a1b2c3d4e5f6` (`knowledge_versions`, plus `knowledge_version` on `interaction_llm_trigger_cache` and `policy_compliance`).
 
-**Known inconsistency:** `infra/db/01_schema.sql` has 19 `CREATE TABLE`s, and its header comment ("17 DDL tables") is stale. The SQLModel models define 21 tables. `01_schema.sql` lacks:
+**Known inconsistency:** `infra/db/01_schema.sql` has 19 `CREATE TABLE`s, and its header comment ("17 DDL tables") is stale. The SQLModel models define 20 tables. `01_schema.sql` lacks:
 
 - the `assistant_sessions` and `knowledge_versions` tables
 - the columns `users.avatar_url`, `assistant_queries.session_id`, `interaction_llm_trigger_cache.knowledge_version` and `policy_compliance.knowledge_version`
@@ -40,7 +40,7 @@ Model files are relative to `backend/app/models/`.
 | `organization_faq_articles` | `faq.py` | Per-org SOP/KB toggle | → organizations, faq_articles |
 | `emotion_feedback` | `feedback.py` | Manager corrections and review outcomes for emotion events | → emotion_events, users |
 | `compliance_feedback` | `feedback.py` | Same, for compliance results | → policy_compliance, users |
-| `agent_performance_snapshots` | `snapshot.py` | Periodic agent aggregates. No app code writes it. | → organizations, users |
+| `agent_performance_snapshots` | none (`01_schema.sql` only) | Periodic agent aggregates. No model or code uses it. | → organizations, users |
 | `assistant_sessions` | `query.py` | Manager assistant chat sessions (soft delete via `is_deleted`) | → users, organizations |
 | `assistant_queries` | `query.py` | Assistant turns: question, generated SQL, answer, `result_rows` | → assistant_sessions, users, organizations |
 | `interaction_llm_trigger_cache` | `llm_trigger_cache.py` | Cached LLM trigger report (`report_payload` JSON) and the knowledge version used | → interactions (unique) |

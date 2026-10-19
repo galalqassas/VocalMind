@@ -1,8 +1,8 @@
 """
 Tests for auth routes and logic.
 
-Covers Google OAuth redirect, invalid token handling, Google direct auth,
-and password login logic using an injected Mock AsyncSession.
+Covers password login and Google ID-token login (existing users only)
+using an injected Mock AsyncSession.
 """
 
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -98,54 +98,29 @@ def test_google_direct_auth_existing_user(mock_verify, client: TestClient, mock_
 
 
 @patch("app.api.routes.auth.router.verify_google_token")
-def test_google_direct_auth_new_user(mock_verify, client: TestClient, mock_db_session: AsyncMock):
+def test_google_direct_auth_rejects_unknown_email(mock_verify, client: TestClient, mock_db_session: AsyncMock):
     mock_verify.return_value = MagicMock(email="new@google.com", name="New")
-    
-    # 1. No user found. 2. Find existing Org (to skip org creation).
-    org = MagicMock()
-    org.id = uuid4()
-    _mock_exec_results(mock_db_session, None, org)
-    
+    _mock_exec_results(mock_db_session, None)
+
     response = client.post("/api/v1/auth/google?token=good")
-    assert response.status_code == 200
-    assert "access_token" in response.json()
+    assert response.status_code == 403
+    assert response.json()["detail"] == "No VocalMind account for this email; ask your manager to add you."
+    mock_db_session.add.assert_not_called()
+    mock_db_session.commit.assert_not_called()
+
+
+@patch("app.api.routes.auth.router.verify_google_token")
+def test_google_direct_auth_rejects_inactive_user(mock_verify, client: TestClient, mock_db_session: AsyncMock):
+    mock_verify.return_value = MagicMock(email="test@google.com", name="G")
+    _mock_exec_results(mock_db_session, _fake_user(email="test@google.com", is_active=False))
+    response = client.post("/api/v1/auth/google?token=good")
+    assert response.status_code == 400
 
 
 def test_google_direct_invalid_token(client: TestClient):
     with patch("app.api.routes.auth.router.verify_google_token", return_value=None):
         response = client.post("/api/v1/auth/google?token=bad-token")
     assert response.status_code == 400
-
-
-# ── Google Callback Auth ─────────────────────────────────────────────────────
-
-def test_login_page_redirect(client: TestClient):
-    response = client.get("/api/v1/auth/google/login", follow_redirects=False)
-    assert response.status_code != 500
-
-
-@pytest.mark.asyncio
-async def test_google_callback_invalid_state(client: TestClient):
-    response = client.get("/api/v1/auth/google/callback?code=123&state=bad")
-    assert response.status_code == 400
-
-
-@patch("app.api.routes.auth.router._oauth_states", {"good-state"})
-@patch("httpx.AsyncClient.post", new_callable=AsyncMock)
-@patch("app.api.routes.auth.router.verify_google_token")
-def test_google_callback_success(mock_verify, mock_post, client: TestClient, mock_db_session: AsyncMock):
-    # Mock token exchange
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"id_token": "valid"}
-    mock_post.return_value = mock_resp
-    
-    mock_verify.return_value = MagicMock(email="test@test.com", name="T")
-    _mock_exec_results(mock_db_session, _fake_user())
-    
-    response = client.get("/api/v1/auth/google/callback?code=xyz&state=good-state", follow_redirects=False)
-    assert response.status_code == 307
-    assert "/login/success" in response.headers["location"]
-    assert "vocalmind_token" in response.cookies
 
 
 def test_token_validation_no_auth(client: TestClient):

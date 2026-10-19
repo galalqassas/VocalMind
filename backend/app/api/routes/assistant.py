@@ -119,25 +119,6 @@ _SQL_KEYWORDS = {
 }
 
 
-def _assistant_model_names() -> list[str]:
-    raw = (settings.ASSISTANT_GEMINI_MODEL or "").strip()
-    if not raw:
-        return ["gemini-2.5-flash"]
-    return [m.strip() for m in raw.split(",") if m.strip()]
-
-
-def _gemini_response_text(response) -> Optional[str]:
-    """Best-effort extract model text (some SDK versions raise if there are no text parts)."""
-    if response is None:
-        return None
-    try:
-        t = getattr(response, "text", None)
-        if t is not None and str(t).strip():
-            return str(t).strip()
-    except Exception:
-        logger.debug("Gemini response had no .text accessor or empty candidates", exc_info=True)
-    return None
-
 # ---------------------------------------------------------------------------
 # Help response
 # ---------------------------------------------------------------------------
@@ -740,62 +721,7 @@ async def _groq_chat_complete(prompt: str, temperature: float) -> Optional[str]:
 
 class IntentResolver:
     def __init__(self):
-        api_keys = [settings.GOOGLE_API_KEY]
-        self._keys = [k for k in api_keys if k]
         self.last_llm_backend: str = ""
-
-    async def _gemini_generate(
-        self, prompt: str, temperature: float, *, raise_on_rate_limit: bool
-    ) -> Optional[str]:
-        """Try Gemini models/keys; optionally re-raise the last rate-limit error."""
-        try:
-            from google import genai
-            from google.genai import types
-        except ImportError:
-            logger.warning("google-genai not installed; Gemini provider unavailable")
-            return None
-
-        if not self._keys:
-            if raise_on_rate_limit:
-                logger.error("No valid Gemini API keys configured.")
-                raise Exception("No API keys")
-            return None
-
-        keys_to_try = list(self._keys)
-        random.shuffle(keys_to_try)
-        last_error: Optional[Exception] = None
-
-        for key in keys_to_try:
-            client = genai.Client(api_key=key)
-            for model_name in _assistant_model_names():
-                try:
-                    response = await client.aio.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(temperature=temperature),
-                    )
-                    text = _gemini_response_text(response)
-                    if text:
-                        return text
-                    logger.warning("Gemini returned empty text for model=%s", model_name)
-                except Exception as exc:
-                    msg = str(exc)
-                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-                        last_error = exc
-                        break
-                    if "404" in msg or "NOT_FOUND" in msg or "not found" in msg.lower() or "INVALID_ARGUMENT" in msg:
-                        logger.warning("Gemini model unavailable or invalid name=%s: %s", model_name, exc)
-                        continue
-                    raise exc
-            if last_error:
-                continue
-
-        if last_error:
-            if raise_on_rate_limit:
-                raise last_error
-            logger.warning("Gemini rate-limited or exhausted; continuing without Gemini text")
-            logger.error("Assistant provider exhaustion: Gemini attempts exhausted with no response")
-        return None
 
     async def _generate_content_with_fallback(
         self,
@@ -804,7 +730,7 @@ class IntentResolver:
         *,
         stage: str | None = None,
     ) -> Optional[str]:
-        """Gemini, Ollama, or both (auto), depending on ASSISTANT_LLM_PROVIDER."""
+        """Call the provider set by ASSISTANT_LLM_PROVIDER; auto = Groq, then Ollama Cloud."""
         self.last_llm_backend = ""
         provider = (settings.ASSISTANT_LLM_PROVIDER or "auto").strip().lower()
 
@@ -826,18 +752,6 @@ class IntentResolver:
                 self.last_llm_backend = "Ollama Cloud"
             return t
 
-        if provider == "gemini":
-            t = await self._gemini_generate(prompt, temperature, raise_on_rate_limit=True)
-            if t:
-                self.last_llm_backend = "Gemini"
-            return t
-
-        # auto fallback chain: Gemini -> Groq -> Ollama Cloud
-        t = await self._gemini_generate(prompt, temperature, raise_on_rate_limit=False)
-        if t:
-            self.last_llm_backend = "Gemini"
-            return t
-            
         t = await _groq_chat_complete(prompt, temperature)
         if t:
             self.last_llm_backend = "Groq"
@@ -893,11 +807,7 @@ class IntentResolver:
 
             return sql
         except Exception as exc:
-            msg = str(exc)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-                logger.error(f"Gemini API Rate Limit hit after trying all keys: {exc}")
-                return "RATE_LIMIT_ERROR"
-            logger.error(f"Gemini SQL gen failed: {exc}")
+            logger.error(f"Assistant SQL generation failed: {exc}")
             return None
 
     async def synthesize_answer(self, question: str, sql: str, rows: list) -> str:
@@ -1158,34 +1068,6 @@ async def process_assistant_query(
 
         if not sql:
             sql = await resolver.resolve_sql(query_text, org_id, conversation_block)
-
-        if sql == "RATE_LIMIT_ERROR":
-            msg = "I'm currently receiving too many requests. Google Gemini rate limits have been temporarily exceeded. Please try again in a few minutes."
-            await conn.execute(
-                text(
-                    "INSERT INTO assistant_queries (session_id, user_id, organization_id, query_mode, query_text, response_text, execution_time_ms) VALUES (:sid, :u, :o, :m, :q, :r, :e)"
-                ),
-                {
-                    "sid": session_id_val,
-                    "u": str(manager_id),
-                    "o": str(org_id),
-                    "m": mode.value,
-                    "q": query_text,
-                    "r": msg,
-                    "e": int((time.time() - start_time) * 1000),
-                },
-            )
-            await conn.commit()
-            return {
-                "session_id": session_id_val,
-                "type": "ai",
-                "content": msg,
-                "mode": mode.value,
-                "success": False,
-                "degraded": True,
-                "executionTime": f"{int((time.time() - start_time) * 1000)}ms",
-                "execution_time": f"{int((time.time() - start_time) * 1000)}ms",
-            }
 
         if not sql:
             msg = (

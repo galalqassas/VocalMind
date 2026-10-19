@@ -1,4 +1,3 @@
-import warnings
 from pathlib import Path
 
 from pydantic import AliasChoices, Field
@@ -16,15 +15,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # Google OAuth / AI
+    # Google sign-in
     GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
-    GOOGLE_API_KEY: str = ""
-    # Manager Assistant text-to-SQL (Gemini). Comma-separated fallbacks if a model ID is unavailable.
-    # Prefer 2.0-flash first for broad API availability; 2.5 when your project supports it.
-    ASSISTANT_GEMINI_MODEL: str = "gemini-2.0-flash,gemini-2.5-flash,gemini-1.5-flash"
-    # gemini | groq | ollama_cloud | ollama | auto
+    # ollama_cloud | groq | ollama | auto (auto = Groq, then Ollama Cloud)
     ASSISTANT_LLM_PROVIDER: str = "auto"
     ASSISTANT_OLLAMA_MODEL: str = "qwen2.5:7b"
     ASSISTANT_OLLAMA_TIMEOUT_SECONDS: float = 120.0
@@ -45,16 +38,16 @@ class Settings(BaseSettings):
     VAD_API_URL: str = "http://localhost:8002"
     WHISPERX_API_URL: str = "http://localhost:8003"
 
-    # Kaggle inference server (used when IS_LOCAL=false)
-    KAGGLE_SERVER_URL: str = ""
-    KAGGLE_NGROK_URL: str = ""
+    # Kaggle inference server (used when IS_LOCAL=false); KAGGLE_NGROK_URL is the legacy name
+    KAGGLE_SERVER_URL: str = Field(
+        default="",
+        validation_alias=AliasChoices("KAGGLE_SERVER_URL", "KAGGLE_NGROK_URL"),
+    )
 
     # Supabase (for routes that use Supabase client directly)
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""
     SUPABASE_AUDIO_BUCKET: str = "recordings"
-    SUPABASE_DB_URL: str = ""
-    HF_TOKEN: str = ""
 
     # LLM trigger (Groq + LangChain)
     GROQ_API_KEY: str = ""
@@ -71,43 +64,29 @@ class Settings(BaseSettings):
     OLLAMA_CLOUD_BASE_URL: str = "https://ollama.com/v1"
     OLLAMA_CLOUD_HEAVY_MODEL: str = "kimi-k2.6:cloud"
     OLLAMA_CLOUD_FAST_MODEL: str = "ministral-3:8b"
-    OLLAMA_MODEL_EMOTION_SHIFT: str = ""
-    OLLAMA_MODEL_PROCESS_ADHERENCE: str = ""
-    OLLAMA_MODEL_NLI_POLICY: str = ""
+    # Per-stage overrides, used only when LLM_PROVIDER=ollama_cloud; blank = heavy/fast default.
+    OLLAMA_MODEL_EMOTION_SHIFT: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_EMOTION_SHIFT", "OLLAMA_EMOTION_SHIFT_MODEL"),
+    )
+    OLLAMA_MODEL_PROCESS_ADHERENCE: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_PROCESS_ADHERENCE", "OLLAMA_PROCESS_ADHERENCE_MODEL"),
+    )
+    OLLAMA_MODEL_NLI_POLICY: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_NLI_POLICY", "OLLAMA_NLI_MODEL"),
+    )
     OLLAMA_MODEL_RAG_JUDGE: str = ""
     OLLAMA_MODEL_TEXT_TO_SQL: str = ""
     OLLAMA_MODEL_FAST_CLASSIFICATION: str = ""
     OLLAMA_MODEL_RAG_SYNTHESIS: str = ""
-    OLLAMA_EMOTION_SHIFT_MODEL: str = ""
-    OLLAMA_PROCESS_ADHERENCE_MODEL: str = ""
-    OLLAMA_NLI_MODEL: str = ""
     OLLAMA_CLOUD_EMBED_ENABLED: bool = False
     # Where RAG models run (query embeddings here; ingestion uses the same switch):
     # "local" = Ollama container, "kaggle" = Kaggle GPU server (services/kaggle).
     RAG_MODELS_HOST: str = "local"
 
-    # ── Vertex AI (Gemini) ──
-    # Service-account auth via GOOGLE_APPLICATION_CREDENTIALS (path to the JSON key).
-    # GEMINI_PROJECT / GEMINI_REGION select the Vertex AI project + location.
-    GOOGLE_APPLICATION_CREDENTIALS: str = ""
-    GEMINI_PROJECT: str = ""
-    GEMINI_REGION: str = "us-central1"
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    # Cheaper/faster model for fast_classification-class stages (gibberish check, etc.).
-    GEMINI_FAST_MODEL: str = "gemini-2.5-flash-lite"
-    # Output token cap for Gemini. Higher than the shared LLM_MAX_TOKENS because the
-    # process-adherence JSON (steps + justification + citations) truncates at 1024,
-    # producing partial JSON that fails Pydantic parsing.
-    GEMINI_MAX_OUTPUT_TOKENS: int = 2048
-    # Optional per-stage overrides (leave blank to use GEMINI_MODEL / GEMINI_FAST_MODEL by class).
-    GEMINI_MODEL_EMOTION_SHIFT: str = ""
-    GEMINI_MODEL_PROCESS_ADHERENCE: str = ""
-    GEMINI_MODEL_NLI_POLICY: str = ""
-
-    # ── Provider switch ──
-    # "gemini"       → Vertex AI Gemini (production primary)
-    # "groq"         → Groq + LangChain (fallback)
-    # "ollama_cloud" → all LLM calls route to Ollama Cloud (fallback)
+    # LLM provider for triggers and RAG: "ollama_cloud" or "groq"
     LLM_PROVIDER: str = "groq"
 
     # Qdrant / Embeddings retrieval for SOP context
@@ -118,17 +97,12 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "snowflake-arctic-embed2"
     EMBEDDING_TIMEOUT_SECONDS: float = 60.0
     SOP_RETRIEVAL_TOP_K: int = 4
-    SOP_MAX_CHUNKS: int = 2
     RAG_SUPPORTED_THRESHOLD: float = 0.82
     RAG_NEUTRAL_THRESHOLD: float = 0.55
     POLICY_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
     SOP_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
     KNOWLEDGE_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
-    POLICY_PARSED_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
     SOP_PARSED_DOCS_ROOT: str = str(Path.cwd() / "storage" / "docs")
-
-    # OpenAI API Key for Assistant
-    OPENAI_API_KEY: str = ""
     SEED_EVALUATION_SESSIONS: bool = False
 
     # When True, lifespan runs seed_nexalink + seed_meridian on every boot.
@@ -169,32 +143,12 @@ def validate_startup_settings(cfg: Settings) -> None:
             "LLM_PROVIDER=ollama_cloud requires OLLAMA_CLOUD_API_KEY (or OLLAMA_API_KEY), but none is set. "
             "Set OLLAMA_CLOUD_API_KEY or OLLAMA_API_KEY in your .env before starting the app."
         )
-    if provider == "gemini":
-        creds = (cfg.GOOGLE_APPLICATION_CREDENTIALS or "").strip()
-        if not creds:
-            raise RuntimeError(
-                "LLM_PROVIDER=gemini requires GOOGLE_APPLICATION_CREDENTIALS (path to a Vertex AI "
-                "service-account JSON key). Set it in your .env before starting the app."
-            )
-        if not Path(creds).is_file():
-            raise RuntimeError(
-                f"GOOGLE_APPLICATION_CREDENTIALS points to a missing file: {creds!r}. "
-                "Set it to a valid Vertex AI service-account JSON key path."
-            )
-
-    if not (cfg.HF_TOKEN or "").strip():
-        warnings.warn(
-            "HF_TOKEN is not set; diarization is disabled. "
-            "Set HF_TOKEN to enable pyannote diarization in WhisperX.",
-            stacklevel=1,
-        )
-
 
 
 def resolve_embedding_base_url() -> str:
     """Embed API root URL (Kaggle server, Ollama Cloud or the local Ollama container)."""
     if settings.RAG_MODELS_HOST == "kaggle":
-        base_url = settings.KAGGLE_SERVER_URL or settings.KAGGLE_NGROK_URL
+        base_url = settings.KAGGLE_SERVER_URL
         if not base_url:
             raise ValueError("RAG_MODELS_HOST=kaggle but KAGGLE_SERVER_URL is not set.")
         return base_url.rstrip("/")

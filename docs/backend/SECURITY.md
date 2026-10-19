@@ -11,7 +11,7 @@ This page covers how the backend handles authentication, authorization, tenant i
   - `get_token` in `backend/app/api/deps.py` checks the cookie first, then `Authorization: Bearer`.
   - The frontend also keeps the token in `sessionStorage` and sends it as a Bearer header for cross-origin use (`frontend/src/app/services/api.ts`).
 - **Error codes:** a missing token returns 401; an invalid token returns 403; an inactive user returns 400.
-- **Google OAuth:** the redirect flow stores its `state` values in an in-process set, so it only works with a single backend process.
+- **Google sign-in:** `POST /auth/google` verifies the ID token against `GOOGLE_CLIENT_ID` and logs in only an existing active user with that email. Unknown emails get 403; it never creates accounts.
 
 ## Authorization
 
@@ -51,12 +51,10 @@ There is no global auth dependency. Each handler declares `CurrentUser` and chec
 ## Known gaps (as of this writing)
 
 - **Unauthenticated routes:**
-  - the inference passthroughs (`/vad`, `/transcription`, `/diarization`, `/emotion`, `/full`; the `*-local` variants read server-side file paths);
-  - the ad-hoc `/llm-trigger/*` chains;
+  - the inference passthroughs (`/vad/*`, `/emotion/process`; `/vad/analyze-local` reads a server-side file path);
   - `/internal/set-kaggle-url`, which reroutes all inference;
   - `/health/circuit-breakers` and `/metrics`.
 - **Missing manager checks:**
   - Knowledge policy/SOP/KB create, update, toggle, and delete need only an authenticated user.
   - `/dashboard/stats` returns org-wide data to agents.
 - **Rate limits:** `rate_limit.py` describes a tighter 10/min limit for auth endpoints, but no `@limiter.limit` decorator is applied anywhere.
-- **Google sign-in for unknown emails:** `_get_or_create_user` tries to create the user in the first organization row it finds, without setting a role.

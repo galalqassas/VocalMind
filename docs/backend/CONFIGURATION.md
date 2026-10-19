@@ -27,7 +27,7 @@ Under compose, set `IS_LOCAL` and `RAG_MODELS_HOST` in the root `.env` (or the s
 
 A few variables are read with `os.getenv` instead of `Settings`, so pydantic never loads them from `backend/.env`. Under compose they arrive through `env_file`; natively you must export them in the shell: `EMOTION_MIN_SEGMENT_SECS` (default 1.0), `LLM_TRIGGER_EVAL_TIMEOUT_SECONDS` (600), `DB_POOL_SIZE` (15), `DB_MAX_OVERFLOW` (20), `SQLALCHEMY_ECHO`.
 
-Startup check (`validate_startup_settings`): the backend refuses to start if `SECRET_KEY` is still the placeholder, if `LLM_PROVIDER=groq` has no `GROQ_API_KEY`, or if `LLM_PROVIDER=ollama_cloud` has no `OLLAMA_CLOUD_API_KEY`/`OLLAMA_API_KEY`. A missing `HF_TOKEN` only logs a warning.
+Startup check (`validate_startup_settings`): the backend refuses to start if `SECRET_KEY` is still the placeholder, if `LLM_PROVIDER=groq` has no `GROQ_API_KEY`, or if `LLM_PROVIDER=ollama_cloud` has no `OLLAMA_CLOUD_API_KEY`/`OLLAMA_API_KEY`.
 
 ## Core and auth
 
@@ -35,8 +35,8 @@ Startup check (`validate_startup_settings`): the backend refuses to start if `SE
 |---|---|---|
 | `SECRET_KEY` | placeholder (rejected) | JWT HS256 signing key; `openssl rand -hex 32` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | JWT and cookie lifetime |
-| `FRONTEND_URL` | `http://localhost:3000` | Added to CORS origins; OAuth success redirect |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | empty / empty / `:8000/api/v1/auth/google/callback` | Google OAuth (optional) |
+| `FRONTEND_URL` | `http://localhost:3000` | Added to CORS origins |
+| `GOOGLE_CLIENT_ID` | empty | Google sign-in (optional): audience for verifying Google ID tokens |
 
 ## Database and seeding
 
@@ -55,9 +55,8 @@ Where each model runs: [SYSTEM_OVERVIEW.md](../architecture/SYSTEM_OVERVIEW.md#w
 |---|---|---|
 | `IS_LOCAL` | `True` | `false`: speech and text emotion go to the Kaggle server (`backend/app/core/kaggle_client.py`, `emotion_fusion.py`). `true`: the `local-ml` containers `vad`/`emotion`/`whisperx`. |
 | `RAG_MODELS_HOST` | `local` | `kaggle`: query embeddings via Kaggle `/embed` (`resolve_embedding_base_url`). `local`: Ollama (`OLLAMA_BASE_URL`) or Ollama Cloud. Re-ingest after switching. |
-| `KAGGLE_SERVER_URL` (fallback `KAGGLE_NGROK_URL`) | empty | ngrok URL of the Kaggle notebook. Required when `IS_LOCAL=false` or `RAG_MODELS_HOST=kaggle`. |
+| `KAGGLE_SERVER_URL` (legacy name `KAGGLE_NGROK_URL`) | empty | ngrok URL of the Kaggle notebook. Required when `IS_LOCAL=false` or `RAG_MODELS_HOST=kaggle`. |
 | `VAD_API_URL` / `EMOTION_API_URL` / `WHISPERX_API_URL` | `localhost:8002` / `:8001` / `:8003` | Used when `IS_LOCAL=true`; compose points them at the service names |
-| `HF_TOKEN` | empty | pyannote diarization in the local `whisperx` container (the Kaggle notebook reads its own `HF_TOKEN` secret) |
 
 All Kaggle requests carry `ngrok-skip-browser-warning: true`. `POST /api/v1/internal/set-kaggle-url` (called by the notebook on start) swaps `KAGGLE_SERVER_URL` and forces `IS_LOCAL=false` at runtime, in memory only; it does not reach the `ingestion` container, which reads `KAGGLE_SERVER_URL` from its environment.
 
@@ -73,7 +72,7 @@ All Kaggle requests carry `ngrok-skip-browser-warning: true`. `POST /api/v1/inte
 
 ## LLM (trigger chains, RAG judge, assistant)
 
-The supported providers are **`ollama_cloud`** (free Ollama Cloud models; the compose default) and **`groq`**. Gemini/Vertex code paths (`GEMINI_*`, `GOOGLE_API_KEY`, `ASSISTANT_GEMINI_MODEL`) are legacy and unused.
+The supported providers are **`ollama_cloud`** (free Ollama Cloud models; the compose default) and **`groq`**.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -82,12 +81,12 @@ The supported providers are **`ollama_cloud`** (free Ollama Cloud models; the co
 | `OLLAMA_CLOUD_BASE_URL` | `https://ollama.com/v1` | OpenAI-compatible endpoint |
 | `OLLAMA_CLOUD_HEAVY_MODEL` | `kimi-k2.6:cloud` | Heavy stages: emotion_shift, process_adherence, text_to_sql |
 | `OLLAMA_CLOUD_FAST_MODEL` | `ministral-3:8b` | Fast stages: nli_policy, rag_judge, fast_classification, rag_synthesis |
-| `OLLAMA_MODEL_<STAGE>` | empty | Per-stage override |
+| `OLLAMA_MODEL_<STAGE>` | empty | Per-stage override, used only with `ollama_cloud` |
 | `GROQ_API_KEY`, `LLM_MODEL` | empty, `llama-3.3-70b-versatile` | For `groq`; one shared model for all stages |
 | `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` / `LLM_REQUEST_TIMEOUT_SECONDS` | `0.0` / `1024` / `60` | |
-| `ASSISTANT_LLM_PROVIDER` | `auto` | `ollama_cloud`, `groq`, `ollama` (local `ASSISTANT_OLLAMA_MODEL`, default `qwen2.5:7b`), or `auto` (tries Gemini → Groq → Ollama Cloud) |
+| `ASSISTANT_LLM_PROVIDER` | `auto` | `ollama_cloud`, `groq`, `ollama` (local `ASSISTANT_OLLAMA_MODEL`, default `qwen2.5:7b`), or `auto` (Groq, then Ollama Cloud) |
 
-Duplicate override names: `get_model_for_stage` in `backend/app/llm_trigger/chains.py` checks `OLLAMA_MODEL_EMOTION_SHIFT` / `_PROCESS_ADHERENCE` / `_NLI_POLICY` first. Only when those are empty does it fall back to the legacy `OLLAMA_EMOTION_SHIFT_MODEL` / `OLLAMA_PROCESS_ADHERENCE_MODEL` / `OLLAMA_NLI_MODEL`, and then to the heavy/fast default.
+`OLLAMA_MODEL_EMOTION_SHIFT` / `_PROCESS_ADHERENCE` / `_NLI_POLICY` also accept their legacy names `OLLAMA_EMOTION_SHIFT_MODEL` / `OLLAMA_PROCESS_ADHERENCE_MODEL` / `OLLAMA_NLI_MODEL`.
 
 ## RAG
 
@@ -100,8 +99,6 @@ Duplicate override names: `get_model_for_stage` in `backend/app/llm_trigger/chai
 | `SOP_RETRIEVAL_TOP_K` | `4` | |
 | `RAG_SUPPORTED_THRESHOLD` / `RAG_NEUTRAL_THRESHOLD` | `0.82` / `0.55` | Used by `routes/rag.py` |
 | `POLICY_DOCS_ROOT`, `SOP_DOCS_ROOT`, `KNOWLEDGE_DOCS_ROOT`, `SOP_PARSED_DOCS_ROOT` | `<cwd>/storage/docs` | Knowledge file roots |
-
-Defined in `Settings` but unused by any code: `OPENAI_API_KEY`, `SOP_MAX_CHUNKS`, `POLICY_PARSED_DOCS_ROOT`. `SUPABASE_DB_URL` is read only by `backend/scripts/verify_supabase_schema.py`.
 
 ## Service-only variables (not in backend `Settings`)
 

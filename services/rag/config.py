@@ -134,17 +134,23 @@ class Settings(BaseSettings):
         default="ministral-3:8b",
         alias="OLLAMA_CLOUD_FAST_MODEL",
     )
-    OLLAMA_MODEL_EMOTION_SHIFT: str = Field(default="", alias="OLLAMA_MODEL_EMOTION_SHIFT")
-    OLLAMA_MODEL_PROCESS_ADHERENCE: str = Field(default="", alias="OLLAMA_MODEL_PROCESS_ADHERENCE")
-    OLLAMA_MODEL_NLI_POLICY: str = Field(default="", alias="OLLAMA_MODEL_NLI_POLICY")
+    # Per-stage overrides, used only when LLM_PROVIDER=ollama_cloud; blank = heavy/fast default.
+    OLLAMA_MODEL_EMOTION_SHIFT: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_EMOTION_SHIFT", "OLLAMA_EMOTION_SHIFT_MODEL"),
+    )
+    OLLAMA_MODEL_PROCESS_ADHERENCE: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_PROCESS_ADHERENCE", "OLLAMA_PROCESS_ADHERENCE_MODEL"),
+    )
+    OLLAMA_MODEL_NLI_POLICY: str = Field(
+        default="",
+        validation_alias=AliasChoices("OLLAMA_MODEL_NLI_POLICY", "OLLAMA_NLI_MODEL"),
+    )
     OLLAMA_MODEL_RAG_JUDGE: str = Field(default="", alias="OLLAMA_MODEL_RAG_JUDGE")
     OLLAMA_MODEL_TEXT_TO_SQL: str = Field(default="", alias="OLLAMA_MODEL_TEXT_TO_SQL")
     OLLAMA_MODEL_FAST_CLASSIFICATION: str = Field(default="", alias="OLLAMA_MODEL_FAST_CLASSIFICATION")
     OLLAMA_MODEL_RAG_SYNTHESIS: str = Field(default="", alias="OLLAMA_MODEL_RAG_SYNTHESIS")
-    # Legacy aliases retained for backward compatibility with older env files.
-    OLLAMA_EMOTION_SHIFT_MODEL: str = Field(default="", alias="OLLAMA_EMOTION_SHIFT_MODEL")
-    OLLAMA_PROCESS_ADHERENCE_MODEL: str = Field(default="", alias="OLLAMA_PROCESS_ADHERENCE_MODEL")
-    OLLAMA_NLI_MODEL: str = Field(default="", alias="OLLAMA_NLI_MODEL")
     OLLAMA_CLOUD_EMBED_ENABLED: bool = Field(
         default=False,
         alias="OLLAMA_CLOUD_EMBED_ENABLED",
@@ -197,23 +203,11 @@ class Settings(BaseSettings):
     RAGAS_JUDGE_MODEL: str = Field(default="qwen2.5-7b-instruct", alias="RAGAS_JUDGE_MODEL")
     RAGAS_JUDGE_BASE_URL: str = Field(default="http://localhost:1234/v1", alias="RAGAS_JUDGE_BASE_URL")
     RAGAS_JUDGE_API_KEY: str = Field(default="lm-studio", alias="RAGAS_JUDGE_API_KEY")
-    # Judge provider: "local" | "groq" | "vertex".
-    #   vertex — Vertex AI Gemini via service account (billed to GCP credits,
-    #            no free-tier req/day cap, reliably grades every sample). This is
-    #            the most reliable judge; local 7-8B models emit unparseable
-    #            verdicts (NaN) or spurious zeros, distorting the aggregate.
+    # Judge provider: "local" | "groq".
     #   groq   — Groq llama-3.3-70b (good, but free tier has a 100k token/day cap
     #            and rejects n>1 for AnswerRelevancy).
     #   local  — LM Studio endpoint (offline; weakest, capped ~0.74).
     RAGAS_JUDGE_PROVIDER: str = Field(default="local", alias="RAGAS_JUDGE_PROVIDER")
-
-    # ── Vertex AI (Gemini judge) ──
-    GEMINI_PROJECT: str = Field(default="", alias="GEMINI_PROJECT")
-    VERTEX_LOCATION: str = Field(default="us-central1", alias="VERTEX_LOCATION")
-    VERTEX_SA_FILE: str = Field(default="", alias="VERTEX_SA_FILE")
-    GEMINI_MODEL: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
-    GEMINI_FAST_MODEL: str = Field(default="gemini-2.5-flash-lite", alias="GEMINI_FAST_MODEL")
-    GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="", alias="GOOGLE_APPLICATION_CREDENTIALS")
 
     # ── Reranker score threshold ──
     # Cross-encoder chunks below this score are dropped before synthesis.
@@ -263,8 +257,6 @@ _STAGE_MODEL_CLASS: dict[str, str] = {
     "nli_policy": _FAST_STAGE,
     "rag_judge": _FAST_STAGE,
     "fast_classification": _FAST_STAGE,
-    # rag_synthesis is intentionally unclassified for fast/heavy fallback:
-    # when unset, it preserves legacy behavior by using settings.groq.model.
     "rag_synthesis": _FAST_STAGE,
 }
 
@@ -275,15 +267,17 @@ def recognized_stage_names() -> tuple[str, ...]:
 
 
 def resolve_model_for_stage(stage: str) -> str:
-    """Resolve model for a named stage with staged + legacy fallbacks."""
+    """Model for a stage: on Ollama Cloud the per-stage override or the heavy/fast default; on Groq its model."""
     key = stage.lower().replace("-", "_")
     if key == "nli":
         key = "nli_policy"
     if key not in _STAGE_MODEL_CLASS:
         allowed = ", ".join(sorted(_STAGE_MODEL_CLASS))
         raise ValueError(f"Unknown LLM stage '{stage}'. Allowed stages: {allowed}")
+    if settings.LLM_PROVIDER != "ollama_cloud":
+        return settings.groq.model
 
-    new_overrides = {
+    overrides = {
         "emotion_shift": settings.OLLAMA_MODEL_EMOTION_SHIFT,
         "process_adherence": settings.OLLAMA_MODEL_PROCESS_ADHERENCE,
         "nli_policy": settings.OLLAMA_MODEL_NLI_POLICY,
@@ -292,35 +286,12 @@ def resolve_model_for_stage(stage: str) -> str:
         "fast_classification": settings.OLLAMA_MODEL_FAST_CLASSIFICATION,
         "rag_synthesis": settings.OLLAMA_MODEL_RAG_SYNTHESIS,
     }
-    legacy_overrides = {
-        "emotion_shift": settings.OLLAMA_EMOTION_SHIFT_MODEL,
-        "process_adherence": settings.OLLAMA_PROCESS_ADHERENCE_MODEL,
-        "nli_policy": settings.OLLAMA_NLI_MODEL,
-    }
-
-    stage_override = (new_overrides.get(key) or "").strip()
-    if stage_override:
-        return stage_override
-
-    if key == "rag_synthesis":
-        if settings.LLM_PROVIDER == "ollama_cloud":
-            override = (new_overrides.get("rag_synthesis") or "").strip()
-            return override or settings.OLLAMA_CLOUD_FAST_MODEL
-        return settings.groq.model
-
-    legacy_override = (legacy_overrides.get(key) or "").strip()
-    if legacy_override:
-        return legacy_override
-
-    if settings.LLM_PROVIDER == "ollama_cloud":
-        if _STAGE_MODEL_CLASS[key] == _FAST_STAGE:
-            return settings.OLLAMA_CLOUD_FAST_MODEL
-        return settings.OLLAMA_CLOUD_HEAVY_MODEL
-    if settings.LLM_PROVIDER == "gemini":
-        if _STAGE_MODEL_CLASS[key] == _FAST_STAGE:
-            return settings.GEMINI_FAST_MODEL
-        return settings.GEMINI_MODEL
-    return settings.groq.model
+    override = (overrides[key] or "").strip()
+    if override:
+        return override
+    if _STAGE_MODEL_CLASS[key] == _FAST_STAGE:
+        return settings.OLLAMA_CLOUD_FAST_MODEL
+    return settings.OLLAMA_CLOUD_HEAVY_MODEL
 
 
 def rag_judge_model() -> str:
@@ -338,23 +309,6 @@ def build_rag_llm_client():
     OpenAI-compatible chat client for RAG judge calls.
     Groq SDK when LLM_PROVIDER=groq; OpenAI client → Ollama Cloud otherwise.
     """
-    if settings.LLM_PROVIDER == "gemini":
-        from langchain_google_vertexai import ChatVertexAI
-        import os
-        
-        # Ensure credentials are set for Vertex AI
-        if settings.GOOGLE_APPLICATION_CREDENTIALS and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
-        elif settings.VERTEX_SA_FILE and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.VERTEX_SA_FILE
-            
-        return ChatVertexAI(
-            model=rag_judge_model(),
-            project=settings.GEMINI_PROJECT or None,
-            location=settings.VERTEX_LOCATION or "us-central1",
-            temperature=0,
-            max_output_tokens=settings.groq.max_tokens,
-        )
     if settings.LLM_PROVIDER == "ollama_cloud":
         from openai import OpenAI
 

@@ -22,9 +22,7 @@ Request/response schemas: the FastAPI OpenAPI docs at http://localhost:8000/docs
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/auth/login/access-token` | public | OAuth2 password form login; returns JWT and sets cookie |
-| POST | `/auth/google` | public | Login with a Google ID token (`token` query param) |
-| GET | `/auth/google/login` | public | Redirect to Google consent screen |
-| GET | `/auth/google/callback` | public | Exchange the code, set the cookie, redirect to `${FRONTEND_URL}/login/success` |
+| POST | `/auth/google` | public | Login with a Google ID token (`token` query param); existing active users only, 403 for unknown emails |
 | POST | `/auth/logout` | public | Delete the `vocalmind_token` cookie |
 
 ## `/users` — `routes/users.py`
@@ -46,8 +44,7 @@ Agents only see their own interactions (`_interaction_scope_filters`); managers 
 | GET | `/interactions` | user | List interactions with agent name and scores |
 | GET | `/interactions/{interaction_id}` | user | Detail: utterances, emotion events, triggers, explainability, `scores`. When the text-emotion model is unavailable, per-utterance text/fused fields and `emotionComparison` are `null`. |
 | GET | `/interactions/{interaction_id}/processing-status` | user | Per-stage `ProcessingJob` status |
-| GET | `/interactions/{interaction_id}/emotion-comparison` | user | Acoustic vs text vs fused emotion comparison; 503 when the text-emotion model is unavailable |
-| GET | `/interactions/{interaction_id}/audio` | user | Stream audio (local FS or Supabase Storage) |
+| GET | `/interactions/{interaction_id}/audio` | user | Stream audio (local FS or Supabase Storage); 404 when the file is missing |
 | POST | `/interactions/{interaction_id}/reprocess` | user | Reset and re-run the pipeline (`?force=`, `?priority=`) |
 | DELETE | `/interactions/{interaction_id}` | user | Delete the interaction and all dependent rows |
 
@@ -131,12 +128,9 @@ Agents only see their own interactions (`_interaction_scope_filters`); managers 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/llm-trigger/health` | public | Qdrant and embedding-host check (Kaggle `/health`, Ollama Cloud, or local Ollama); only Qdrant affects `status` |
-| POST | `/llm-trigger/emotion-shift` | public | Run the emotion-shift chain on ad-hoc text |
-| POST | `/llm-trigger/process-adherence` | public | Run the SOP adherence chain on an ad-hoc transcript |
-| POST | `/llm-trigger/nli-policy-check` | public | Run single-claim NLI against a policy text |
 | POST | `/llm-trigger/interaction/{interaction_id}/run` | user | Run all trigger checks for one org-scoped interaction |
 
-The four run endpoints return 503 when an LLM or the text-emotion model is unavailable (no heuristic fallback).
+The run endpoint returns 503 when an LLM or the text-emotion model is unavailable (no heuristic fallback).
 
 ## `/rag` — `routes/rag.py`
 
@@ -145,18 +139,13 @@ The four run endpoints return 503 when an LLM or the text-emotion model is unava
 | GET | `/rag/health` | public | Qdrant / local Ollama dependency check |
 | POST | `/rag/query` | user | Org-filtered retrieval with provenance |
 
-## Inference passthroughs — `routes/{vad,transcription,diarization,emotion,full}/router.py`
+## Inference passthroughs — `routes/{vad,emotion}/router.py`
 
 These call the local microservices, or Kaggle when `IS_LOCAL=false`. `*-local` variants take a server-side file path instead of an upload.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | POST | `/vad/analyze`, `/vad/analyze-local` | public | Silero VAD segments |
-| POST | `/transcription/analyze`, `/transcription/analyze-local` | public | WhisperX transcription |
-| POST | `/diarization/analyze`, `/diarization/analyze-local` | public | Speaker diarization |
-| POST | `/full/analyze`, `/full/analyze-local` | public | ASR + diarization + per-segment emotion in one call (Kaggle `/full`, or WhisperX + Emotion) |
-| POST | `/emotion/analyze`, `/emotion/analyze-local` | public | Dominant acoustic emotion for a clip |
-| POST | `/emotion/fuse` | public | Fuse text and acoustic emotion; 503 when the text-emotion model is unavailable |
 | POST | `/emotion/process` | public | VAD split → transcribe → per-segment emotion |
 
 ## `/internal` — `routes/internal.py`
