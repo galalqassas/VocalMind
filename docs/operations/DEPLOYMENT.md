@@ -96,8 +96,6 @@ Read the "Schema sources" section of [DATABASE_SCHEMA.md](../architecture/DATABA
 3. Bring the schema up to date with Alembic (`stamp` the revision that matches the DB, check with `verify_supabase_schema.py`, then `upgrade head`).
 4. Boot once with `SEED_DEMO_DATA=true`, then set it to `false`.
 
-**Do not** run `make seed` with production credentials. It runs `infra/scripts/seed/seed_database.py`, a legacy seeder that writes fake data straight to the Supabase project named in `backend/.env`.
-
 ## Runtime checks
 
 - `GET /health`: DB connectivity (503 when unreachable).

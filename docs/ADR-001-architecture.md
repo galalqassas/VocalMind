@@ -48,7 +48,7 @@ One FastAPI + SQLModel + Postgres backend, with every heavy model behind HTTP. B
 
 ## Schema management
 
-- Fresh Postgres: `infra/db/` is mounted as `/docker-entrypoint-initdb.d`, so every `*.sql` there runs on first init: `01_schema.sql`, the legacy `02_seed.sql`, SQL migrations `03`–`06`, and `seed_benchmark_data.sql`.
+- Fresh Postgres: `infra/db/` is mounted as `/docker-entrypoint-initdb.d`, so every `*.sql` there runs on first init: `01_schema.sql`, then SQL migrations `03`–`06`.
 - At backend startup, `create_db_and_tables()` runs `SQLModel.metadata.create_all`.
 - Existing databases: Alembic revisions in `backend/alembic/versions/`.
 - A schema change must update the SQLModel model, `infra/db/01_schema.sql`, and add an Alembic revision.

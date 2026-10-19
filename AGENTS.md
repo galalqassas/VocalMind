@@ -104,8 +104,8 @@ Point IDs are content hashes, so re-ingesting is idempotent.
 | `services/kaggle/` | Kaggle GPU server (`server.py`), notebook, API contract |
 | `services/{vad,whisperx,emotion}/app.py` | Local inference containers (`local-ml` profile) |
 | `services/rag/` | Ingestion + query engine + evaluators + RAGAS |
-| `infra/db/` | SQL mounted into Postgres initdb: `01_schema.sql`, `03`–`06` incremental (`04` = assistant read-only role), legacy seeds `02_seed.sql` (NileTech) + `seed_benchmark_data.sql` |
-| `infra/scripts/` | `eval/` (quality gates), `seed/`, `migrate.py`, `e2e_local_audio.py`, `ingest_audio_folder.py`, `build_session_export.py` |
+| `infra/db/` | SQL mounted into Postgres initdb: `01_schema.sql`, `03`–`06` incremental (`04` = assistant read-only role) |
+| `infra/scripts/` | `eval/` (quality gates), `seed/supabase_seed_audio.py`, `migrate.py`, `e2e_local_audio.py`, `ingest_audio_folder.py`, `build_session_export.py` |
 | `infra/benchmarks/` | Gold labels (`expected/`), `fixtures/`, `schema/thresholds.json` |
 | `storage/` | Bind-mounted `audio/<org>/`, `docs/<org>/` (RAG sources), `uploads/` |
 | `tools/` | Pipeline-vs-ground-truth eval harness, `sync_remote_supabase.sql` |
@@ -161,7 +161,6 @@ CI (`.github/workflows/`):
   - Startup `create_all` adds missing *tables* but never *columns*.
   - Alembic is not run by compose and isn't in the backend image.
   - Add every schema change to all three.
-- **`make seed` is a legacy Supabase seeder** (`SUPABASE_SERVICE_KEY`) and writes to whatever Supabase it points at. Local demo data comes from startup seeding instead.
 - **Tests use SQLite.** JSONB and Postgres-only indexes are not exercised.
 - **Dashboard cache TTL is 5 min**, so data looks stale right after reprocessing.
 - **Emotion windows** are converted to mono 16 kHz, are at least 0.8 s long, and are capped at 30 s (`EMOTION_MAX_AUDIO_SECONDS`).
@@ -169,7 +168,7 @@ CI (`.github/workflows/`):
 - **For ngrok/public demos, tunnel port 3000** (the frontend proxies `/api`), not 8000.
 - **Offline UI demo:** `VITE_USE_OFFLINE_DEMO=true` serves bundled NexaLink data (`frontend/src/app/data/`), with no backend needed.
 - **Committed artifacts:** `backend/uv.lock`, `model.pkl` and `vectorizer.pkl` are committed. Run `uv sync` after pulling.
-- **On Windows**, use `make build-retry` or `start-gpu.ps1`.
+- **On Windows**, use `make build-retry` for transient Docker errors.
 
 ## Known issues (tracked cleanup)
 

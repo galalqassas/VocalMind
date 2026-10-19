@@ -1,1 +1,0 @@
-Merged into LLM_TRIGGER_FEATURE_GUIDE.md.

@@ -1,4 +1,4 @@
-.PHONY: help up up-local up-gpu down build build-retry logs support-up support-up-local support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio seed reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
+.PHONY: help up up-local up-gpu down build build-retry logs support-up support-up-local support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -171,9 +171,6 @@ audit-cuda-services: ## Run pip-audit for whisperx/emotion after local image pul
 	@echo "  docker compose run --rm emotion sh -c \"python -m ensurepip --upgrade && python -m pip install pip-audit && pip-audit\""
 
 # ── Database ──────────────────────────────────────────────────────────────
-
-seed: ## Seed the database
-	cd backend && uv run python ../infra/scripts/seed/seed_database.py
 
 reset-local: ## DESTRUCTIVE: wipe local DB, seed minimal org+manager+agents (real run: make reset-local ARGS="--yes")
 	cd backend && uv run python -m scripts.reset_local_db $(ARGS)
