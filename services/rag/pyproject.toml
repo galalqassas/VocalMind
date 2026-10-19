@@ -63,3 +63,7 @@ env = [
     "GROQ_API_KEY=test_key",
     "QDRANT_URL=http://localhost:6333",
 ]
+
+[tool.ruff.lint]
+# Pin the rule set so ruff upgrades do not change what CI enforces.
+select = ["E4", "E7", "E9", "F"]
