@@ -58,13 +58,6 @@ class FeedbackStatus(str, Enum):
     applied = "applied"
 
 
-class PeriodType(str, Enum):
-    """Used by agent_performance_snapshots (v5.1+)."""
-    daily = "daily"
-    weekly = "weekly"
-    monthly = "monthly"
-
-
 class NotificationType(str, Enum):
     """In-app notification kinds delivered via the notifications table."""
     evaluation_complete = "evaluation_complete"      # → agent + manager when a call finishes evaluation

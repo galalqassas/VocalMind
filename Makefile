@@ -1,4 +1,4 @@
-.PHONY: help up up-local up-gpu down build build-retry logs support-up support-up-local support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio seed-manager-supabase-audio reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
+.PHONY: help up up-local up-gpu down build build-retry logs support-up support-up-local support-up-gpu support-down be-dev be-test be-test-cov be-lint be-install fe-dev fe-build fe-lint fe-test fe-e2e-summary fe-e2e-cov fe-test-cov fe-install rag-lint rag-test rag-install llm-trigger-test quality-eval-transcript quality-eval-emotion quality-eval-policy quality-eval-rag quality-eval-resolution quality-eval-all e2e-local-audio reset-local migrate clean test-all audit audit-backend-rag audit-cuda-services
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -137,9 +137,6 @@ quality-eval-all: ## Run all component quality benchmarks (fails on regression)
 
 e2e-local-audio: ## Full local E2E on default mounted audio (login, ingest, poll, assert)
 	python infra/scripts/e2e_local_audio.py --include-llm
-
-seed-manager-supabase-audio: ## Clear manager org via Supabase, upload audio to Storage, POST from-storage (see supabase_seed_audio.py --help)
-	cd backend && uv run python ../infra/scripts/seed/supabase_seed_audio.py
 
 # ── CI/CD ─────────────────────────────────────────────────────────────────
 

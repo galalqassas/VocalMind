@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from app.api.routes.emotion.service import emotion_client
 from app.api.routes.transcription.service import transcription_client
 from app.core.config import settings
@@ -25,16 +23,6 @@ class FullAPIClient(BaseKaggleClient):
         transcription = await transcription_client.analyze_bytes(audio_bytes, filename, content_type)
         emotion_analysis = await emotion_client.analyze_segments(
             audio_bytes, filename, transcription.get("segments") or [], content_type
-        )
-        return build_local_full_response(transcription, emotion_analysis)
-
-    async def analyze_local_file(self, file_path: str):
-        if not settings.IS_LOCAL:
-            return await super().analyze_local_file(file_path)
-
-        transcription = await transcription_client.analyze_local_file(file_path)
-        emotion_analysis = await emotion_client.analyze_segments(
-            Path(file_path).read_bytes(), Path(file_path).name, transcription.get("segments") or []
         )
         return build_local_full_response(transcription, emotion_analysis)
 

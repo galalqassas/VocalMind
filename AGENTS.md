@@ -69,13 +69,13 @@ VAD is only reachable through `/api/v1/vad/*`; the pipeline doesn't call it.
 - That `ProcessingJob` is marked `failed` (`StageFailed`, `LLMUnavailableError`, `TextEmotionUnavailable`, `SpeakerRoleModelUnavailable`).
 - Later stages are marked "Not run" and no score row is written.
 - The interaction ends `failed`; reprocess to retry.
-- The ad-hoc `/llm-trigger/*` routes and emotion-comparison return 503.
+- `POST /llm-trigger/interaction/{id}/run` returns 503.
 
-**Emotion fusion** (`emotion_fusion.fuse_emotion_signals`): acoustic ×0.55 + text ×0.45, +0.08 when they agree, −0.12 when they disagree. Text emotion comes from `/predict_text` (DistilRoBERTa). Fusion is computed on read (the emotion-comparison endpoint) and is not persisted.
+**Emotion fusion** (`emotion_fusion.fuse_emotion_signals`): acoustic ×0.55 + text ×0.45, +0.08 when they agree, −0.12 when they disagree. Text emotion comes from `/predict_text` (DistilRoBERTa). Fusion is computed on read (`emotionComparison` and the per-utterance fused fields in the interaction detail) and is not persisted.
 
 **Explainability:** every trigger verdict carries `TriggerAttribution` + `ClaimProvenance`, linking transcript spans to the retrieved policy/SOP chunk (`llm_trigger/schemas.py`).
 
-**Manager assistant** (`api/routes/assistant.py`): natural language → SQL → read-only execution (`ASSISTANT_DATABASE_URL` read-only role) → answer. With `ASSISTANT_LLM_PROVIDER=auto` it tries Gemini → Groq → Ollama Cloud; compose sets `ollama_cloud`.
+**Manager assistant** (`api/routes/assistant.py`): natural language → SQL → read-only execution (`ASSISTANT_DATABASE_URL` read-only role) → answer. With `ASSISTANT_LLM_PROVIDER=auto` it tries Groq → Ollama Cloud; compose sets `ollama_cloud`.
 
 **RAG** (`services/rag/`): Docling → parent/child chunks → embeddings → Qdrant. Docling and the embeddings run on Kaggle or locally, per `RAG_MODELS_HOST`; after switching, re-ingest with `uv run python main.py --ingest --force`, because the embedding models differ. It writes three collections:
 
@@ -92,7 +92,7 @@ Point IDs are content hashes, so re-ingesting is idempotent.
 | Path | What |
 |---|---|
 | `backend/app/main.py` | Lifespan, in order: validate settings → `create_all` → seed demo orgs → start worker → start audio watcher |
-| `backend/app/api/main.py` | Router registry. Prefixes: auth, emotion, interactions, dashboard, knowledge, agents, assistant, users, llm-trigger, rag, diarization, transcription, vad, full, internal, notifications, reviews, feedback, policy-compliance |
+| `backend/app/api/main.py` | Router registry. Prefixes: auth, emotion, interactions, dashboard, knowledge, agents, assistant, users, llm-trigger, rag, vad, internal, notifications, reviews, feedback, policy-compliance |
 | `backend/app/api/deps.py` | DI: DB session, current user |
 | `backend/app/core/` | Config, pipeline worker, fusion, audio resolver/watcher, Kaggle client, knowledge versioning, rate limit, circuit breaker |
 | `backend/app/llm_trigger/` | Trigger engine: `service.py`, `chains.py`, `prompts.py`, `prompt_constants.py` (incl. `INJECTION_GUARD`), `retrieval.py`, `schemas.py`, `scoring.py` |
@@ -105,7 +105,7 @@ Point IDs are content hashes, so re-ingesting is idempotent.
 | `services/{vad,whisperx,emotion}/app.py` | Local inference containers (`local-ml` profile) |
 | `services/rag/` | Ingestion + query engine + evaluators + RAGAS |
 | `infra/db/` | SQL mounted into Postgres initdb: `01_schema.sql`, `03`–`06` incremental (`04` = assistant read-only role) |
-| `infra/scripts/` | `eval/` (quality gates), `seed/supabase_seed_audio.py`, `migrate.py`, `e2e_local_audio.py`, `ingest_audio_folder.py`, `build_session_export.py` |
+| `infra/scripts/` | `eval/` (quality gates), `migrate.py`, `e2e_local_audio.py`, `ingest_audio_folder.py`, `build_session_export.py` |
 | `infra/benchmarks/` | Gold labels (`expected/`), `fixtures/`, `schema/thresholds.json` |
 | `storage/` | Bind-mounted `audio/<org>/`, `docs/<org>/` (RAG sources), `uploads/` |
 | `tools/` | Pipeline-vs-ground-truth eval harness, `sync_remote_supabase.sql` |
@@ -133,7 +133,7 @@ Demo data: when `SEED_DEMO_DATA=true`, startup seeds **NexaLink** (`manager@nexa
 Source of truth: `backend/app/core/config.py`. Values are layered, and the later one wins: **config.py default → `backend/.env` → `docker-compose.yml` `environment:`**. Details are in [docs/backend/CONFIGURATION.md](docs/backend/CONFIGURATION.md).
 
 - `IS_LOCAL` / `RAG_MODELS_HOST` / `KAGGLE_SERVER_URL`: where the models run (see [Architecture](#architecture)).
-- `LLM_PROVIDER`: `ollama_cloud` (compose default; heavy `kimi-k2.6:cloud`, fast `ministral-3:8b`) or `groq`. Gemini code exists but is unused.
+- `LLM_PROVIDER`: `ollama_cloud` (compose default; heavy `kimi-k2.6:cloud`, fast `ministral-3:8b`) or `groq`.
 - `AUDIO_STORAGE_BACKEND`: `local` or `supabase` (production). `AUDIO_FOLDER_WATCHER_ENABLED` defaults to false in config.py and true in `.env.example`.
 
 ## Production
@@ -174,16 +174,14 @@ CI (`.github/workflows/`):
 
 - **Security:**
   - Public routes:
-    - inference passthroughs (`/full/*`, including `analyze-local`, which reads server file paths);
-    - `/vad/*` and `/transcription/*`;
-    - the single-stage `/llm-trigger/*` routes;
+    - inference passthroughs `/vad/*` (including `analyze-local`, which reads server file paths) and `/emotion/process`;
     - `/metrics` and `/health/circuit-breakers`.
   - Knowledge CRUD only requires login, not the manager role.
   - The auth rate limit described in `core/rate_limit.py` is never applied.
 
 - **Unmeasured models:** the Kaggle server and the LR-only speaker roles haven't been run against the ground-truth calls yet (`tools/evaluate_pipeline.py`).
 - **Missing metrics:** `Transcript.overall_confidence`, silence and response time are `None` (TODO), because they have no real source yet.
-- **Dead code:** `core/feedback_export.py`, `deps.get_supabase`, about 30 unused `components/ui/*`.
+- **Dead code:** about 30 unused `components/ui/*`.
 - The offline-demo dataset (`processedSessionExport.ts`, 27k lines) is statically imported, so it is always bundled. Its generator `infra/scripts/build_session_export.py` imports a missing module (`diag_5call_probe`).
 - `infra/scripts/eval/extract_pipeline_predictions.py` calls `/api/interactions` (missing `/v1`).
 

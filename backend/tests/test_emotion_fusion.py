@@ -78,7 +78,6 @@ def test_infer_text_emotion_uses_kaggle_with_ngrok_header():
         "app.core.emotion_fusion.settings",
         IS_LOCAL=False,
         KAGGLE_SERVER_URL="https://kaggle.example.com/",
-        KAGGLE_NGROK_URL="",
     ), patch("httpx.Client.post", return_value=response) as post:
         assert infer_text_emotion_with_provider("thanks") == ("happy", 0.8)
     assert post.call_args.args[0] == "https://kaggle.example.com/predict_text"

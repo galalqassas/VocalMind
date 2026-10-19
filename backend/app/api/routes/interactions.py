@@ -18,8 +18,6 @@ from sqlmodel import select, func
 from typing import Any, Literal
 from uuid import UUID
 import httpx
-import io
-import wave
 
 from app.api.deps import SessionDep, CurrentUser
 from app.core.audio_resolver import (
@@ -874,15 +872,6 @@ def _fuse_utterance_emotions(utterances_rows: list[Utterance]) -> list[EmotionFu
         return None
 
 
-def _build_emotion_comparison_payload(utterances_rows: list[Utterance]) -> dict | None:
-    fused_rows = _fuse_utterance_emotions(utterances_rows)
-    if fused_rows is None:
-        return None
-    return _build_emotion_comparison_from_labels(
-        [(u.emotion or "unknown", fused.text_emotion, fused.emotion) for u, fused in zip(utterances_rows, fused_rows)]
-    )
-
-
 def _build_emotion_comparison_from_labels(fused_pairs: list[tuple[str, str, str]]) -> dict:
     acoustic_labels: list[str] = []
     text_labels: list[str] = []
@@ -1577,69 +1566,11 @@ async def get_interaction_detail(
 
 
 @router.get(
-    "/{interaction_id}/emotion-comparison",
-    responses={
-        401: {"description": "Not authenticated"},
-        403: {"description": "Access denied - unauthorized organization access"},
-        404: {"description": "Interaction not found"},
-        422: {"description": "Invalid UUID format"},
-        503: {"description": "Text emotion model unavailable"}
-    }
-)
-async def get_interaction_emotion_comparison(
-    interaction_id: UUID = FastAPIPath(..., description="The unique UUID of the interaction to retrieve emotion comparison data for."),
-    session: SessionDep = None,
-    current_user: CurrentUser = None,
-):
-    """Return compact acoustic vs text vs fused emotion comparison for manager panel."""
-    interaction_result = await session.exec(
-        select(Interaction.id).where(
-            Interaction.id == interaction_id,
-            *_interaction_scope_filters(current_user),
-        )
-    )
-    if not interaction_result.first():
-        raise HTTPException(status_code=404, detail="Interaction not found")
-
-    utt_result = await session.exec(
-        select(Utterance)
-        .join(Interaction, Utterance.interaction_id == Interaction.id)
-        .where(
-            Utterance.interaction_id == interaction_id,
-            *_interaction_scope_filters(current_user),
-        )
-        .order_by(Utterance.start_time_seconds)
-    )
-    utterances_rows = utt_result.all()
-
-    payload = _build_emotion_comparison_payload(utterances_rows)
-    if payload is None:
-        raise HTTPException(status_code=503, detail="Text emotion model unavailable.")
-    payload["interactionId"] = str(interaction_id)
-    return payload
-
-
-def generate_dummy_wav(duration_seconds: int) -> bytes:
-    """Generate a dummy silent WAV file in memory."""
-    buf = io.BytesIO()
-    sample_rate = 8000
-    n_samples = duration_seconds * sample_rate
-    
-    with wave.open(buf, 'wb') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(b'\x00\x00' * n_samples)
-        
-    return buf.getvalue()
-
-
-@router.get(
     "/{interaction_id}/audio",
     responses={
         401: {"description": "Not authenticated"},
         403: {"description": "Access denied - unauthorized organization access"},
-        404: {"description": "Interaction not found"},
+        404: {"description": "Interaction or its audio file not found"},
         422: {"description": "Invalid UUID format"},
         502: {"description": "Cannot reach storage"},
         504: {"description": "Audio fetch timed out"}
@@ -1652,9 +1583,8 @@ async def get_interaction_audio(
 ):
     """Stream the audio file for an interaction from Supabase Storage or local path."""
 
-    # Get the audio path and duration
     result = await session.exec(
-        select(Interaction.audio_file_path, Interaction.duration_seconds).where(
+        select(Interaction.id, Interaction.audio_file_path).where(
             Interaction.id == interaction_id,
             *_interaction_scope_filters(current_user),
         )
@@ -1664,19 +1594,9 @@ async def get_interaction_audio(
     if not row:
         raise HTTPException(status_code=404, detail="Interaction not found")
 
-    audio_path, duration = row
-
-    # Fallback to dummy generated audio if no path is available yet.
+    audio_path = row[1]
     if not audio_path:
-        dummy_wav = generate_dummy_wav(duration or 180)
-        return StreamingResponse(
-            iter([dummy_wav]),
-            media_type="audio/wav",
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(len(dummy_wav)),
-            },
-        )
+        raise HTTPException(status_code=404, detail="Audio file not found")
 
     try:
         content, _ = await fetch_audio_bytes(audio_path, timeout_seconds=30.0)
@@ -1691,15 +1611,7 @@ async def get_interaction_audio(
             },
         )
     except FileNotFoundError:
-        dummy_wav = generate_dummy_wav(duration or 180)
-        return StreamingResponse(
-            iter([dummy_wav]),
-            media_type="audio/wav",
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Length": str(len(dummy_wav)),
-            },
-        )
+        raise HTTPException(status_code=404, detail="Audio file not found")
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Audio fetch timed out")
     except httpx.ConnectError:

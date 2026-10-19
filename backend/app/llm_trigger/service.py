@@ -223,8 +223,8 @@ def _friction_grounded_in_agent_turns(
     Only returns False (suppress) when the model DID supply evidence and that
     evidence aligns to a CUSTOMER turn rather than any agent turn — the specific
     false-positive mode where the LLM cites the customer's own emotional line as
-    "agent friction". When the model omits evidence entirely (a frequent Gemini
-    habit) we do NOT suppress: absence of a quote is not proof of innocence, and
+    "agent friction". When the model omits evidence entirely we do NOT suppress:
+    absence of a quote is not proof of innocence, and
     over-suppressing there was wiping out real interruption/dismissive verdicts.
     """
     agent_turns = _agent_turn_texts(conversation_text)
@@ -1670,17 +1670,6 @@ async def run_single_claim_nli_policy_check(
                 "the alleged violation. " + (result.justification or "")
             ).strip()
     return result
-
-
-async def run_nli_policy_check(
-    agent_statement: str,
-    ground_truth_policy: str,
-) -> NLIEvaluation:
-    """Backward-compatible alias for single-claim NLI policy alignment checks."""
-    return await run_single_claim_nli_policy_check(
-        agent_statement=agent_statement,
-        ground_truth_policy=ground_truth_policy,
-    )
 
 
 def _derive_llm_inputs(

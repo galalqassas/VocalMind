@@ -24,7 +24,6 @@ def set_kaggle_url(payload: KaggleUrlRequest):
         return {"status": "error", "detail": "Provide 'url' or 'kaggle_url'."}
 
     settings.KAGGLE_SERVER_URL = resolved_url
-    settings.KAGGLE_NGROK_URL = resolved_url
     settings.IS_LOCAL = False
     logger.info("Kaggle URL set to %s — IS_LOCAL is now False", resolved_url)
     return {"status": "success", "url": resolved_url}

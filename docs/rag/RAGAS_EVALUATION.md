@@ -27,7 +27,6 @@ Testset format: `{"samples": [{"user_input": "...", "reference": "..."}, ...]}`;
 
 - `local` (default): OpenAI-compatible endpoint `RAGAS_JUDGE_BASE_URL` (default `http://localhost:1234/v1`, LM Studio) with `RAGAS_JUDGE_MODEL` (default `qwen2.5-7b-instruct`), `max_tokens=2048`.
 - `groq`: `llama-3.3-70b-versatile`, `max_tokens=2048`.
-- `vertex`: Vertex AI OpenAI-compatible endpoint using service account `VERTEX_SA_FILE`, `VERTEX_LOCATION`, model `RAGAS_JUDGE_MODEL`, `max_tokens=8192`.
 
 RAGAS embeddings use the same embedding host as retrieval (`_OllamaEmbeddings`, which calls Kaggle `/embed` when `RAG_MODELS_HOST=kaggle`). `RunConfig(max_workers=2, timeout=180)` limits concurrency for rate-limited providers.
 
@@ -64,5 +63,4 @@ Limits of these numbers:
 
 ## Known issues
 
-- `RAGAS_JUDGE_PROVIDER=vertex` reads `settings.VERTEX_PROJECT`, which `services/rag/config.py` does not define (it has `GEMINI_PROJECT`), so the Vertex judge raises `AttributeError`.
 - `generate` loads every Markdown file in `parsed-docs/`, including `*_raw.md` and `*_chunks.md` debug artifacts.

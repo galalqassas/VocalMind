@@ -489,20 +489,29 @@ def test_build_rolling_windows_and_bundle_for_long_transcript():
 
 
 def test_get_model_for_stage_uses_stage_override_first(monkeypatch):
+    monkeypatch.setattr("app.llm_trigger.chains.settings.LLM_PROVIDER", "ollama_cloud")
     monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_MODEL_EMOTION_SHIFT", "kimi-k2.5:cloud")
-    monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_EMOTION_SHIFT_MODEL", "legacy-model")
     monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_CLOUD_HEAVY_MODEL", "heavy-fallback")
     assert get_model_for_stage("emotion_shift") == "kimi-k2.5:cloud"
 
 
-def test_get_model_for_stage_uses_legacy_override_when_new_unset(monkeypatch):
-    monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_MODEL_NLI_POLICY", "")
-    monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_NLI_MODEL", "legacy-nli")
-    monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-fallback")
-    assert get_model_for_stage("nli_policy") == "legacy-nli"
+def test_get_model_for_stage_ignores_ollama_overrides_on_groq(monkeypatch):
+    monkeypatch.setattr("app.llm_trigger.chains.settings.LLM_PROVIDER", "groq")
+    monkeypatch.setattr("app.llm_trigger.chains.settings.LLM_MODEL", "groq-model")
+    monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_MODEL_EMOTION_SHIFT", "kimi-k2.5:cloud")
+    assert get_model_for_stage("emotion_shift") == "groq-model"
+
+
+def test_legacy_stage_model_env_names_fill_new_fields(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.delenv("OLLAMA_MODEL_NLI_POLICY", raising=False)
+    monkeypatch.setenv("OLLAMA_NLI_MODEL", "legacy-nli")
+    assert Settings(_env_file=None).OLLAMA_MODEL_NLI_POLICY == "legacy-nli"
 
 
 def test_get_model_for_stage_uses_fast_and_heavy_fallback_classes(monkeypatch):
+    monkeypatch.setattr("app.llm_trigger.chains.settings.LLM_PROVIDER", "ollama_cloud")
     monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-fallback")
     monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_CLOUD_HEAVY_MODEL", "heavy-fallback")
     monkeypatch.setattr("app.llm_trigger.chains.settings.OLLAMA_MODEL_RAG_JUDGE", "")

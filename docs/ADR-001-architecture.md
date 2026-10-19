@@ -20,7 +20,7 @@ One FastAPI + SQLModel + Postgres backend, with every heavy model behind HTTP. B
 | RAG query code (`services/rag`) | Imported in-process. Bind-mounted at `/app/rag`, loaded by `backend/app/api/routes/rag.py` and `llm_trigger/service.py`. |
 | RAG ingestion | Separate container (`ingestion`) running `services/rag/main.py --watch` |
 | Qdrant; Ollama (`local-ml` profile) | Infra containers |
-| LLMs | External APIs: Ollama Cloud, Groq or Gemini, selected by `LLM_PROVIDER` / `ASSISTANT_LLM_PROVIDER` |
+| LLMs | External APIs: Ollama Cloud or Groq, selected by `LLM_PROVIDER` / `ASSISTANT_LLM_PROVIDER` |
 
 ## Rationale
 

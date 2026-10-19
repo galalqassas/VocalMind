@@ -33,7 +33,7 @@ class BaseKaggleClient:
 
     @property
     def remote_base_url(self) -> str:
-        return settings.KAGGLE_SERVER_URL or settings.KAGGLE_NGROK_URL
+        return settings.KAGGLE_SERVER_URL
 
     @property
     def endpoint(self) -> str:

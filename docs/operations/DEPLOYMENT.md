@@ -76,7 +76,6 @@ Host ports:
 ## Production database (Supabase Postgres)
 
 - `DATABASE_URL` is the Supabase **connection-pooler** URI: `postgresql+asyncpg://postgres.<ref>:<password>@<pooler-host>:6543/postgres`. `backend/app/core/database.py` disables asyncpg statement caches, which pgbouncer pooling requires.
-- `SUPABASE_DB_URL` is used only by `backend/scripts/verify_supabase_schema.py`, which lists the remote tables and the `users`/`policy_compliance` columns.
 
 ### Bootstrapping a new Supabase database
 
@@ -93,7 +92,7 @@ Read the "Schema sources" section of [DATABASE_SCHEMA.md](../architecture/DATABA
 
 1. Back it up (Supabase dashboard → Database → Backups).
 2. Run `tools/sync_remote_supabase.sql` in the Supabase SQL editor. It deletes the NileTech and CairoConnect organizations (by id or slug) and every row that cascades from them. The schema is left untouched, and the script is idempotent.
-3. Bring the schema up to date with Alembic (`stamp` the revision that matches the DB, check with `verify_supabase_schema.py`, then `upgrade head`).
+3. Bring the schema up to date with Alembic (`stamp` the revision that matches the DB, then `upgrade head`).
 4. Boot once with `SEED_DEMO_DATA=true`, then set it to `false`.
 
 ## Runtime checks

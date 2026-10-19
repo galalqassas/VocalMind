@@ -465,20 +465,14 @@ def _is_transient_llm_error(exc: Exception) -> bool:
     return is_transient_llm_error(exc)
 
 def _run_judge_client(client, prompt: str, max_tokens: int) -> str:
-    if hasattr(client, "invoke"):
-        # LangChain ChatModel (e.g. ChatVertexAI)
-        from langchain_core.messages import HumanMessage
-        response = client.invoke([HumanMessage(content=prompt)])
-        return response.content
-    else:
-        # OpenAI or Groq client
-        response = client.chat.completions.create(
-            model=rag_judge_model(),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
+    """Run one judge prompt on the OpenAI or Groq client."""
+    response = client.chat.completions.create(
+        model=rag_judge_model(),
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
 
 
 def _invoke_judge_with_retry(call, max_retries: int = 3) -> object:

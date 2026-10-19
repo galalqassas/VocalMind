@@ -18,8 +18,8 @@ os.environ.setdefault("SECRET_KEY", "test_secret_key_32_chars_minimum_x")
 import pytest
 import importlib
 from typing import Generator
-from unittest.mock import AsyncMock, MagicMock
-from app.api.deps import get_session, get_supabase, get_db
+from unittest.mock import AsyncMock
+from app.api.deps import get_session, get_db
 from app.core.config import settings
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
@@ -69,17 +69,13 @@ def session_fixture() -> Generator[Session, None, None]:
 @pytest.fixture(name="client", autouse=True)
 def client_fixture(session: Session) -> Generator[TestClient, None, None]:
     """
-    Provides a FastAPI TestClient with database and supabase dependencies overriden.
+    Provides a FastAPI TestClient with the database dependencies overridden.
     """
     async def _get_session_override():
         yield session
-    
-    def _get_supabase_override():
-        return MagicMock()
 
     app.dependency_overrides[get_session] = _get_session_override
     app.dependency_overrides[get_db] = _get_session_override
-    app.dependency_overrides[get_supabase] = _get_supabase_override
     
     with TestClient(app) as client:
         yield client

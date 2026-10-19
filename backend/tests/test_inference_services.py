@@ -2,7 +2,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.api.routes.diarization.service import DiarizationAPIClient
 from app.api.routes.full.service import FullAPIClient
 from app.api.routes.transcription.service import TranscriptionAPIClient
 from app.api.routes.vad.service import VADAPIClient
@@ -77,29 +76,6 @@ async def test_vad_service_normalizes_local_split_payload():
             result = await api.analyze_bytes(b"audio", "clip.wav")
 
     assert result == {"speech_segments": [{"start": 0.0, "end": 1.25}]}
-
-
-@pytest.mark.asyncio
-async def test_diarization_service_normalizes_local_whisperx_payload():
-    with patch("app.api.routes.diarization.service.settings") as service_settings, patch(
-        "app.core.kaggle_client.settings"
-    ) as client_settings:
-        service_settings.WHISPERX_API_URL = "http://whisperx:8000"
-        client_settings.IS_LOCAL = True
-        api = DiarizationAPIClient()
-
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = {
-            "segments": [
-                {"start": 0.0, "end": 1.0, "text": "hello", "speaker": "SPEAKER_00"},
-                {"start": 1.0, "end": 2.0, "text": "world", "speaker": "SPEAKER_01"},
-            ]
-        }
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=resp):
-            result = await api.analyze_bytes(b"audio", "clip.wav")
-
-    assert result["segments"][0]["speaker"] == "SPEAKER_00"
-    assert result["segments"][1]["end"] == 2.0
 
 
 _TRANSCRIPTION = {
@@ -180,25 +156,6 @@ async def test_full_service_local_raises_when_emotion_service_fails():
 
 
 @pytest.mark.asyncio
-async def test_full_service_analyze_local_file_passes_segments(tmp_path):
-    audio = tmp_path / "clip.wav"
-    audio.write_bytes(b"RIFF")
-    client_patch, service_patch = _local_full_settings()
-    with client_patch, service_patch, patch(
-        "app.api.routes.full.service.transcription_client.analyze_local_file",
-        new_callable=AsyncMock,
-        return_value=_TRANSCRIPTION,
-    ), patch(
-        "app.api.routes.full.service.emotion_client.analyze_segments",
-        new_callable=AsyncMock,
-        return_value={"top_emotion": "neutral", "top_score": 0.9, "emotions": []},
-    ) as analyze_segments:
-        await FullAPIClient().analyze_local_file(str(audio))
-
-    assert analyze_segments.await_args.args == (b"RIFF", "clip.wav", _TRANSCRIPTION["segments"])
-
-
-@pytest.mark.asyncio
 async def test_emotion_client_analyze_segments_posts_segments_form_field():
     from app.api.routes.emotion.service import EmotionAPIClient
 
@@ -227,7 +184,6 @@ async def test_full_service_normalizes_remote_payload():
         service_settings.WHISPERX_API_URL = "http://whisperx:8000"
         client_settings.IS_LOCAL = False
         client_settings.KAGGLE_SERVER_URL = "https://kaggle.example.com"
-        client_settings.KAGGLE_NGROK_URL = ""
         api = FullAPIClient()
 
         resp = MagicMock(status_code=200)

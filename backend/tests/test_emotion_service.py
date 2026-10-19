@@ -17,7 +17,6 @@ def api():
         service_settings.EMOTION_API_URL = "http://local:8000"
         client_settings.IS_LOCAL = True
         client_settings.KAGGLE_SERVER_URL = "https://kaggle.example.com"
-        client_settings.KAGGLE_NGROK_URL = ""
         yield EmotionAPIClient()
 
 
@@ -46,7 +45,6 @@ async def test_analyze_bytes_normalizes_remote_payload(api):
     with patch("app.core.kaggle_client.settings") as client_settings:
         client_settings.IS_LOCAL = False
         client_settings.KAGGLE_SERVER_URL = "https://kaggle.example.com"
-        client_settings.KAGGLE_NGROK_URL = ""
         with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=resp):
             result = await api.analyze_bytes(b"audio", "clip.wav")
     assert result["top_emotion"] == "neutral"
@@ -60,7 +58,6 @@ def test_remote_url_and_headers_use_kaggle_endpoint():
         service_settings.EMOTION_API_URL = "http://local:8000"
         client_settings.IS_LOCAL = False
         client_settings.KAGGLE_SERVER_URL = "https://kaggle.example.com"
-        client_settings.KAGGLE_NGROK_URL = ""
         api = EmotionAPIClient()
         assert api.url == "https://kaggle.example.com/emotion"
         assert api.headers() == {"ngrok-skip-browser-warning": "true"}

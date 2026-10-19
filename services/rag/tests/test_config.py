@@ -104,16 +104,16 @@ class TestSettings:
 
 
 def test_resolve_model_for_stage_prefers_new_override(monkeypatch):
+    monkeypatch.setattr("config.settings.LLM_PROVIDER", "ollama_cloud")
     monkeypatch.setattr("config.settings.OLLAMA_MODEL_RAG_JUDGE", "ministral-3:8b")
     monkeypatch.setattr("config.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-default")
     assert resolve_model_for_stage("rag_judge") == "ministral-3:8b"
 
 
-def test_resolve_model_for_stage_uses_legacy_override(monkeypatch):
-    monkeypatch.setattr("config.settings.OLLAMA_MODEL_NLI_POLICY", "")
-    monkeypatch.setattr("config.settings.OLLAMA_NLI_MODEL", "legacy-nli")
-    monkeypatch.setattr("config.settings.OLLAMA_CLOUD_FAST_MODEL", "fast-default")
-    assert resolve_model_for_stage("nli_policy") == "legacy-nli"
+def test_legacy_stage_model_env_names_fill_new_fields(monkeypatch):
+    monkeypatch.delenv("OLLAMA_MODEL_NLI_POLICY", raising=False)
+    monkeypatch.setenv("OLLAMA_NLI_MODEL", "legacy-nli")
+    assert Settings(_env_file=None).OLLAMA_MODEL_NLI_POLICY == "legacy-nli"
 
 
 def test_resolve_model_for_stage_class_fallbacks(monkeypatch):
@@ -125,9 +125,9 @@ def test_resolve_model_for_stage_class_fallbacks(monkeypatch):
     assert resolve_model_for_stage("text_to_sql") == "heavy-default"
 
 
-def test_resolve_model_for_stage_rag_synthesis_preserves_legacy_default_for_groq(monkeypatch):
+def test_resolve_model_for_stage_uses_groq_model_on_groq(monkeypatch):
     monkeypatch.setattr("config.settings.LLM_PROVIDER", "groq")
-    monkeypatch.setattr("config.settings.OLLAMA_MODEL_RAG_SYNTHESIS", "")
+    monkeypatch.setattr("config.settings.OLLAMA_MODEL_RAG_SYNTHESIS", "ollama-only")
     monkeypatch.setattr("config.settings.groq.model", "llama-3.3-70b-versatile")
     assert resolve_model_for_stage("rag_synthesis") == "llama-3.3-70b-versatile"
 

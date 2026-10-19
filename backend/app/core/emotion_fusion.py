@@ -66,7 +66,7 @@ def infer_text_emotion_with_provider(text: str) -> tuple[str, float]:
     if settings.IS_LOCAL:
         base, headers = settings.EMOTION_API_URL, {}
     else:
-        base = settings.KAGGLE_SERVER_URL or settings.KAGGLE_NGROK_URL
+        base = settings.KAGGLE_SERVER_URL
         headers = {"ngrok-skip-browser-warning": "true"}
     if not base:
         raise TextEmotionUnavailable("Text emotion service URL is not configured.")

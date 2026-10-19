@@ -17,8 +17,6 @@ Fusion runs at read time in:
 | Caller | On `TextEmotionUnavailable` |
 |---|---|
 | `GET /api/v1/interactions/{id}` (per-utterance `textEmotion`, `textConfidence`, `fusedEmotion`, `fusedConfidence`, `fusionModel`) | Those fields are `null` and `emotionComparison` is `null` |
-| `GET /api/v1/interactions/{id}/emotion-comparison` | 503 |
-| `POST /api/v1/emotion/fuse` | 503 |
 | `_derive_llm_inputs` in `llm_trigger/service.py` (customer-level fused label for the emotion-shift chain) | `LLMUnavailableError` → `reasoning` stage fails |
 
 ## Fusion rule (`fuse_emotion_signals`)
