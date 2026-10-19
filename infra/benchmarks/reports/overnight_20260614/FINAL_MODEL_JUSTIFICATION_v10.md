@@ -1,5 +1,7 @@
 # Final Model Justification v10
 
+> Historical record (2026-06-14). The raw run files and scripts it links to were removed from the tree; recover them with `git checkout archive/pre-cleanup-2026-10-13 -- infra/benchmarks infra/scripts`.
+
 **Generated:** 2026-06-16 15:38 UTC  
 **Scope:** full-population `emotion_shift` (170) + `nli_policy` (172), 8 models
 **Source:** `D:\University\Grad\VocalMind\infra\benchmarks\reports\overnight_20260614\final_run_es_nli_8models_v10.json`  

@@ -176,9 +176,10 @@ storage/uploads/
 # ── Lockfiles & Build Info ──────────────────────────────────────────────
 uv.lock
 
-# ── Local CLI binaries (download separately; do not commit) ─────────────
-tools/supabase-cli/supabase.exe
-tools/supabase_windows_amd64.tar.gz
+# ── Generated reports ───────────────────────────────────────────────────
+infra/benchmarks/reports/*.json
+services/rag/reports/
+infra/scripts/session_export.json
 
 # ── Claude Code ─────────────────────────────────────────
 .claude/

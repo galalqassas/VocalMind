@@ -1,5 +1,7 @@
 # VocalMind — Final Benchmark Results & Model Selection
 
+> Historical record (2026-06-14). The raw run files and scripts it links to were removed from the tree; recover them with `git checkout archive/pre-cleanup-2026-10-13 -- infra/benchmarks infra/scripts`.
+
 **Generated:** 2026-06-16  
 **Audience:** Defense / presentation — shows full model exploration path and final winner stack  
 **Data sources:** Ground-truth re-scoring on merged lane + targeted retry checkpoints (`v19` lanes, `v20`/`v21` retries)
@@ -564,7 +566,6 @@ Triage config: `infra/benchmarks/model_triage_v1.json`
 | [FINAL_MODEL_JUSTIFICATION_v10.md](FINAL_MODEL_JUSTIFICATION_v10.md) | 8-model ES/NLI comparison tables |
 | [targeted_retry_delta_v20.csv](targeted_retry_delta_v20.csv) | v20 before/after delta |
 | [targeted_retry_run_v21.json](targeted_retry_run_v21.json) | Final targeted retry output |
-| [presentation_findings.md](../../../presentation_findings.md) | Defense slide evidence pack |
 
 ---
 

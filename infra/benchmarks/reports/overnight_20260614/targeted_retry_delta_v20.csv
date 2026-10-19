@@ -1,7 +1,0 @@
-stage,old_exact,new_exact,delta,total
-emotion_shift,65.9,69.4,+3.5,170
-fast_classification,67.5,67.5,+0.0,154
-nli_policy,71.5,74.4,+2.9,172
-process_adherence,56.2,57.5,+1.3,153
-rag_judge,92.7,96.0,+3.3,150
-text_to_sql,74.0,74.0,+0.0,50

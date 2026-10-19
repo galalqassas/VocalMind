@@ -35,13 +35,13 @@ Synthesis knobs that move the scores: `SYNTHESIS_PROMPT_MODE` (`safe` admits mis
 
 ## Outputs and thresholds
 
-Reports: `services/rag/reports/ragas_<mode>_<YYYYMMDD_HHMMSS>.json` with `timestamp`, `mode`, `org_filter`, `total_samples`, `metrics`, `per_sample`, `duration_seconds`.
+Reports (gitignored): `services/rag/reports/ragas_<mode>_<YYYYMMDD_HHMMSS>.json` with `timestamp`, `mode`, `org_filter`, `total_samples`, `metrics`, `per_sample`, `duration_seconds`.
 
 `full` mode prints PASS/FAIL against the `ragas` section of `infra/benchmarks/schema/thresholds.json` (`min_faithfulness` 0.7, `min_answer_relevancy` 0.7, `min_context_precision` 0.6, `min_context_recall` 0.6, `min_answer_correctness` 0.6). It does not change the exit code; `reference-free` mode does not check thresholds.
 
 ## Results
 
-Latest committed run: `services/rag/reports/ragas_reference_free_20260620_121710.json` — `reference-free`, org `nexalink`, 30 samples.
+Last recorded run (2026-06-20): `reference-free`, org `nexalink`, 30 samples.
 
 | Metric | Score |
 |---|---|
