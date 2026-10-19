@@ -1,108 +1,79 @@
-# VocalMind Frontend Architecture & Component Guide
+# Frontend Architecture
 
-The VocalMind frontend is a React 18 Single Page Application (SPA) built using **Vite** for bundling, **Tailwind CSS v4** for styling utilities, **Material UI (MUI)** for complex UI tables and charts, and **Radix UI** primitives for accessible components (implemented via shadcn/ui wrappers).
+React 18 SPA built with Vite 6, Tailwind v4, MUI 7 and Radix (shadcn/ui wrappers), routed with react-router 7. For setup, commands and env vars, see [frontend/README.md](../../frontend/README.md).
 
-This document serves as the guide for the frontend directory layout, routing system, API connection layer, and key interface components.
+## Layout (`frontend/src/`)
 
----
+| Path | Contents |
+|---|---|
+| `main.tsx` | Mounts `App` and imports `styles/index.css` |
+| `app/App.tsx` | `ThemeProvider` → `AuthProvider` → `RouterProvider`, plus the `sonner` toaster |
+| `app/routes.tsx` | Route table (below) |
+| `app/contexts/` | `AuthContext` (current user, login/logout), `ThemeContext` (light/dark, stored under `vocalmind-theme` in `localStorage`) |
+| `app/services/api.ts` | Typed fetch client for `/api/v1` and the offline demo store |
+| `app/services/feedbackLoop.ts` | Notifications, review queue, agent disputes, manager corrections |
+| `app/pages/Login.tsx` | Email/password login; redirects by role |
+| `app/components/manager/` | Manager pages and session-detail panels |
+| `app/components/agent/` | Agent pages, `FlagButton` (dispute UI) |
+| `app/components/notifications/` | `NotificationBell` (polls every 30 s), `NotificationsPage` |
+| `app/components/shared/` | `SyncedPlaybackConsole` (audio player + timeline markers), `ImageWithFallback` |
+| `app/components/layouts/` | `ManagerLayout`, `AgentLayout`, `UserNav` |
+| `app/components/ui/` | shadcn/Radix wrappers plus `RouteErrorBoundary` and `UnderDevelopment`. Only some are used; many are unused generator output. |
+| `app/utils/` | `authRouting`, `interactionFormat`, `utteranceNavigation`, `evidenceDisplay` |
+| `app/data/` | Offline demo and test fixture data (see below) |
+| `tests/` | Vitest specs (13 files) |
 
-## 1. Directory Structure
+## Routes (`app/routes.tsx`)
 
-```text
-frontend/
-├── src/
-│   ├── main.tsx           # Application root entry point
-│   ├── vite-env.d.ts      # Vite TypeScript environment definitions
-│   ├── styles/            # Global styling, Tailwind imports, and fonts
-│   ├── app/
-│   │   ├── App.tsx        # Integrates AuthProvider, ThemeProvider, and Router
-│   │   ├── routes.tsx     # Centralized react-router v7 path mappings
-│   │   ├── contexts/      # AuthContext and ThemeContext state managers
-│   │   ├── data/          # sessionExportBundle.ts — bundled session export for offline demo mode
-│   │   ├── services/
-│   │   │   └── api.ts     # The 60KB typed API client and fetch wrapper
-│   │   ├── components/
-│   │   │   ├── layouts/   # ManagerLayout and AgentLayout sidebar structures
-│   │   │   ├── ui/        # 48 reusable shadcn wrapper components
-│   │   │   ├── manager/   # Manager portal detail pages and dashboard
-│   │   │   ├── agent/     # Agent portal coaching pages and dashboard
-│   │   │   └── shared/    # Audio players and common visual cards
-│   │   └── pages/
-│   │       └── Login.tsx  # Central login portal
-```
+Every route under `/manager` and `/agent` is wrapped in `ProtectedRoute`, which redirects to `/` when there is no session. `RoleRoute` then sends a user with the wrong role to their own dashboard.
 
----
+| Path | Component |
+|---|---|
+| `/` | `Login` (public) |
+| `/login` | Redirects to `/` |
+| `/manager` | `ManagerDashboard` |
+| `/manager/inspector` | `SessionInspector` |
+| `/manager/inspector/:id` | `SessionDetail` |
+| `/manager/reviews` | `ReviewQueue` |
+| `/manager/notifications` | `NotificationsPage` |
+| `/manager/assistant` | `ManagerAssistant` |
+| `/manager/knowledge` | `KnowledgeBase` (with a `KnowledgeVersions` tab) |
+| `/manager/settings` | `ManagerSettings` |
+| `/agent` | `AgentDashboard` |
+| `/agent/calls` | `AgentCalls` |
+| `/agent/calls/:id` | `AgentCallDetail` |
+| `/agent/notifications` | `NotificationsPage` |
+| `/agent/settings` | `SettingsPage` |
+| `/manager/*`, `/agent/*`, `*` | `UnderDevelopment` |
 
-## 2. Routing System (`routes.tsx`)
+## Auth and API client
 
-VocalMind utilizes `react-router` v7 to enforce path configurations, guarding agent and manager portals via a custom `ProtectedRoute.tsx` wrapper:
+- `loginWithEmail` posts to `/auth/login/access-token`. The backend sets an HttpOnly cookie, and the client also copies the token to `sessionStorage` (`vm_access_token`) and sends it as `Authorization: Bearer` for requests where the cookie is not sent.
+- `AuthContext` stores a `vm_auth_cookie_hint` flag in `localStorage`. When the flag is set at startup, it calls `getUserMe()` to restore the session.
+- `apiFetch` always sends `credentials: "include"`. `getInteractionDetail` caches results for 15 s.
+- API base: see `VITE_API_URL` in [frontend/README.md](../../frontend/README.md#environment-variables).
 
-| Path | View Component | Role Required | Description |
-| :--- | :--- | :--- | :--- |
-| `/` | `LandingPage` | None | Landing description of the platform. |
-| `/login` | `Login` | None | Multi-tenant auth entry screen. |
-| **`/manager`** | `ManagerLayout` | **manager** | Parent wrapper with manager sidebar menu. |
-| ├── `(index)` | `ManagerDashboard` | manager | Rolls up overall KPIs and leaderboard. |
-| ├── `/inspector` | `SessionInspector` | manager | Searchable call table with reprocessing/filters. |
-| ├── `/inspector/:id` | `SessionDetail` | manager | Comprehensive call transcription & explainability detail. |
-| ├── `/reviews` | `ReviewQueue` | manager | Queue of pending agent compliance & emotion disputes. |
-| ├── `/notifications` | `NotificationsPage` | manager | Pull-based notifications dashboard for evaluations & disputes. |
-| ├── `/assistant` | `ManagerAssistant` | manager | NL-to-SQL conversational query agent. |
-| ├── `/knowledge` | `KnowledgeBase` | manager | PDF ingestion, active rules lists, and FAQ editing. |
-| ├── `/settings` | `ManagerSettings` | manager | Organization status and general configs. |
-| **`/agent`** | `AgentLayout` | **agent** | Parent wrapper with agent sidebar menu. |
-| ├── `(index)` | `AgentDashboard` | agent | Personal score trends and summary metrics. |
-| ├── `/calls` | `AgentCalls` | agent | List of calls processed for this agent. |
-| ├── `/calls/:id` | `AgentCallDetail` | agent | Personal call transcript review and coaching triggers. |
-| ├── `/notifications` | `NotificationsPage` | agent | Pull-based notifications dashboard for coaching and flags. |
-| ├── `/settings` | `SettingsPage` | agent | Personal user profile configurations. |
+## Offline demo mode
 
----
+When `VITE_USE_OFFLINE_DEMO=true` (and Cypress is not running), the read and write functions in `api.ts` and `feedbackLoop.ts` stop calling the backend. They use an in-memory store that persists to `sessionStorage` and is seeded from:
 
-## 3. Global State Managers (`contexts/`)
+- `app/data/sessionExportBundle.ts`: dashboard stats, policies, FAQs, KB, agents and assistant history. It re-exports the interaction data below.
+- `app/data/processedSessionExport.ts`: NexaLink CALL_01–CALL_20 interaction records and details.
 
-*   **`AuthContext`**: Manages user authentication state. On login success, stores credentials in a session and sets the Authorization Bearer token. Persists user configurations inside `sessionStorage` to allow reload preservation. Integrates HttpOnly cookie sync mechanisms for API endpoints.
-*   **`ThemeContext`**: Stores visual theme configurations (Light vs Dark mode), inserting appropriate `.dark` classes to enable Tailwind's dark utility styling.
+Both files are generated by `infra/scripts/build_session_export.py`. `app/data/e2eFixtureSamples.ts` is used only by the Cypress API stubs.
 
----
+## Session detail (manager and agent)
 
-## 4. The API Client Service (`services/api.ts`)
+`SessionDetail` and `AgentCallDetail` share the same building blocks:
 
-The API client orchestrates REST calls to the backend (`http://localhost:8000/api/v1`), adding Bearer tokens in headers. 
+- `SyncedPlaybackConsole`: audio playback with timeline markers. Selecting a transcript turn seeks the audio.
+- `AnalysisTabs`: Emotion, Process, Policy and Quality tabs (Quality shows audio/text/fused agreement rates). In the manager view, `ManagerCorrectionSheet` edits emotion and compliance verdicts directly. In the agent view, `FlagButton` files disputes.
+- `EvidenceAnchoredExplainabilityPanel`: trigger-attribution and claim-provenance cards, with jump-to-timestamp buttons. Field contract: [EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md](../explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md).
 
-### 4.1 Offline Demo Mode (opt-in)
+`EmotionComparisonPanel.tsx` exists and has a test, but no page renders it.
 
-For serverless preview builds or local UI work without a backend, `api.ts` supports an opt-in offline mode controlled by environment flags:
+## Conventions
 
-*   `VITE_USE_OFFLINE_DEMO` / `VITE_USE_OFFLINE_AUTH`: When set to `"true"`, the client routes requests through a client-side in-memory store backed by `sessionExportBundle.ts`, persisted via `sessionStorage`. **Default (unset or false): live API / Supabase-backed backend.**
-
-### 4.2 Key Exported Functions
-*   `getDashboardStats()`: Retrieves organizational averages.
-*   `getInteractions()`: Fetches the searchable list of call records.
-*   `getInteractionDetail(id)`: Fetches a single call transcript, diarization segments, and coaching triggers. Caches results for 15 seconds to minimize request overhead on navigation.
-*   `sendAssistantQuery(text)`: Posts natural language queries, retrieving the text response and database rows.
-*   `uploadPolicyDocument(file)`: Uploads policy PDFs to initiate ingest.
-*   `togglePolicy(id)` / `toggleFaq(id)` / `toggleKB(id)`: Controls RAG context availability.
-
----
-
-## 5. Evidence-Anchored Explainability UI Components
-
-Surfancing LLM evaluation verdicts requires highly specialized interactive components on the manager details page:
-
-### 5.1 `EvidenceAnchoredExplainabilityPanel.tsx`
-Renders the diagnostic Evidence Cards beneath the audio playback controls:
-*   **Trigger Attributions**: Renders orange/amber warning cards mapping flagged triggers (e.g. *Customer Escalation*, *Policy Deviation*) to the specific transcript utterance.
-*   **Retrieval Provenance**: Renders information cards linking RAG compliance verdicts to their specific chunk. Surfaces the matching similarity confidence percentage. Surfaces Knowledge Base queries using distinct indigo styling to differentiate them from the compliance colors.
-*   **Audio Jump Interaction**: Hooks call click events on cards to target the audio playback element, jumping the playhead directly to `jump_to_seconds` and blinking the corresponding transcript turn.
-
-### 5.2 `EmotionComparisonPanel.tsx`
-Plots comparative charts mapping the acoustic emotion predictions against text-based predictions. Visualizes mismatch boundaries to identify where agent sarcasm or passive-aggression occurred.
-
----
-
-## 6. Development & Quality Guidelines
-
-*   **Responsive layouts**: Sidebars collapse to mobile layouts. Flex grids automatically adapt tables to narrower viewports.
-*   **Shadcn/Radix Wrapper Usage**: All modals, popovers, tooltips, and drop menus must use Radix-wrapped components in `components/ui/` to ensure accessibility and consistent theme transitions.
-*   **Unit Tests**: Located under `src/tests/` (e.g., `SessionDetail.test.tsx`), verifying UI updates with stubbed API responses using Vitest.
+- Use the `@/` import alias, which maps to `src/`.
+- Build modals, popovers, tooltips and menus from the Radix wrappers in `components/ui/`.
+- Unit tests stub `api.ts` and `AuthContext` with `vi.mock`. See `tests/SessionDetail.test.tsx` for the pattern.

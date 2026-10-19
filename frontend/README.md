@@ -1,75 +1,41 @@
 # VocalMind Frontend
 
-Manager and agent web UI for VocalMind, built with React 18, Vite, Tailwind v4, MUI, and Radix UI.
+React 18 + Vite 6 SPA (Tailwind v4, MUI 7, Radix/shadcn wrappers, react-router 7) for managers and agents. Code layout and routes: [docs/frontend/FRONTEND_ARCHITECTURE.md](../docs/frontend/FRONTEND_ARCHITECTURE.md).
 
-## Main Areas
+## Package manager
 
-1. Manager dashboard and session inspector
-2. Call detail pages with transcript playback and evaluation panels
-3. Knowledge-base management
-4. Assistant and agent-facing workflows
+Use **pnpm 10** (CI pins `version: 10` in `.github/workflows/frontend.yml`). Do not use npm or yarn; they bypass `pnpm-lock.yaml`.
 
-## Explainability UI
+## Commands (run in `frontend/`)
 
-The manager session-detail page now includes the Evidence-Anchored Explainability panel.
+| Command | Purpose |
+|---|---|
+| `pnpm install` | Install dependencies (`make fe-install`) |
+| `pnpm run dev` | Dev server on :3000 (`make fe-dev`) |
+| `pnpm run build` | `tsc -b && vite build` (`make fe-build`) |
+| `pnpm run preview` | Serve the build on :3000 |
+| `pnpm run lint` | `tsc --noEmit` (`make fe-lint`) |
+| `pnpm run test` | Vitest unit tests, `src/tests/` (13 files) |
+| `pnpm run test:coverage` | Vitest with coverage (`make fe-test-cov` from repo root) |
+| `pnpm run cy:run` / `cy:open` | Cypress, `cypress/e2e/` (14 specs); needs `preview` running on :3000 |
 
-It renders:
+From the repo root:
 
-1. Span-Level Trigger Attribution cards
-2. Retrieval Provenance Scoring cards
-3. Timestamp jump actions that sync cards back to audio playback
+- `make fe-test` builds, starts `preview`, and runs Cypress. E2E always runs against a build, never the dev server.
+- `make fe-e2e-cov` builds with `CYPRESS_COVERAGE=true` (istanbul), runs Cypress against `preview` on :3005, and writes `frontend/coverage/index.html`.
 
-See **[Evidence-Anchored Explainability Layer](../docs/explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md)** for the full feature contract.
+Cypress stubs every API call with `cy.intercept` (`cypress/support/e2eApiFixtures.ts`, data in `src/app/data/e2eFixtureSamples.ts`), so no backend is needed.
 
-## Development
+## Environment variables
 
-Install dependencies:
+| Variable | Effect |
+|---|---|
+| `VITE_API_URL` | Unset: calls `http://localhost:8000/api/v1`. Empty string: same-origin `/api/v1` through the Vite proxy (compose default; works through ngrok on :3000). |
+| `VITE_DEV_PROXY_TARGET` | Vite proxy target for `/api` (default `http://backend:8000`). |
+| `VITE_USE_OFFLINE_DEMO` | `true` serves bundled demo data instead of the API (see the architecture doc). Ignored under Cypress. |
+| `VITE_USE_OFFLINE_AUTH` | `true` enables hardcoded demo logins in `loginWithEmail` (`src/app/services/api.ts`). Ignored under Cypress. |
 
-```bash
-pnpm install
-```
+## Build notes
 
-Start the dev server:
-
-```bash
-pnpm run dev
-```
-
-Type-check:
-
-```bash
-pnpm run lint
-```
-
-Run tests:
-
-```bash
-pnpm run test
-```
-
-## Testing & Coverage
-
-VocalMind uses **Cypress** for E2E testing and **Vitest** for unit testing. 
-
-### E2E Code Coverage
-Instrumentation is handled via `babel-plugin-istanbul` during the production build. To run E2E tests with coverage reporting:
-
-```bash
-# From the repository root
-make fe-e2e-cov
-```
-
-This generates an HTML report in `frontend/coverage/index.html`.
-
-## Relevant Files
-
-1. `src/app/components/manager/SessionInspector.tsx`
-2. `src/app/components/manager/SessionDetail.tsx`
-3. `src/app/components/manager/EvidenceAnchoredExplainabilityPanel.tsx`
-4. `src/app/services/api.ts`
-
-## Targeted UI Tests
-
-1. `src/tests/SessionInspector.test.tsx`
-2. `src/tests/SessionDetail.test.tsx`
-3. `src/tests/LLMTriggerSections.test.tsx`
+- `vite.config.ts` splits vendor chunks with `manualChunks` (mui, recharts, lucide, radix, other). Keep new heavy dependencies in a named chunk.
+- `vercel.json` rewrites all paths to `index.html` for SPA routing.

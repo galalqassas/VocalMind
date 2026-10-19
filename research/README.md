@@ -1,24 +1,16 @@
-# 📓 Research Experiments
+# Research
 
-This directory contains Jupyter notebooks and experimental scripts from VocalMind's research phase. These are **not production code** — they are reference implementations and exploratory work.
+Notebooks and scripts from the research phase. Nothing here is imported or run by the application.
 
-## Experiments
+| Directory | Contents |
+|---|---|
+| `asr/` | WhisperX ASR experiments (`automatic-speech-recognition.ipynb`) |
+| `diarization/` | Speaker diarization experiments (`speaker diarization.ipynb`) |
+| `Evaluation/` | Diarization error rate evaluation (`DER eval.ipynb`) |
+| `emotion/` | Speech and text emotion model comparisons (4 notebooks) |
+| `finetuning/` | LLM LoRA fine-tuning experiment on Kaggle (`finetuning v0.1.ipynb`) |
+| `speech-pipeline/` | Combined ASR → diarization → emotion prototype (`pipeline_experiment.py`) |
+| `training/` | `customerAgentClassifier.ipynb`: trains agent/customer utterance classifiers on TF-IDF features and logs the runs to MLflow (DagsHub). A final cell downloads the best logistic-regression run and saves `model.pkl` + `vectorizer.pkl` to the working directory. Copy both into `backend/app/core/`, where `interaction_processing.py` loads them. |
+| `voice-gen/` | TTS scripts used to generate synthetic calls |
 
-| Directory          | Description                               | Key Files                                             |
-| :----------------- | :---------------------------------------- | :---------------------------------------------------- |
-| `asr/`             | Automatic Speech Recognition (WhisperX)   | `automatic-speech-recognition.ipynb`                  |
-| `diarization/`     | Speaker Diarization (pyannote, NeMo)      | `speaker diarization.ipynb`                           |
-| `emotion/`         | Emotion Recognition from speech & text    | 4 notebooks comparing different approaches            |
-| `voice-gen/`       | Voice synthesis / TTS experiments         | `voice_generation.py`, `voice_generation_overlap.py`  |
-| `speech-pipeline/` | Full ASR → Diarization → Emotion pipeline | `pipeline_experiment.py` (consolidated final version) |
-| `training/`        | Customer vs. Agent utterance classification | `customerAgentClassifier.ipynb` (includes MLflow logging & metaheuristic hyperparameter tuning) |
-
-## Running Notebooks
-
-```bash
-cd research
-pip install jupyterlab
-jupyter lab
-```
-
-> **Note:** Some notebooks require GPU access and specific model downloads. Check each notebook's setup cells for requirements.
+Run the notebooks in your own environment (`pip install jupyterlab && jupyter lab`). Some need a GPU and model downloads.

@@ -1,163 +1,52 @@
 # RAG Overview
 
-## Purpose
+Retrieval layer that grounds LLM-trigger verdicts in organization policy, SOP, and knowledge-base documents. Service code: `services/rag/` (runbook: [services/rag/README.md](../../services/rag/README.md)). Ingestion: [INGESTION_PIPELINE.md](INGESTION_PIPELINE.md). Evaluation: [RAGAS_EVALUATION.md](RAGAS_EVALUATION.md).
 
-The RAG service is the **retrieval layer** of VocalMind's three-component pipeline:
+## Document types
 
-1. **RAG (this service)** — retrieval-only: parses, indexes, and retrieves document chunks
-2. **Policy Compliance Evaluator** — transcript-level compliance judge/report generator (in `backend/app/llm_trigger/service.py`)
-3. **NLI Policy Check** — single-claim policy alignment check used inside the LLM Trigger pipeline
-
-The RAG service itself combines:
-1. Docling PDF parsing
-2. Local embeddings (Ollama)
-3. Qdrant vector search (dual collections)
-4. LLM synthesis for standalone query mode (Ollama Cloud in production; Groq fallback)
-
-It also feeds the Evidence-Anchored Explainability Layer used in manager call review.
-
-## Key Concepts
-
-1. Three document types
-- **Policy** (`policy-docs/`): compliance rules and standards
-- **SOP** (`sop-procedures/`): step-by-step operational procedures
-- **Knowledge Base** (`knowledge-base/`): factual reference material for claim validation
-
-2. Mixed-granularity indexing
-- Policy documents: both parent (full sections) and child (compact snippets) collections
-- SOP and KB documents: parent collection only (header-level sections, no child splitting)
-
-> **Design rationale.** Parents are large H1/H2/H3 sections — the whole rule, fee
-> table, or escalation step. Children are 400-char recursive splits with 80-char
-> overlap — narrow, semantically targeted spans. Granularity is chosen by the
-> *consumer's* need, not by document type:
->
-> | Consumer | Needs | Collection used |
-> |---|---|---|
-> | Policy compliance evaluator (transcript-level) | The full rule with all conditions, exceptions, and obligations | **policy parents** (`QDRANT_COLLECTION_PARENTS`) |
-> | NLI policy check (single claim → policy) | A focused policy clause, self-contained, to NLI against | **policy parents** |
-> | Process adherence (SOP) | Full procedure step block | **SOP parents** (`QDRANT_COLLECTION_SOP_PARENTS`) |
-> | KB lookup (claim validation) | Reference fact passage | **SOP parents** (KB shares the parents-only collection) |
-> | Manager-assistant Q&A / answer synthesis | Precise span to quote in the answer | **policy children** (`collection_children`) |
->
-> Only policy documents need dual granularity: judge with the wide section, answer
-> with the narrow span. SOP and KB are never used for free-form Q&A — they're
-> always retrieved as a whole procedure or fact card — so we skip the child split
-> for them entirely.
-
-3. Per-organization isolation
-- Documents are discovered by org folder under `storage/docs/{org}`
-- Retrieval can be filtered by org metadata
-
-4. Query modes
-- Compliance / NLI / SOP / KB → **parent** collections (broader context the judge needs to reason against the whole rule).
-- Answer synthesis (manager-assistant) → **policy children** (precise span to quote back to the user).
-
-5. Retrieval provenance
-- Retrieved chunks can be surfaced with similarity, reference path, and lightweight verdict metadata.
-- Interaction detail pages expose this through `claimProvenance`.
-- The standalone RAG route exposes `retrieval_provenance`.
-
-## Main Runtime Components
-
-1. `services/rag/query_engine.py`
-- Embeds query text via Ollama (with `/api/embed` and `/api/embeddings` fallback)
-- Queries Qdrant with optional org filter
-- Synthesizes final response via LlamaIndex (Ollama Cloud in production; Groq fallback)
-- Logs query traces in `services/rag/logs`
-
-2. `services/rag/evaluator.py`
-- Structured scoring helpers for compliance and answer quality
-
-3. `services/rag/config.py`
-- Central settings for model, endpoints, collections, and paths
-
-4. `backend/app/api/routes/rag.py`
-- Wraps RAG results for the frontend API.
-- Returns `retrieval_provenance` on `/api/v1/rag/query`.
+| Folder under `storage/docs/{org}/` | `doc_type` | Indexed into |
+|---|---|---|
+| `policy-docs/` (and org-root PDFs when no typed folder exists) | `policy` | `vocalmind_parents` + `vocalmind_children` |
+| `sop-procedures/`, legacy `faq-docs/` | `sop` | `vocalmind_sop_parents` |
+| `knowledge-base/`, legacy `kb/` | `kb` | `vocalmind_sop_parents` |
 
 ## Collections
 
-1. Policy Parents
-- Name: `vocalmind_parents` (default, config: `QDRANT_COLLECTION_PARENTS`)
-- Content: larger policy sections (H1/H2/H3 header splits)
-- Usage: policy-level interpretation and consistency checks
+| Collection (env var) | Content | Used by |
+|---|---|---|
+| `vocalmind_parents` (`QDRANT_COLLECTION_PARENTS`) | Policy sections split on H1/H2/H3 | NLI policy context and claim cards (`PolicyRetriever`), `PolicyComplianceEvaluator`, `/api/v1/rag/query` mode `compliance` |
+| `vocalmind_children` (`QDRANT_COLLECTION_CHILDREN`) | Policy children: one atomic chunk per rule-table row, other tables kept whole, free text split 400 chars / 80 overlap | `/api/v1/rag/query` mode `answer`, `AnswerCorrectnessEvaluator`, `main.py -q`, RAGAS Q&A queries |
+| `vocalmind_sop_parents` (`QDRANT_COLLECTION_SOP_PARENTS`) | SOP and KB sections (parents only) | Process-adherence SOP context (`SOPRetriever`, `doc_type=sop`); `KBRetriever` (`doc_type=kb`) |
 
-2. Policy Children
-- Name: `vocalmind_children` (default, config: `collection_children`)
-- Content: shorter precision snippets (recursive 400-char splits)
-- Usage: pinpoint factual grounding for answer checks
+Rule: parents when the consumer needs the whole rule or procedure; children when it needs a short span to quote. Vectors: `snowflake-arctic-embed2`, 1024-d, cosine.
 
-3. SOP + KB Parents
-- Name: `vocalmind_sop_parents` (default, config: `QDRANT_COLLECTION_SOP_PARENTS` / `collection_sop_parents`)
-- Content: SOP procedure sections and Knowledge Base reference chunks (header-level splits only, no child collection)
-- Usage: process-adherence checks (doc_type="sop") and claim validation lookups (doc_type="kb")
+## Retrieval paths
 
-> **Note:** SOP and KB documents are NOT split into a separate children collection. Only policy documents have both parent and child granularity.
+**Backend** (`backend/app/llm_trigger/retrieval.py`): embeds via Ollama (`/api/embed`, fallback `/api/embeddings`; Ollama Cloud `/embeddings` when `OLLAMA_CLOUD_EMBED_ENABLED=true`), queries Qdrant with filters `org` + `doc_type`, and drops any chunk without `doc_type`. No reranking. SOP context prefers manual org files over Qdrant and policy context prefers Qdrant over DB policies — see [LLM_TRIGGER_FEATURE_GUIDE.md](../llm_trigger/LLM_TRIGGER_FEATURE_GUIDE.md#orchestration-evaluate_interaction_triggers).
 
-## Directory Layout (Current)
+**RAG service** (`services/rag/query_engine.py`, `RAGQueryEngine`):
 
-1. Source docs
-- `storage/docs/{org}/policy-docs/*.pdf`
-- `storage/docs/{org}/sop-procedures/*.pdf`
-- `storage/docs/{org}/knowledge-base/*.pdf`
+1. Optional HyDE expansion (`HYDE_ENABLED`, default off).
+2. Qdrant query filtered by `org` (+ `doc_type` when given; retried without `doc_type` if empty), fetching `RERANK_CANDIDATE_K` (20) candidates when `RERANK_ENABLED` (default on).
+3. Cross-encoder rerank (`reranker.py`, `BAAI/bge-reranker-v2-m3`) to `similarity_top_k` (3); falls back to dense order if the model cannot load. `RERANK_MIN_SCORE` defaults to −1000 (no cut).
+4. Optional synthesis (LlamaIndex, `response_mode=compact`) for `query()`, `query_compliance()`, `query_answer()`; `retrieve_*_context()` skip it.
 
-2. Parsed markdown outputs
-- `storage/docs/{org}/parsed-docs/policies/*.md` (policy docs)
-- `storage/docs/{org}/parsed-docs/sops/*.md` (SOP docs)
-- `storage/docs/{org}/parsed-docs/kb/*.md` (knowledge base docs)
+Synthesis LLM: `SYNTHESIS_BASE_URL` (any OpenAI-compatible endpoint) if set; else Ollama Cloud with the `rag_synthesis` stage model (`OLLAMA_MODEL_RAG_SYNTHESIS` or `OLLAMA_CLOUD_FAST_MODEL`) when `LLM_PROVIDER=ollama_cloud`; else Groq `LLM_MODEL`. `SYNTHESIS_PROMPT_MODE` = `safe` (default; admits missing context) or `assertive`.
 
-3. Pipeline report
-- `storage/docs/_pipeline_report.json`
+`backend/app/api/routes/rag.py` imports `RAGQueryEngine` from the `services/rag` mount (`/app/rag` in compose) and exposes `GET /api/v1/rag/health` and `POST /api/v1/rag/query` (adds `retrieval_provenance`; see [explainability](../explainability/EVIDENCE_ANCHORED_EXPLAINABILITY_LAYER.md#api-surface)).
 
-## Config Summary
+## Tenancy and prompt safety
 
-1. `DOCS_DIR`
-- Base source root (default: `storage/docs`)
+- Every query filters on payload `org`, which ingestion sets to the org folder name (slug). Missing org → `__missing_org_scope__` (no results).
+- `services/rag/prompt_safety.py`: `sanitize_prompt_text` neutralizes role prefixes and code fences and truncates; `with_injection_guard` appends `INJECTION_GUARD` to synthesis questions. The evaluators sanitize transcript, answer, and context text.
 
-2. `PARSED_DIR`
-- Base output root for parsed markdown + pipeline report (default: `storage/docs`)
+## Known issues
 
-3. `QDRANT_URL`
-- Vector DB endpoint
+- `POST /api/v1/rag/query` passes `str(current_user.organization_id)` (a UUID) as `org_filter`, but points are tagged with the org slug, so it returns no chunks.
+- `retrieve_kb_chunks` / `KBRetriever` is defined but has no caller; KB documents are not used for claim validation at runtime.
+- Toggling or deleting a policy in the Knowledge Base UI does not remove its Qdrant points (see [KNOWLEDGE_BASE_MANAGEMENT.md](../operations/KNOWLEDGE_BASE_MANAGEMENT.md)).
+- The manager assistant is text-to-SQL only; it does not query the children collection.
 
-4. `OLLAMA_BASE_URL` / `EMBEDDING_MODEL`
-- Embedding provider settings
+## Tests
 
-5. `GROQ_API_KEY`
-- LLM synthesis provider
-
-## Typical Flow
-
-1. Ingestion parses PDFs and indexes vectors (policies → `vocalmind_parents`, SOPs/KB → `vocalmind_sop_parents`)
-2. Query engine retrieves relevant chunks
-3. The configured LLM provider (Ollama Cloud in production; Groq fallback) synthesizes the response from retrieved context
-4. Retrieval provenance is attached for explainability and auditability
-5. Logs and timing are stored for auditability
-
-## Relationship to LLM Trigger Pipeline
-
-The LLM trigger pipeline consumes RAG retrieval through dedicated retrievers:
-
-1. `SOPRetriever` — queries `vocalmind_sop_parents` with doc_type="sop" for process-adherence analysis
-2. `PolicyRetriever` — queries `vocalmind_parents` with doc_type="policy" for NLI policy checks
-3. `KBRetriever` — queries `vocalmind_sop_parents` with doc_type="kb" for claim validation lookups
-
-The RAG service itself does not perform compliance evaluation — it provides the retrieval substrate that the Policy Compliance Evaluator and NLI Policy Check consume.
-
-## Testing
-
-Primary tests:
-1. `services/rag/tests/test_ingest.py`
-2. `services/rag/tests/test_query_engine.py`
-3. `services/rag/tests/test_evaluator.py`
-4. `services/rag/tests/test_config.py`
-5. `backend/tests/test_interactions_llm_triggers.py`
-6. `backend/tests/test_sop_retrieval.py`
-
-Run:
-
-```bash
-cd services/rag
-uv run pytest tests/ -v
-```
+`make rag-test` (`services/rag/tests/`: `test_config.py`, `test_ingest.py`, `test_query_engine.py`, `test_evaluator.py`, `test_ragas_eval.py`); backend: `backend/tests/test_sop_retrieval.py`.

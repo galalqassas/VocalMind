@@ -1,140 +1,108 @@
-# VocalMind Configuration & Environment Variables
+# Backend Configuration
 
-This document provides a detailed reference for all configuration variables supported by the VocalMind backend.
+The source of truth is `Settings` in `backend/app/core/config.py`. This page lists only the settings that change behaviour. For every field, read `config.py`; for templates, see `backend/.env.example` and the root `.env.example`.
 
----
+## How values are resolved (later sources win)
 
-## 1. Environment Reference Dictionary
+1. **Default** in `config.py`.
+2. **`backend/.env`**, copied from `backend/.env.example`. Pydantic reads `.env` relative to the working directory, so this only applies when the backend runs from `backend/`.
+3. **Process environment.** It always beats `.env`. Under Docker Compose:
+   - the container loads `env_file: ./.env` and then `./backend/.env` (`backend/.env` wins on duplicates);
+   - the `environment:` block in `docker-compose.yml` wins over both;
+   - `${VAR:-default}` inside `docker-compose.yml` is interpolated from the shell or the root `.env`, never from `backend/.env`;
+   - compose sets no `DATABASE_URL`, so `backend/.env` must use `db:5432` (or Supabase) for the containerized backend. `localhost:5434` only works from the host.
 
-VocalMind reads settings from `backend/.env` using Pydantic `BaseSettings`. Below is the complete dictionary of variables:
+Values that differ by layer:
 
-### 1.1 Core App & Security Settings
-*   **`PROJECT_NAME`** (string): Defaults to `"VocalMind API"`. Displays in OpenAPI docs.
-*   **`VERSION`** (string): Defaults to `"1.0.0"`. Exposes application version.
-*   **`API_V1_STR`** (string): Defaults to `"/api/v1"`. Prefix for all API routes.
-*   **`SECRET_KEY`** (string, **Required**): Secret key used to sign JWT token cookies. Generate using `openssl rand -hex 32`.
-*   **`ALGORITHM`** (string): Signature hashing algorithm. Defaults to `"HS256"`.
-*   **`ACCESS_TOKEN_EXPIRE_MINUTES`** (integer): Token lifetime duration. Defaults to `30`.
+| Setting | `config.py` | Compose / example files |
+|---|---|---|
+| `IS_LOCAL` | `True` | compose hardcodes `true`; `backend/.env.example` sets `false` (intended for native dev) |
+| `LLM_PROVIDER` | `groq` | compose `${LLM_PROVIDER:-ollama_cloud}` |
+| `ASSISTANT_LLM_PROVIDER` | `auto` | compose `${ASSISTANT_LLM_PROVIDER:-ollama_cloud}` |
+| `TEXT_EMOTION_PROVIDER` | `rule_based` | compose `${TEXT_EMOTION_PROVIDER:-hf_transformers}` |
+| `AUDIO_FOLDER_WATCHER_ENABLED` | `False` | `true` in `backend/.env.example` |
+| `SOP_RETRIEVAL_TOP_K` | `4` | compose `${SOP_RETRIEVAL_TOP_K:-3}` |
 
-### 1.2 Database Settings
-*   **`DATABASE_URL`** (string, **Required**): SQLAlchemy connection string.
-    *   Docker / local dev: `postgresql+asyncpg://vocalmind:vocalmind_dev@localhost:5434/vocalmind` (host port `5434` maps to the container's internal `5432`).
-    *   Testing: Overridden at runtime to use an in-memory SQLite engine (`sqlite+aiosqlite://`).
+A few variables are read with `os.getenv` instead of `Settings`, so pydantic never loads them from `backend/.env`. Under compose they arrive through `env_file`; natively you must export them in the shell: `EMOTION_MIN_SEGMENT_SECS` (default 1.0), `LLM_TRIGGER_EVAL_TIMEOUT_SECONDS` (600), `DB_POOL_SIZE` (15), `DB_MAX_OVERFLOW` (20), `SQLALCHEMY_ECHO`.
 
-### `ASSISTANT_DATABASE_URL`
-*   **`ASSISTANT_DATABASE_URL`** (string): Read-only PostgreSQL connection URL used exclusively by the AI Manager Assistant for text-to-SQL execution. Should point to a read-only database user to prevent any write operations from assistant-generated SQL.
-    *   **Default**: `postgresql+asyncpg://vocalmind_readonly:vocalmind_readonly_dev@localhost:5434/vocalmind`
-    *   **Required for production**: Yes — set to a read-only replica or the same DB with a restricted user.
+Startup check (`validate_startup_settings`): the backend refuses to start if `SECRET_KEY` is still the placeholder, if `LLM_PROVIDER=groq` has no `GROQ_API_KEY`, or if `LLM_PROVIDER=ollama_cloud` has no `OLLAMA_CLOUD_API_KEY`/`OLLAMA_API_KEY`. A missing `HF_TOKEN` only logs a warning (diarization is disabled).
 
-### 1.3 AI Assistant Settings
-*   **`GOOGLE_API_KEY`** (string, Optional): API key for Gemini models.
-*   **`ASSISTANT_LLM_PROVIDER`** (string): LLM provider for SQL generation.
-    *   `auto` (default): Uses Gemini if `GOOGLE_API_KEY` is present, else falls back to local Ollama.
-    *   `gemini`: Forces Gemini API.
-    *   `ollama`: Forces Ollama engine.
-*   **`ASSISTANT_GEMINI_MODEL`** (string): Comma-separated list of candidate Gemini models tried in order. Defaults to `gemini-2.0-flash,gemini-2.5-flash,gemini-1.5-flash`.
-*   **`ASSISTANT_OLLAMA_MODEL`** (string): Local model name for Text-to-SQL fallback (defaults to `qwen2.5:7b`).
+## Core and auth
 
-### 1.4 Inference Routing Settings
-*   **`IS_LOCAL`** (boolean): Routes pipeline ML requests.
-    *   `true`: Routes VAD, WhisperX, and Emotion processing directly to local containers (`:8001`, `:8002`, `:8003`).
-    *   **Default:** `True` in code; `.env.example` sets `false`. In Docker, the Compose file always sets `IS_LOCAL=true`. For production deployments NOT using Docker, explicitly set `IS_LOCAL=false`.
-    *   `false`: Routes requests to a remote Kaggle server.
-*   **`EMOTION_API_URL`** (string): Endpoint for the local Emotion microservice. Defaults to `"http://localhost:8001"`.
-*   **`VAD_API_URL`** (string): Endpoint for the local VAD microservice. Defaults to `"http://localhost:8002"`.
-*   **`WHISPERX_API_URL`** (string): Endpoint for the local WhisperX microservice. Defaults to `"http://localhost:8003"`.
+| Variable | Default | Notes |
+|---|---|---|
+| `SECRET_KEY` | placeholder (rejected) | JWT HS256 signing key; `openssl rand -hex 32` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | JWT and cookie lifetime |
+| `FRONTEND_URL` | `http://localhost:3000` | Added to CORS origins; OAuth success redirect |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | empty / empty / `:8000/api/v1/auth/google/callback` | Google OAuth (optional) |
 
-### 1.5 Speaker & Emotion Tuning
-*   **`TEXT_EMOTION_PROVIDER`** (string): Provider for text sentiment classification. **Default:** `rule_based`. Options: `rule_based` (keyword-based, no GPU required) | `hf_transformers` (DistilRoBERTa model, requires `HF_TOKEN` and GPU).
-*   **`TEXT_EMOTION_MODEL`** (string): Hugging Face model path. Defaults to `"j-hartmann/emotion-english-distilroberta-base"`.
-*   **`EMOTION_MIN_SEGMENT_SECS`** (string): Minimum duration gate for emotion classification. Segments shorter than this (e.g., `"1.0"`) inherit the previous turn's emotion.
-    > **Note:** This variable is consumed by the emotion microservice, not the backend Settings class. Set it in the respective service's environment.
+## Database and seeding
 
-### 1.6 Remote Kaggle / NGROK Settings
-*   **`KAGGLE_SERVER_URL`** (string): Direct URL to a running remote Kaggle kernel server.
-*   **`KAGGLE_NGROK_URL`** (string): Fallback URL mapping the Kaggle NGROK tunnel.
-*   **`HF_TOKEN`** (string, **Required**): HuggingFace user access token. Necessary to download PyAnnote speaker diarization models inside WhisperX.
-*   **`FFMPEG_PATH`** (string, Optional): Path to local FFmpeg binaries if not present in the global PATH environment.
-    > **Note:** This variable is consumed by the audio microservices, not the backend Settings class. Set it in the respective service's environment.
+| Variable | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://vocalmind:vocalmind_dev@localhost:5434/vocalmind` | Host port 5434 maps to container 5432. In production this is the Supabase pooler URI (statement cache is disabled in `database.py` for pgbouncer compatibility). |
+| `ASSISTANT_DATABASE_URL` | same DB as user `vocalmind_readonly` | Used only to execute assistant SQL; see [SECURITY.md](SECURITY.md) |
+| `SEED_DEMO_DATA` | `True` | Seeds NexaLink and Meridian on every boot. Set `false` for shared or production DBs. |
+| `SEED_EVALUATION_SESSIONS` | `False` | Read by `backend/scripts/seed_nexalink.py` and `seed_meridian.py` |
 
-### 1.7 OAuth & Frontend Settings
-*   **`FRONTEND_URL`** (string): URL of the React frontend application (defaults to `http://localhost:3000`). Used for CORS configuration and OAuth redirections.
-*   **`GOOGLE_CLIENT_ID`** (string): Google OAuth client ID credentials.
-*   **`GOOGLE_CLIENT_SECRET`** (string): Google OAuth client secret credentials.
-*   **`GOOGLE_REDIRECT_URI`** (string): OAuth redirect callback endpoint (defaults to `http://localhost:8000/api/v1/auth/google/callback`).
+## Inference routing
 
-### 1.8 Storage & Supabase Settings
-*   **`LOCAL_AUDIO_STORAGE_DIR`** (string): Root directory where uploaded audio call recordings are stored (defaults to `"storage/uploads"`).
-*   **`SUPABASE_URL`** (string, Optional): Supabase project URL, used when resolving files from Supabase Storage.
-*   **`SUPABASE_SERVICE_KEY`** (string, Optional): Supabase service role API key.
+| Variable | Default | Notes |
+|---|---|---|
+| `IS_LOCAL` | `True` | `true`: call the `vad`/`emotion`/`whisperx` containers. `false`: call the Kaggle server (`backend/app/core/kaggle_client.py`). |
+| `VAD_API_URL` / `EMOTION_API_URL` / `WHISPERX_API_URL` | `localhost:8002` / `:8001` / `:8003` | Compose points these at the service names |
+| `KAGGLE_SERVER_URL` (fallback `KAGGLE_NGROK_URL`) | empty | ngrok URL of the Kaggle notebook |
+| `HF_TOKEN` | empty | Needed for pyannote diarization |
 
-### 1.9 LLM Triggers & Provider Settings
-*   **`LLM_PROVIDER`** (string): LLM provider for the three-chain trigger evaluation pipeline (`"groq"` or `"ollama_cloud"`). The code default is `"groq"`, but the shipped/production configuration (`.env.example`, docker-compose) sets `"ollama_cloud"`.
-*   **`GROQ_API_KEY`** (string, Required if `LLM_PROVIDER="groq"`): API key for Groq Cloud inference (e.g., `gsk_...`).
-*   **`LLM_MODEL`** (string): Chat model name for trigger evaluation when using Groq (defaults to `"llama-3.3-70b-versatile"`).
-*   **`LLM_TEMPERATURE`** (float): Sampling temperature for trigger generation. Defaults to `0.0`.
-*   **`LLM_MAX_TOKENS`** (integer): Maximum output tokens per LangChain response. Defaults to `1024`.
-*   **`LLM_REQUEST_TIMEOUT_SECONDS`** (float): Timeout for LLM API requests. Defaults to `60.0`.
+**Kaggle mode.** With `IS_LOCAL=false`, all speech inference goes to a remote Kaggle notebook exposed through ngrok. The client adds the `ngrok-skip-browser-warning` header. This is the recommended mode for native dev because no ML models are downloaded locally, which is why `backend/.env.example` sets `IS_LOCAL=false`. The notebook API is documented in `infra/fixtures/kaggle/README.md`. `POST /api/v1/internal/set-kaggle-url` swaps the URL and forces `IS_LOCAL=false` at runtime (in memory only).
 
-#### Ollama Cloud Settings (used when `LLM_PROVIDER="ollama_cloud"`)
-*   **`OLLAMA_CLOUD_API_KEY`** (string, alias `OLLAMA_API_KEY`): Authorization token for the remote Ollama Cloud service.
-*   **`OLLAMA_CLOUD_BASE_URL`** (string): Base API URL for Ollama Cloud. Defaults to `https://ollama.com/v1`.
-*   **`OLLAMA_CLOUD_HEAVY_MODEL`** (string): Heavy model name for complex trigger evaluation stages (e.g. emotion shift, process adherence). Defaults to `"kimi-k2.6:cloud"`.
-*   **`OLLAMA_CLOUD_FAST_MODEL`** (string): Fast model name for lower-complexity trigger stages (e.g. NLI policy). Defaults to `"ministral-3:8b"`.
-*   **`OLLAMA_CLOUD_EMBED_ENABLED`** (boolean): True to route embedding calls to Ollama Cloud rather than local Ollama. Defaults to `false`.
-*   **Stage-Specific Overrides**:
-    *   `OLLAMA_MODEL_EMOTION_SHIFT` / `OLLAMA_EMOTION_SHIFT_MODEL`
-    *   `OLLAMA_MODEL_PROCESS_ADHERENCE` / `OLLAMA_PROCESS_ADHERENCE_MODEL`
-    *   `OLLAMA_MODEL_NLI_POLICY` / `OLLAMA_NLI_MODEL`
-    *   `OLLAMA_MODEL_RAG_JUDGE`
-    *   `OLLAMA_MODEL_TEXT_TO_SQL`
-    *   `OLLAMA_MODEL_FAST_CLASSIFICATION`
-    *   `OLLAMA_MODEL_RAG_SYNTHESIS`
+## Audio storage
 
-### 1.10 RAG & Vector DB Settings
-*   **`QDRANT_URL`** (string): Endpoint of the Qdrant Vector database. Defaults to `"http://localhost:6333"`.
-*   **`QDRANT_COLLECTION_PARENTS`** (string): Target Qdrant collection name for parent compliance chunks. Defaults to `"vocalmind_parents"`.
-*   **`QDRANT_COLLECTION_CHILDREN`** (string): Target Qdrant collection name for child compliance chunks. Defaults to `"vocalmind_children"`.
-    > **Note:** This variable is consumed internally by the RAG microservice, not the backend Settings class. The backend only reads `QDRANT_COLLECTION_PARENTS` and `QDRANT_COLLECTION_SOP_PARENTS`. Set it in the RAG service's environment.
-*   **`QDRANT_COLLECTION_SOP_PARENTS`** (string): Target collection name for SOP/KB parent chunks. Defaults to `"vocalmind_sop_parents"`.
-*   **`OLLAMA_BASE_URL`** (string): Endpoint for the Ollama embedding service. Defaults to `"http://localhost:11434"`.
-*   **`EMBEDDING_MODEL`** (string): Name of the embedding model to load in Ollama. Defaults to `"snowflake-arctic-embed2"`.
-*   **`EMBEDDING_DIMENSION`** (integer): Vector dimension size generated by the embedding model. Defaults to `1024`.
-    > **Note:** This variable is consumed by the RAG microservice, not the backend Settings class. Set it in the RAG service's environment.
-*   **`EMBEDDING_TIMEOUT_SECONDS`** (float): Timeout for generating RAG query embeddings. Defaults to `60.0`.
-*   **`SOP_RETRIEVAL_TOP_K`** (integer): Number of closest chunks to retrieve for context in SOP evaluation. Defaults to `4`.
-*   **`SOP_MAX_CHUNKS`** (integer): Max SOP chunks to inject. Defaults to `2`.
-*   **`RAG_SUPPORTED_THRESHOLD`** (float): Confidence threshold for RAG evaluation agreement. Defaults to `0.82`.
-*   **`RAG_NEUTRAL_THRESHOLD`** (float): Threshold above which RAG evaluations are mapped as neutral/benign. Defaults to `0.55`.
-*   **`POLICY_DOCS_ROOT`** (string): Directory containing original PDF/DOCX policy files. Defaults to `"storage/docs"`.
-*   **`SOP_DOCS_ROOT`** (string): Directory containing original SOP procedure files. Defaults to `"storage/docs"`.
-*   **`KNOWLEDGE_DOCS_ROOT`** (string): Directory containing original general knowledge-base files. Defaults to `"storage/docs"`.
-*   **`POLICY_PARSED_DOCS_ROOT`** (string): Directory containing parsed Markdown policy documents. Defaults to `"storage/docs"`.
-*   **`SOP_PARSED_DOCS_ROOT`** (string): Directory containing parsed Markdown SOP documents. Defaults to `"storage/docs"`.
+| Variable | Default | Notes |
+|---|---|---|
+| `AUDIO_STORAGE_BACKEND` | `local` | `supabase` uploads new audio to Supabase Storage (requires the Supabase vars below) |
+| `LOCAL_AUDIO_STORAGE_DIR` | `storage/uploads` | Upload destination when `local` |
+| `EXTRA_AUDIO_ROOTS` | empty | Extra roots for local audio resolution (`;` or OS path separator) |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` / `SUPABASE_AUDIO_BUCKET` | empty / empty / `recordings` | The backend reads `SUPABASE_SERVICE_KEY` (not `..._ROLE_KEY`) |
+| `AUDIO_FOLDER_WATCHER_ENABLED` | `False` | Auto-ingest from `storage/audio/<org_slug>/`; see [AUDIO_AUTO_INGEST.md](../operations/AUDIO_AUTO_INGEST.md) |
 
-### 1.11 General / Misc Settings
-*   **`ASSISTANT_OLLAMA_TIMEOUT_SECONDS`** (float): Timeout for Assistant Ollama requests. Defaults to `120.0`.
-*   **`OPENAI_API_KEY`** (string, Optional): API key for OpenAI fallback assistant.
-*   **`SEED_EVALUATION_SESSIONS`** (boolean): Flag to toggle evaluation session seeding from the bundled export. Defaults to `false`.
-*   **`SEED_DEMO_DATA`** (boolean): When `True`, the backend runs `seed_nexalink` and `seed_meridian` on every boot, seeding the Nexalink and Meridian demo organizations and their sample data. **Must be set to `False` for any shared or production database** — otherwise every restart re-seeds the demo orgs alongside real data. **Default:** `True`. For production, set `SEED_DEMO_DATA=false`.
-*   **`AUDIO_FOLDER_WATCHER_ENABLED`** (boolean): Set to `false` to disable the background storage-folder auto-ingestion watcher scanner. Defaults to `true`.
+## LLM (trigger chains, RAG judge, assistant)
 
----
+The supported providers are **`ollama_cloud`** (free Ollama Cloud models; the compose default) and **`groq`**. Gemini/Vertex code paths (`GEMINI_*`, `GOOGLE_API_KEY`, `ASSISTANT_GEMINI_MODEL`) are legacy and unused.
 
-## 2. Direct Environment Variable Lookups (Hidden Config)
+| Variable | Default | Notes |
+|---|---|---|
+| `LLM_PROVIDER` | `groq` | `ollama_cloud` or `groq` |
+| `OLLAMA_CLOUD_API_KEY` (alias `OLLAMA_API_KEY`) | empty | Required for `ollama_cloud` |
+| `OLLAMA_CLOUD_BASE_URL` | `https://ollama.com/v1` | OpenAI-compatible endpoint |
+| `OLLAMA_CLOUD_HEAVY_MODEL` | `kimi-k2.6:cloud` | Heavy stages: emotion_shift, process_adherence, text_to_sql |
+| `OLLAMA_CLOUD_FAST_MODEL` | `ministral-3:8b` | Fast stages: nli_policy, rag_judge, fast_classification, rag_synthesis |
+| `OLLAMA_MODEL_<STAGE>` | empty | Per-stage override |
+| `GROQ_API_KEY`, `LLM_MODEL` | empty, `llama-3.3-70b-versatile` | For `groq`; one shared model for all stages |
+| `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` / `LLM_REQUEST_TIMEOUT_SECONDS` | `0.0` / `1024` / `60` | |
+| `ASSISTANT_LLM_PROVIDER` | `auto` | `ollama_cloud`, `groq`, `ollama` (local `ASSISTANT_OLLAMA_MODEL`, default `qwen2.5:7b`), or `auto` (tries Gemini → Groq → Ollama Cloud) |
 
-The following variables are read directly via `os.getenv` without being defined inside the Pydantic Settings class:
+Duplicate override names: `get_model_for_stage` in `backend/app/llm_trigger/chains.py` checks `OLLAMA_MODEL_EMOTION_SHIFT` / `_PROCESS_ADHERENCE` / `_NLI_POLICY` first. Only when those are empty does it fall back to the legacy `OLLAMA_EMOTION_SHIFT_MODEL` / `OLLAMA_PROCESS_ADHERENCE_MODEL` / `OLLAMA_NLI_MODEL`, and then to the heavy/fast default.
 
-*   **`EXTRA_AUDIO_ROOTS`** (string): Semicolon-separated (`;`) list of alternative root directories for resolving local audio files.
-*   **`SQLALCHEMY_ECHO`** (boolean/string): Toggles printing raw SQL statements compiled by SQLAlchemy. Set to `true` to enable.
-*   **`DB_POOL_SIZE`** (integer): The number of concurrent connections to keep open in the PostgreSQL connection pool.
-*   **`DB_MAX_OVERFLOW`** (integer): Max overflow connections allowed beyond the standard pool size limit.
-*   **`LLM_TRIGGER_EVAL_TIMEOUT_SECONDS`** (float): Limit on how long a three-chain evaluation can run before raising a TimeoutError.
-*   **`EMOTION_MAX_AUDIO_SECONDS`** (float): Maximum length in seconds for audio clips processed by the Emotion microservice (caps at `30.0`).
-*   **`WHISPER_MODEL_SIZE`** (string): Model size constraint for WhisperX transcription.
-*   **`CHANNEL_DIARIZATION_ENABLED`** (boolean): Enables separate channel diarization.
-*   **`STRICT_DIARIZATION`** (boolean): Toggles strict overlapping speaker segments handling.
-*   **`WHISPER_COMPUTE_TYPE`** (string): Torch float precision mode for WhisperX inference.
-*   **`CHANNEL_DIARIZATION_MAX_CORR`** (float): Maximum correlation threshold for diarization.
-*   **`AGENT_CHANNEL`** (integer): Explicit channel index designated as the agent speaker.
+## RAG and text emotion
 
+| Variable | Default | Notes |
+|---|---|---|
+| `QDRANT_URL` | `http://localhost:6333` | |
+| `QDRANT_COLLECTION_PARENTS` / `QDRANT_COLLECTION_SOP_PARENTS` | `vocalmind_parents` / `vocalmind_sop_parents` | The backend reads only these two collections |
+| `OLLAMA_BASE_URL` / `EMBEDDING_MODEL` | `http://localhost:11434` / `snowflake-arctic-embed2` | Query embeddings |
+| `OLLAMA_CLOUD_EMBED_ENABLED` | `False` | Embed through Ollama Cloud instead |
+| `SOP_RETRIEVAL_TOP_K` | `4` | |
+| `RAG_SUPPORTED_THRESHOLD` / `RAG_NEUTRAL_THRESHOLD` | `0.82` / `0.55` | Used by `routes/rag.py` |
+| `POLICY_DOCS_ROOT`, `SOP_DOCS_ROOT`, `KNOWLEDGE_DOCS_ROOT`, `SOP_PARSED_DOCS_ROOT` | `<cwd>/storage/docs` | Knowledge file roots |
+| `TEXT_EMOTION_PROVIDER` | `rule_based` | `hf_transformers` calls `/predict_text` on the emotion service (or Kaggle when `IS_LOCAL=false`) and falls back to rule-based for the rest of the process on any error |
+
+Defined in `Settings` but unused by any code: `OPENAI_API_KEY`, `SOP_MAX_CHUNKS`, `POLICY_PARSED_DOCS_ROOT`, `TEXT_EMOTION_MODEL` (the model name is hardcoded in `services/emotion/app.py`). `SUPABASE_DB_URL` is read only by `backend/scripts/verify_supabase_schema.py`.
+
+## Service-only variables (not in backend `Settings`)
+
+| Service | Variables (default) |
+|---|---|
+| whisperx (`services/whisperx/app.py`) | `HF_TOKEN`, `WHISPER_MODEL_SIZE` (`large-v2`; compose `tiny`, GPU overlay `large-v3`), `WHISPER_BATCH_SIZE` (8), `WHISPER_COMPUTE_TYPE` (`float16` on CUDA, `int8` on CPU), `STRICT_DIARIZATION` (false), `CHANNEL_DIARIZATION_ENABLED` (true), `CHANNEL_DIARIZATION_MAX_CORR` (0.92), `AGENT_CHANNEL`, `DIARIZATION_NUM_SPEAKERS` (2), `DIARIZATION_MIN_SPEAKERS` / `DIARIZATION_MAX_SPEAKERS` |
+| emotion (`services/emotion/app.py`) | `EMOTION_MAX_AUDIO_SECONDS` (30) |
+| ingestion (`services/rag/config.py`) | `QDRANT_COLLECTION_CHILDREN` (`vocalmind_children`), `EMBEDDING_DIMENSION` (1024), `DOCS_DIR` / `POLICY_DOCS_DIR` / `KNOWLEDGE_DOCS_DIR` / `PARSED_*_DIR`, `RERANK_ENABLED` / `RERANK_MODEL`, `HYDE_ENABLED`, plus the same `LLM_PROVIDER` / `OLLAMA_*` names as the backend |

@@ -20,10 +20,10 @@ from supabase import create_client
 load_dotenv(Path(__file__).resolve().parents[3] / "backend" / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY")
+    print("Error: Set SUPABASE_URL and SUPABASE_SERVICE_KEY")
     sys.exit(1)
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)

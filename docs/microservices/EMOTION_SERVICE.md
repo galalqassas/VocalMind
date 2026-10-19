@@ -1,72 +1,22 @@
-# Speech & Text Emotion Recognition Microservice
+# Emotion Service
 
-This microservice provides speech emotion classification using Alibaba's **funASR emotion2vec** model, alongside text sentiment classification using a **DistilRoBERTa** model.
+`services/emotion/app.py` — FastAPI. Compose service `emotion`, host port 8001 → container 8000; backend uses `EMOTION_API_URL` (`http://emotion:8000` in compose). CUDA when available, else CPU (GPU overlay: `docker-compose.gpu.yml`).
 
----
+## Models (loaded at startup)
 
-## 1. Operational Parameters
+- Audio: FunASR `AutoModel("iic/emotion2vec_plus_base", trust_remote_code=True)`.
+- Text: Hugging Face `pipeline("text-classification", "j-hartmann/emotion-english-distilroberta-base", top_k=None)`. If it fails to load, the service still starts and `/predict_text` returns 503.
 
-*   **Host Port**: `:8001`
-*   **Technology Stack**: Python, FastAPI, funASR, PyTorch, Hugging Face Transformers (`j-hartmann/emotion-english-distilroberta-base`), FFmpeg (for runtime audio normalizations)
-*   **Device Allocation**: CUDA acceleration is automatically bound if NVIDIA drivers are present, otherwise execution defaults to CPU.
+## Endpoints
 
----
+| Method | Path | Behaviour |
+|---|---|---|
+| POST | `/predict` | Multipart `file` (`.wav`/`.mp3`). ffmpeg converts to mono 16 kHz and keeps the first `EMOTION_MAX_AUDIO_SECONDS` (default 30). Returns `{emotion, confidence, raw_result: {labels, scores}}` (labels stripped of the Chinese prefix). Inference is serialized by a lock. 400 on decode failure. |
+| POST | `/predict_text` | JSON `{text}`. Empty text → `{"emotion": "neutral", "confidence": 0.2}`. Returns the top label with `confidence` and the full `raw_result` list. 503 if the text model is not loaded. |
+| GET | `/health` | `{status, audio_model_loaded, text_model_loaded}` |
 
-## 2. API Specifications
+## Backend use
 
-### `POST /predict`
-Classifies acoustic emotional state from an uploaded WAV/MP3 clip.
-*   **Audio Norms**: FFmpeg is executed at runtime to downmix files to mono, resample to 16kHz, and truncate them to 30 seconds (`EMOTION_MAX_AUDIO_SECONDS`).
-*   **Content-Type**: `multipart/form-data`
-*   **Request Body**:
-    *   `file`: Binary audio file (MP3 or WAV).
-*   **Response**:
-    ```json
-    {
-      "emotion": "happy",
-      "confidence": 0.842,
-      "raw_result": {
-        "labels": ["happy", "angry", "sad", "neutral", "frustrated", "surprised", "fearful"],
-        "scores": [0.842, 0.01, 0.02, 0.05, 0.03, 0.02, 0.03]
-      }
-    }
-    ```
-
-### `POST /predict_text`
-Evaluates text emotion using DistilRoBERTa.
-*   **Request Body** (`application/json`):
-    ```json
-    {
-      "text": "This is ridiculous! I want a refund."
-    }
-    ```
-*   **Response**:
-    ```json
-    {
-      "emotion": "anger",
-      "confidence": 0.923,
-      "raw_result": [
-        { "label": "anger", "score": 0.923 },
-        { "label": "disappointment", "score": 0.04 }
-      ]
-    }
-    ```
-
-### `GET /health`
-*   **Response**:
-    ```json
-    {
-      "status": "ok",
-      "audio_model_loaded": true,
-      "text_model_loaded": true
-    }
-    ```
-
----
-
-## 3. Modality Normalizations & Fallbacks
-
-1.  **Label Normalization**: Raw emotion labels from models are mapped to VocalMind's 7 canonical emotion states: `happy`, `frustrated`, `neutral`, `sad`, `angry`, `surprised`, `fearful`.
-    *   Acoustic mappings: `joy -> happy`, `calm -> neutral`, `satisfied -> happy`, `fear -> frustrated`, `disgust -> frustrated`.
-    *   Text mappings: `joy / happiness -> happy`, `anger -> angry`, `fear / disgust / annoyance -> frustrated`, `surprise -> neutral`, `sadness -> sad`.
-2.  **Text Fallback**: If the text emotion model fails to load, `/predict_text` returns a `503 Service Unavailable`. The backend seamlessly catches this and falls back to a rule-based lexicon match (`emotion_fusion.py`), ensuring system robustness.
+- `/predict` is called once per interaction on the whole file by `full_client` (`backend/app/api/routes/full/service.py`, 3 attempts); per-segment `/predict` calls happen only in `POST /api/v1/emotion/process` (after VAD splitting).
+- `/predict_text` is called by `infer_text_emotion_with_provider` when `TEXT_EMOTION_PROVIDER=hf_transformers`; any failure switches the backend process to the rule-based provider.
+- Label normalization and fusion: [EMOTION_FUSION.md](../architecture/EMOTION_FUSION.md).

@@ -1,88 +1,57 @@
-# VocalMind SLA Targets
+# SLA Targets
 
-> Aspirational targets for the graduation-project deployment. They are
-> the contract the system *aims* to honour, not numbers we've measured
-> in production. Each target lists the current observation method so
-> we can replace "aspirational" with "measured" as monitoring lands.
+> **Targets, not measured.** No external uptime monitor, metrics scraper or dashboard is configured in this repo. The "Signal" column says where each number could be observed today.
 
-## 1. Availability
+## Availability
 
-| Target | Window | Method |
-|---|---|---|
-| **99.0 %** monthly uptime for the user-facing API (`/api/v1/*`) | 30-day rolling | `GET /health` polled externally every 60 s; downtime counted only after 3 consecutive failures |
-| **99.5 %** monthly uptime for the frontend (static SPA) | 30-day rolling | CDN-level monitor |
-| **No SLA** for offline pipeline replay (`audio_folder_watcher`, `processing_worker`) — best-effort, jobs are durable in `processing_jobs` |
-
-Planned maintenance is excluded with ≥ 24 h notice on a status page.
-
-## 2. Latency
-
-Measured **server-side** (excludes client network). Numbers under expected
-production load (≤ 50 concurrent dashboard sessions, ≤ 5 concurrent
-audio uploads).
-
-| Endpoint class | p50 | p95 | p99 | Notes |
-|---|---|---|---|---|
-| Dashboard reads (`/api/v1/dashboard/*`) | 200 ms | 800 ms | 2 s | Cached for the manager's org; cold cache may hit p95 |
-| Interaction list / detail (`/api/v1/interactions*`) | 250 ms | 1.2 s | 3 s | |
-| Notifications + review queue | 150 ms | 600 ms | 1.5 s | Bounded by the polling cadence on the bell (30 s) |
-| LLM trigger inference | 8 s | 25 s | 60 s | Bounded by the Ollama Cloud provider; degraded fallback returns ≤ 1 s |
-| End-to-end pipeline (audio → scored) | 45 s / minute of audio | 90 s / minute | 180 s / minute | WhisperX is the long pole |
-
-These targets are conditional on the
-[Architecture ADR](ADR-001-architecture.md) infrastructure assumptions:
-single backend replica, single WhisperX worker, Ollama Cloud as the production LLM provider.
-
-## 3. Error budget
-
-| Metric | Budget |
+| Target | Signal |
 |---|---|
-| API 5xx rate | ≤ 0.5 % over any 1-hour window |
-| LLM trigger fallback rate | ≤ 5 % over any 24-hour window (rises = Ollama Cloud incident / quota / prompt regression) |
-| Pipeline failures (`processing_jobs.status=failed`) | ≤ 2 % over any 24-hour window |
+| 99.0 % monthly uptime for `/api/v1/*` | `GET /health` (also the compose healthcheck) |
+| 99.5 % monthly uptime for the frontend | none in repo |
+| No SLA for pipeline processing (worker, folder watcher) | `processing_jobs` / `interactions.processing_status` |
 
-A breached budget is a halt-and-investigate signal — no new merges to
-`main` until the cause is identified.
+## Latency (server-side)
 
-## 4. Rate limits
+Assumed load: ≤ 50 concurrent dashboard sessions and ≤ 5 concurrent uploads, on one backend replica and one WhisperX worker ([ADR-001](ADR-001-architecture.md)).
 
-Enforced by `slowapi` middleware (see `app/core/rate_limit.py`).
+| Endpoint class | p50 | p95 | p99 |
+|---|---|---|---|
+| `GET /api/v1/dashboard/*` (5-min per-org cache) | 200 ms | 800 ms | 2 s |
+| `GET /api/v1/interactions`, `/interactions/{id}` | 250 ms | 1.2 s | 3 s |
+| Notifications and review queue | 150 ms | 600 ms | 1.5 s |
+| LLM trigger evaluation per call | 8 s | 25 s | 60 s |
+| End-to-end pipeline, per minute of audio | 45 s | 90 s | 180 s |
 
-| Surface | Limit |
+Load scenario for the read endpoints: [infra/loadtest/README.md](../infra/loadtest/README.md).
+
+## Error budget
+
+| Metric | Budget | Signal |
+|---|---|---|
+| API 5xx rate | ≤ 0.5 % per hour | `/metrics` (Prometheus, HTTP only) |
+| LLM trigger fallback rate | ≤ 5 % per day | Backend logs only (`llm_trigger/service.py` warnings) |
+| Pipeline failures | ≤ 2 % per day | `processing_jobs.status = 'failed'` |
+
+## Rate limits (implemented)
+
+- `slowapi` applies 60 requests/minute per client IP to every route (`backend/app/core/rate_limit.py`, installed in `backend/app/main.py`). The client IP is the first `X-Forwarded-For` hop, or the socket peer if that header is absent. Clients over the limit get HTTP 429.
+- No route has a tighter per-route limit, including login and audio upload.
+
+## Data retention (targets; no cleanup job exists)
+
+| Data | Target |
 |---|---|
-| All `/api/v1/*` | 60 req / minute / IP (default) |
-| `/api/v1/auth/login`, `/api/v1/auth/register` | 10 req / minute / IP (tighter — apply with route-level decorator) |
-| Audio upload (`POST /api/v1/interactions`) | 5 req / minute / IP — protects the GPU queue |
+| Raw audio, transcripts, scores | 90 days for audio, 12 months for derived data |
+| Notifications | 30 days after read |
+| `assistant_queries` | 90 days |
+| Feedback rows | Kept indefinitely as training data. `is_used_in_training` marks exported rows. |
 
-Clients hitting the limit receive HTTP 429 with `Retry-After`.
+## Observability available today
 
-## 5. Data retention & deletion
+- `GET /health` and `GET /health/circuit-breakers` (Manager Assistant LLM breakers).
+- `GET /metrics`: Prometheus text format; `/metrics` and `/health` are excluded.
+- `X-Request-ID`: taken from the request or generated, and echoed on the response. Some outbound calls also forward it, via `outbound_request_headers()` in `backend/app/core/request_context.py`.
 
-| Class | Retention | Notes |
-|---|---|---|
-| Raw audio | 90 days | Deletable on org request; PII-redaction is a TODO before extending |
-| Transcripts + scores | 12 months | Same as audio |
-| Notifications | 30 days after `is_read=TRUE`, indefinite while unread | Cleanup is a TODO job |
-| Feedback rows (emotion / compliance) | Indefinite — they are training data | `is_used_in_training=TRUE` marks rows already exported |
-| `assistant_queries` | 90 days | |
+## Out of scope
 
-## 6. Out-of-scope (no SLA — known)
-
-- Real-time WebSocket / SSE delivery — notifications are 30 s polling today.
-- Multi-region failover.
-- Backups: nightly Postgres dump only; no PITR.
-- Per-org isolation at the database level — currently row-level only.
-
-## 7. How we'll know
-
-| Signal | Where today | Where it should be |
-|---|---|---|
-| Uptime | manual / `make logs` + `GET /health` | external monitor + Grafana board |
-| Latency p50/p95/p99 | `GET /metrics` (Prometheus text format) — exposed by `prometheus_fastapi_instrumentator` | Prometheus scraping + Grafana board |
-| Per-request correlation | `X-Request-ID` request/response header (see `app/core/request_id.py`); accepted from upstream proxy if set, otherwise UUID4 | Same id stamped into every log line once structured logging lands |
-| Error rate | `logger.error` calls only, no aggregation | structured logs → log aggregator |
-| LLM fallback rate | `llm_trigger.service` logs | counter into Prometheus |
-| Pipeline failure rate | `processing_jobs.status=failed` rows | Grafana panel on the same table |
-
-Adding the rest of the observability stack (log aggregation, dashboards)
-is tracked in [`docs/MATURITY_GAP_ANALYSIS.md`](MATURITY_GAP_ANALYSIS.md) §6.
+Push delivery of notifications (the bell polls every 30 s), multi-region failover, point-in-time recovery, and database-level per-org isolation (all scoping is row-level).

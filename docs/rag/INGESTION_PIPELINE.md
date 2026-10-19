@@ -1,118 +1,50 @@
 # Ingestion Pipeline
 
-## Purpose
+PDF → Markdown → chunks → embeddings → Qdrant. Implementation: `DocumentIngestionPipeline` in `services/rag/ingest.py`; entry point `services/rag/main.py`. Collection roles: [RAG_OVERVIEW.md](RAG_OVERVIEW.md).
 
-The ingestion pipeline converts policy and SOP PDFs into clean markdown and indexes them into Qdrant for retrieval.
+## Running
 
-Implementation: `services/rag/ingest.py`
+- Compose: the `ingestion` container runs `python main.py --watch` (needs healthy `qdrant` and `ollama`; pull the model once with `make ollama-pull-embed`).
+- Manual, from `services/rag`: `uv run python main.py --ingest` (add `--force` to drop and recreate all three collections first).
+- `--watch [--interval N]` (default 60 s, minimum 10) snapshots PDF mtimes/sizes under the doc roots and, on any change, re-runs the full ingestion over every PDF.
 
-## Inputs
+## Discovery
 
-Expected source structure under `DOCS_DIR` (`storage/docs`):
+Roots: `DOCS_DIR`, `POLICY_DOCS_DIR`, `KNOWLEDGE_DOCS_DIR` (all default to `storage/docs`, de-duplicated). For each org directory, PDFs are collected from `policy-docs/`, `sop-procedures/`, `faq-docs/`, `kb/`, `knowledge-base/`. If none of those folders exist, PDFs in the org root are used. If no PDFs are found at all, roots are scanned recursively and the first path component becomes the org.
 
-1. `storage/docs/{org}/policy-docs/*.pdf`
-2. `storage/docs/{org}/sop-procedures/*.pdf`
-3. `storage/docs/{org}/knowledge-base/*.pdf`
+`doc_type` is chosen from the path: `/kb/` or `/knowledge-base/` → `kb`; `/sop-procedures/` or `/faq-docs/` → `sop`; anything else → `policy`.
 
-Legacy fallback:
-1. `storage/docs/{org}/*.pdf`
+## Per-file steps (`_process_file`)
 
-## Outputs
+1. **Parse**: Docling `DocumentConverter` → Markdown.
+2. **Clean**: `ftfy` + HTML-entity fixes, re-attach orphaned table rows, normalize spacing around arrow glyphs.
+3. **Metadata**: `org`, `department`, `doc_id`, `version`, `effective_date` from a `| Field | Value |` header table or `**Label**: value` lines (default `Unknown`); `org` is overridden by the folder name; plus `source_file` (PDF stem), `ingested_at`, `doc_type`.
+4. **Parent split**: `MarkdownHeaderTextSplitter` on H1/H2/H3; sections under 4 words are dropped. Type metadata is added: SOP → `policy_ref` (rule IDs referenced in the text); policy → rule metadata (`rule_id`, `severity`, …); KB → `section` (header path).
+5. **Child split** (stored for policies only): pipe-table rows whose first cell matches `[A-Z]{2,5}-RULE-<n>` become one `policy_rule_atomic` chunk each; other tables stay whole (`table_atomic`); text uses `RecursiveCharacterTextSplitter` (400 chars, 80 overlap; `chunk_type=text`).
+6. **Validate**: flags chunks under 30 chars, duplicates (MD5), atomic policy-rule chunks missing `rule_id`/`rule_statement`/`severity`, KB chunks without a section.
+7. **Debug artifacts** in `{PARSED_POLICY_DIR | PARSED_SOP_DIR}/{org}/parsed-docs/{policies | sops | kb}/`: `{stem}_raw.md`, `{stem}.md`, `{stem}_chunks.md`, `{stem}_validation.json`.
+8. **Upload**: delete existing points for the same `org` + `source_file`, then embed each chunk and upsert. SOP/KB parents → `vocalmind_sop_parents`; policy parents → `vocalmind_parents`, policy children → `vocalmind_children`.
 
-For each processed file (per org):
-1. Raw markdown: `storage/docs/{org}/parsed-docs/{file}_raw.md`
-2. Clean markdown: `storage/docs/{org}/parsed-docs/{file}.md`
-3. Chunk debug file: `storage/docs/{org}/parsed-docs/{file}_chunks.md`
-4. Validation report: `storage/docs/{org}/parsed-docs/{file}_validation.json`
-5. Qdrant Vectors (routed by document type):
-   - `policy-docs` → `vocalmind_parents` / `vocalmind_children` (doc_type="policy")
-   - `sop-procedures` → `vocalmind_sop_parents` only (doc_type="sop", no children collection)
-   - `knowledge-base` → `vocalmind_sop_parents` only (doc_type="kb", no children collection)
+A run summary is written to `{PARSED_DIR}/_pipeline_report.json`.
 
-Global run report:
-1. `storage/docs/_pipeline_report.json`
+## Qdrant and embeddings
 
-## 8-Stage Pipeline
+- Collections are created on startup if missing (cosine, `EMBEDDING_DIMENSION`, default 1024) and recreated if their dimension differs.
+- Point IDs are a UUID from MD5 of `source_file:org:content`, so re-ingesting identical content is idempotent.
+- Payload = `text` + all chunk metadata (`org`, `doc_type`, `source_file`, `Header 1..3`, `chunk_type`, …).
+- Embeddings: Ollama `/api/embed` then `/api/embeddings`, up to 4 attempts with backoff; Ollama Cloud `/embeddings` when `OLLAMA_CLOUD_EMBED_ENABLED=true`.
 
-1. Parse PDF (Docling)
-- `DocumentConverter` loads PDF and exports markdown
+## Consumers of the parsed Markdown
 
-2. Clean markdown
-- Encoding repair via `ftfy` library and table row repair
-
-3. Extract metadata
-- org, department, doc_id, version, effective_date
-- `org` is overridden by folder name when available
-
-4. Parent split
-- Markdown header split on H1/H2/H3
-
-5. Child split
-- Recursive splitting for precision chunks
-- Table chunks are kept atomic
-
-6. Validate
-- Flags short chunks and duplicate chunks
-
-7. Save debug artifacts
-- Writes chunk and validation diagnostics
-
-8. Upload to Qdrant
-- Embeds each chunk via Ollama (with `/api/embed` and `/api/embeddings` fallback)
-- Routes to `vocalmind_parents` / `vocalmind_children` if it is a policy document
-- Routes to `vocalmind_sop_parents` only if it is an SOP or KB document (no children collection for SOP/KB)
-- Document type metadata (policy/sop/kb) is stored with each vector for filtered retrieval
-
-## Qdrant Behavior
-
-1. Ensures collection existence
-2. Recreates collections on embedding dimension mismatch
-3. Uses deterministic IDs from content hashes for idempotent upserts
-
-## Force Reindex
-
-`force=True` deletes and recreates both collections before ingesting.
-
-## CLI Usage
-
-From `services/rag`:
-
-```bash
-python main.py --ingest
-python main.py --ingest --force
-```
-
-## Operational Notes
-
-1. Ensure Qdrant and Ollama are up before ingestion
-2. Ensure `DOCS_DIR` points to `storage/docs`
-3. Ensure `PARSED_DIR` points to `storage/docs`
-4. Re-run ingestion whenever PDFs are added or updated
+The backend's manual SOP path reads `storage/docs/{org}/parsed-docs/sops/{stem}.md` for each PDF in `sop-procedures/` or `faq-docs/` (`backend/app/llm_trigger/retrieval.py`).
 
 ## Troubleshooting
 
-1. No PDFs found
-- Check folder names: `policy-docs`, `sop-procedures`
-- Confirm files are `.pdf`
+- No PDFs found: check folder names and the `.pdf` extension.
+- Empty retrieval: confirm points exist for the org slug (`org` payload) and that `parsed-docs/` artifacts were written.
+- Embedding errors: check `OLLAMA_BASE_URL` and that `snowflake-arctic-embed2` is pulled.
+- Dimension warnings after changing models: run `--ingest --force`.
 
-2. Empty or weak retrieval later
-- Verify markdown artifacts exist in `storage/docs/{org}/parsed-docs`
-- Confirm Qdrant collections contain points
+Removing a PDF does not delete its points; only a re-ingested file has its old points replaced.
 
-3. Embedding errors
-- Verify Ollama URL and model availability
-
-4. Collection mismatch
-- If dimension warnings appear, run force reindex
-
-## Testing
-
-Primary unit coverage is in:
-1. `services/rag/tests/test_ingest.py`
-
-Run:
-
-```bash
-cd services/rag
-uv run pytest tests/test_ingest.py -q
-```
+Tests: `cd services/rag && uv run pytest tests/test_ingest.py -q`.
