@@ -18,10 +18,10 @@ One asyncio task (`_worker_loop`) started in the app lifespan. It drains the pri
 1. **Claim**: skip if already `completed`; mark `diarization`, `stt`, `emotion` jobs `running` and the interaction `processing`; close the DB session before slow I/O.
 2. **Fetch audio**: `fetch_audio_bytes()` (`audio_resolver.py`) reads local storage or Supabase Storage.
 3. **Analyze** (`full_client.analyze_bytes`), routed by `IS_LOCAL`:
-   - `false` (compose default): Kaggle `/full` (Whisper ASR → pyannote diarization → emotion2vec per segment), normalized by `normalize_full_response`.
-   - `true`: WhisperX `/transcribe` (transcribe → align → diarize → merge short same-speaker segments → overlap flags), then Emotion `/predict` with the segment windows (`emotion_client.analyze_segments`), merged by `build_local_full_response`. VAD is not called.
+   - `false` (compose default): Kaggle `/full` (Silero VAD → Whisper ASR on speech regions only → pyannote diarization → emotion2vec per segment), normalized by `normalize_full_response`.
+   - `true`: WhisperX `/transcribe` (Silero VAD → transcribe → align → diarize → merge short same-speaker segments → overlap flags), then Emotion `/predict` with the segment windows (`emotion_client.analyze_segments`), merged by `build_local_full_response`.
    - Each segment's `emotion` / `emotion_scores` come only from the speech-emotion model; a segment with no result stays `unknown`.
-4. **ASR quality gate**: `is_gibberish()` (`llm_trigger/chains.py`, `fast_classification` stage). Empty or gibberish text fails `stt`; an LLM error also fails `stt`.
+4. **ASR quality gate**: `is_gibberish()` (`llm_trigger/chains.py`, `fast_classification` stage). Empty text (no speech found by VAD) or gibberish fails `stt`; an LLM error also fails `stt`.
 5. **Min-duration gate**: `apply_emotion_min_duration_gate` — segments shorter than `EMOTION_MIN_SEGMENT_SECS` (default 1.0) inherit the previous segment's emotion and scores.
 6. **Speaker roles** (`assign_speaker_roles`, below).
 7. **Persist**: `Transcript` (`overall_confidence=None`, see TODOs), ordered `Utterance` rows (acoustic emotion + confidence of the top score), and an `EmotionEvent` whenever consecutive non-`unknown` utterance emotions change (`emotion_delta=1.0`). Set `language_detected` and `duration_seconds` (max segment end); mark `diarization`, `stt`, `emotion` `completed` and `reasoning` `running`.

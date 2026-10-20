@@ -39,7 +39,9 @@ def test_emotion_window_pads_short_segments_around_centre(server):
 
 
 def test_full_assigns_speaker_by_midpoint(server, monkeypatch):
-    monkeypatch.setattr(server, "_transcribe", lambda path: {
+    clips = []
+    monkeypatch.setattr(server, "_vad", lambda path: {"speech_segments": [{"start": 0.0, "end": 4.5}, {"start": 8.9, "end": 9.5}]})
+    monkeypatch.setattr(server, "_transcribe", lambda path, clip_timestamps=None: clips.append(clip_timestamps) or {
         "text": "hi there bye",
         "language": "en",
         "segments": [
@@ -64,6 +66,17 @@ def test_full_assigns_speaker_by_midpoint(server, monkeypatch):
     assert all(s["emotion"] == "angry" and s["emotion_scores"] for s in body["segments"])
     assert body["top_emotion"] == "angry" and body["text"] == "hi there bye"
     assert windows[2] == (pytest.approx(8.8), server.MIN_EMOTION_DURATION_S)
+    assert clips == [[0.0, 4.5, 8.9, 9.5]]  # Whisper only sees the VAD speech regions
+    assert body["speech_segments"] == [{"start": 0.0, "end": 4.5}, {"start": 8.9, "end": 9.5}]
+
+
+def test_full_without_speech_skips_asr(server, monkeypatch):
+    monkeypatch.setattr(server, "_vad", lambda path: {"speech_segments": []})
+    monkeypatch.setattr(server, "_transcribe", lambda *a, **k: pytest.fail("ASR must not run without speech"))
+
+    body = TestClient(server.app).post("/full", files={"file": ("call.wav", b"RIFF", "audio/wav")}).json()
+
+    assert body["text"] == "" and body["segments"] == [] and body["top_emotion"] == "unknown"
 
 
 def test_predict_text_maps_labels_to_vocalmind_vocabulary(server):

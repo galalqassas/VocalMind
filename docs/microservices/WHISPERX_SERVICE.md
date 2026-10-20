@@ -22,7 +22,7 @@
 `POST /transcribe` — multipart `file`, optional form field `language`. Steps:
 
 1. **Stereo check** (`detect_stereo_layout`): 2 channels with abs(correlation) over the first 30 s below `CHANNEL_DIARIZATION_MAX_CORR` → strategy `channel`, else `cluster`.
-2. **Transcribe** (batched), then **align** (on a corrupted alignment checkpoint the file is deleted and loading retried once; alignment errors are logged and skipped).
+2. **Transcribe** (batched; WhisperX's built-in Silero VAD, `vad_method="silero"`, selects the speech regions), then **align** (on a corrupted alignment checkpoint the file is deleted and loading retried once; alignment errors are logged and skipped).
 3. **Diarize**:
    - `channel`: each segment is labelled `AGENT` or `CUSTOMER` by RMS energy per channel; `speaker_meta.source="channel"`.
    - `cluster` with pyannote: `assign_word_speakers`, then segments are split where word speakers change; `speaker_meta` gets `diarization_speaker`, `source="diarization"`, `strategy="cluster"`.

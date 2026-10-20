@@ -374,8 +374,9 @@ class Models:
 
 def load_models():
     logger.info(f"Loading WhisperX model ({WHISPER_MODEL_SIZE}) on {DEVICE} ({COMPUTE_TYPE})...")
+    # Silero VAD (same model as the Kaggle server) picks the speech regions Whisper transcribes.
     Models.asr_model = whisperx.load_model(
-        WHISPER_MODEL_SIZE, DEVICE, compute_type=COMPUTE_TYPE
+        WHISPER_MODEL_SIZE, DEVICE, compute_type=COMPUTE_TYPE, vad_method="silero"
     )
     logger.info("[OK] WhisperX ASR loaded")
 

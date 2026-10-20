@@ -46,31 +46,17 @@ def main() -> int:
     parser.add_argument("--poll-interval", type=float, default=None)
     parser.add_argument("--poll-max", type=int, default=None)
     parser.add_argument("--include-llm", action="store_true", help="Request LLM/RAG trigger payload on detail")
-    parser.add_argument(
-        "--call04",
-        action="store_true",
-        help="Use CALL_04/nexalink defaults instead of the easy_no_overlap/niletech stub",
-    )
     args = parser.parse_args()
 
-    _PRESETS = {
-        "default": {
-            "email": "manager@niletech.com",
-            "password": "password",
-            "storage_path": "/app/storage/audio/easy_no_overlap.mp3",
-            "poll_interval": 2.0,
-            "poll_max": 120,
-        },
-        "call04": {
-            "email": "manager@nexalink.com",
-            "password": "password123",
-            "storage_path": "/app/storage/audio/nexalink/CALL_04_aisha_access_recovery_fraud.wav",
-            "poll_interval": 20.0,
-            "poll_max": 60,
-        },
+    # Defaults: the NexaLink demo org seeded at backend startup (SEED_DEMO_DATA=true).
+    defaults = {
+        "email": "manager@nexalink.com",
+        "password": "password123",
+        "storage_path": "/app/storage/audio/nexalink/CALL_04_aisha_access_recovery_fraud.wav",
+        "poll_interval": 20.0,
+        "poll_max": 60,
     }
-    preset = _PRESETS["call04"] if args.call04 else _PRESETS["default"]
-    for field, value in preset.items():
+    for field, value in defaults.items():
         if getattr(args, field) is None:
             setattr(args, field, value)
     base = args.base.rstrip("/")
