@@ -15,7 +15,7 @@ By default every model (ASR, diarization, speech and text emotion, embeddings, P
 | `ingestion` | default | — | `services/rag/` | Runs `main.py --watch`: PDFs in `storage/docs` → Qdrant |
 | `whisperx` | `local-ml` | 8003 → 8000 | `services/whisperx/app.py` | ASR + alignment + diarization (`POST /transcribe`) |
 | `emotion` | `local-ml` | 8001 → 8000 | `services/emotion/app.py` | emotion2vec speech emotion, per segment (`/predict`) + DistilRoBERTa text emotion (`/predict_text`) |
-| `vad` | `local-ml` | 8002 | `services/vad/app.py` | Silero VAD splitter (`/split`); not used by the main worker pipeline |
+| `vad` | `local-ml` | 8002 | `services/vad/app.py` | Standalone Silero VAD splitter (`/split`). The pipeline runs VAD inside `/full` instead (Kaggle `server.py`, WhisperX `vad_method="silero"`) |
 | `ollama` | `local-ml` | 11434 | — | Local embeddings (`snowflake-arctic-embed2`) |
 
 External LLMs: Ollama Cloud (compose default `LLM_PROVIDER=ollama_cloud`) or Groq (`LLM_PROVIDER=groq`; also the `Settings` default in `backend/app/core/config.py`).

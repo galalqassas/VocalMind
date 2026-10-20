@@ -13,7 +13,7 @@ One FastAPI + SQLModel + Postgres backend, with every heavy model behind HTTP. B
 
 | Component | How the backend uses it |
 |---|---|
-| Speech models: Kaggle `/full` etc., or `services/vad` (Silero), `services/whisperx` (ASR + align + PyAnnote), `services/emotion` (emotion2vec) | Async HTTP, routed by `IS_LOCAL` (`backend/app/core/kaggle_client.py`) |
+| Speech models: Kaggle `/full` (Silero VAD + Whisper + pyannote + emotion2vec), or `services/whisperx` (Silero VAD + ASR + align + pyannote) and `services/emotion` (emotion2vec) | Async HTTP, routed by `IS_LOCAL` (`backend/app/core/kaggle_client.py`) |
 | Text emotion | HTTP `/predict_text` (Kaggle or `services/emotion`); fusion in-process in `backend/app/core/emotion_fusion.py` |
 | Embeddings, PDF parsing, reranking | Kaggle `/embed`, `/parse`, `/rerank`, or Ollama + in-process Docling/cross-encoder, routed by `RAG_MODELS_HOST` |
 | Speaker roles | In-process scikit-learn LR + TF-IDF (`backend/app/core/model.pkl`) |

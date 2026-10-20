@@ -595,8 +595,8 @@ async def process_interaction(interaction_id: UUID) -> None:
     if gibberish:
         raise StageFailed(
             (JobStage.stt,),
-            "ASR quality gate failed: transcript is empty or gibberish. "
-            "Check audio file format and WhisperX model availability.",
+            "ASR quality gate failed: no speech detected or transcript is gibberish. "
+            "Check the audio file and the inference server.",
         )
 
     segments = apply_emotion_min_duration_gate([dict(s) for s in analysis.get("segments") or []])

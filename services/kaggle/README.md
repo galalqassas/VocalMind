@@ -11,7 +11,7 @@ Runs every heavy model for VocalMind on a free Kaggle GPU so the local stack sta
 | `POST /emotion` | multipart `file` | `{"top_emotion", "emotions": [{"label", "score"}]}` (whole clip) |
 | `POST /diarize` | multipart `file` | `{"segments": [{"start", "end", "speaker"}]}` |
 | `POST /vad` | multipart `file` | `{"speech_segments": [{"start", "end"}]}` |
-| `POST /full` | multipart `file` | `{"text", "language", "top_emotion", "emotions", "segments": [{"start", "end", "text", "speaker", "emotion", "emotion_scores": [{"label", "score"}]}]}` |
+| `POST /full` | multipart `file` | `{"text", "language", "top_emotion", "emotions", "speech_segments": [{"start", "end"}], "segments": [{"start", "end", "text", "speaker", "emotion", "emotion_scores": [{"label", "score"}]}]}`. Steps: Silero VAD → Whisper on the speech regions only (`clip_timestamps`, original timestamps kept) → diarization → emotion per segment. No speech → empty `segments` and `top_emotion: "unknown"`. |
 | `POST /predict_text` | JSON `{"text"}` or `{"texts": [...]}` | `{"emotion", "confidence"}` or `{"results": [{"emotion", "confidence"}]}` |
 | `POST /embed` | JSON `{"texts": [...]}` | `{"embeddings": [[float]], "model", "dimension": 1024}` |
 | `POST /rerank` | JSON `{"query", "documents": [...]}` | `{"scores": [float]}` (same order as `documents`) |

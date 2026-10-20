@@ -36,7 +36,7 @@ Overlays:
 - `docker-compose.gpu.yml`: GPU for the local containers.
 - `docker-compose.native.yml`: the frontend container proxying to a backend running on the host.
 
-VAD is only reachable through `/api/v1/vad/*`; the pipeline doesn't call it.
+**VAD:** every `/full` call starts with Silero VAD, so Whisper only transcribes speech. On Kaggle this happens in `server.py`; locally, WhisperX runs with `vad_method="silero"`. The separate `vad` container and `/api/v1/vad/*` are standalone tools and are not part of the pipeline.
 
 ## Processing pipeline (the core flow)
 
@@ -47,7 +47,7 @@ VAD is only reachable through `/api/v1/vad/*`; the pipeline doesn't call it.
 2. That creates an `Interaction` (status `pending`) and 6 `ProcessingJob`s: diarization → stt → emotion → reasoning → scoring → rag_eval.
 3. The worker in `backend/app/core/interaction_processing.py` runs everything else:
    1. Fetches audio (local disk or Supabase Storage, `AUDIO_STORAGE_BACKEND`).
-   2. Runs inference through `full_client` (`api/routes/full/service.py`): Kaggle `/full`, or locally WhisperX `/transcribe` followed by the emotion service with `segments`. Both give text, speaker cluster and **per-segment** emotion2vec emotion.
+   2. Runs inference through `full_client` (`api/routes/full/service.py`): Kaggle `/full`, or locally WhisperX `/transcribe` followed by the emotion service with `segments`. Both run Silero VAD first, then give text, speaker cluster and **per-segment** emotion2vec emotion. If no speech is found, the `stt` stage fails.
    3. Normalizes the response (`inference_contracts.py`). A segment without an emotion stays `unknown`; nothing is guessed.
    4. Checks that the transcript isn't gibberish (an LLM call, `chains.is_gibberish`).
    5. Assigns speaker roles (`assign_speaker_roles`), using only the trained **LR+TF-IDF model** (`core/model.pkl`, `core/vectorizer.pkl`):
@@ -188,7 +188,7 @@ CI (`.github/workflows/`):
 ## Conventions
 
 - **Python** (backend 3.12, services 3.11): Ruff, uv, async FastAPI, SQLModel, Pydantic schemas, `Depends()` DI, settings via `Settings(BaseSettings)`.
-- **TypeScript**: pnpm, React 18 + Vite 6, Tailwind v4 + MUI, shadcn/Radix in `components/ui/`, react-router v7, React Context, `@/` alias.
+- **TypeScript**: pnpm, React 18 + Vite 6, Tailwind v4, shadcn/Radix in `components/ui/`, react-router v7, React Context, `@/` alias.
 
 ## Docs
 

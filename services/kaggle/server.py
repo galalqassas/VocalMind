@@ -25,6 +25,10 @@ logger = logging.getLogger("vocalmind.kaggle")
 PORT = 8000
 SAMPLE_RATE = 16000
 MIN_EMOTION_DURATION_S = 0.8
+# VAD tuning for phone calls: pauses shorter than this stay inside one speech region,
+# and each region is padded so Whisper doesn't clip the first/last word.
+VAD_MIN_SILENCE_MS = 1000
+VAD_SPEECH_PAD_MS = 200
 EMBED_MODEL = "Snowflake/snowflake-arctic-embed-l-v2.0"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 TEXT_EMOTION_MODEL = "j-hartmann/emotion-english-distilroberta-base"
@@ -183,8 +187,10 @@ def _assign_speakers(segments: list[dict], turns: list[dict]) -> list[dict]:
 # ── Inference (sync; always called under gpu_lock) ──────────────────────────
 
 
-def _transcribe(path: str) -> dict:
-    result = _model("whisper").transcribe(path, language="en", fp16=device == "cuda")
+def _transcribe(path: str, clip_timestamps: list[float] | None = None) -> dict:
+    """Whisper ASR. ``clip_timestamps`` ([start, end, ...] in seconds) limits it to speech regions."""
+    options = {"clip_timestamps": clip_timestamps} if clip_timestamps else {}
+    result = _model("whisper").transcribe(path, language="en", fp16=device == "cuda", **options)
     return {
         "text": result["text"].strip(),
         "language": result.get("language", "en"),
@@ -226,12 +232,23 @@ def _vad(path: str) -> dict:
 
     model, get_speech_timestamps = _model("vad")
     audio = torch.from_numpy(_read_mono_16k(path))
-    stamps = get_speech_timestamps(audio, model, sampling_rate=SAMPLE_RATE, return_seconds=True)
+    stamps = get_speech_timestamps(
+        audio,
+        model,
+        sampling_rate=SAMPLE_RATE,
+        return_seconds=True,
+        min_silence_duration_ms=VAD_MIN_SILENCE_MS,
+        speech_pad_ms=VAD_SPEECH_PAD_MS,
+    )
     return {"speech_segments": [{"start": s["start"], "end": s["end"]} for s in stamps]}
 
 
 def _full(path: str) -> dict:
-    asr = _transcribe(path)
+    """VAD → Whisper on speech regions only → diarization → per-segment emotion."""
+    speech = _vad(path)["speech_segments"]
+    if not speech:
+        return {"text": "", "language": "en", "segments": [], "speech_segments": [], "top_emotion": "unknown", "emotions": []}
+    asr = _transcribe(path, [t for region in speech for t in (region["start"], region["end"])])
     segments = _assign_speakers(asr["segments"], _diarize(path)["segments"])
     with tempfile.TemporaryDirectory() as tmp:
         for i, seg in enumerate(segments):
@@ -243,7 +260,7 @@ def _full(path: str) -> dict:
                 logger.exception("Segment %d emotion failed", i)
                 emo = {"top_emotion": "unknown", "emotions": []}
             seg["emotion"], seg["emotion_scores"] = emo["top_emotion"], emo["emotions"]
-    return {**asr, "segments": segments, **_emotion(path)}
+    return {**asr, "segments": segments, "speech_segments": speech, **_emotion(path)}
 
 
 def _text_result(scores: list[dict]) -> dict:

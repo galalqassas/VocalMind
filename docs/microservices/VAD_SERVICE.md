@@ -13,7 +13,7 @@ The model is loaded lazily via `torch.hub.load("snakers4/silero-vad", "silero_va
 
 ## Backend use
 
-The main processing worker does not call VAD. It is used by:
+The processing pipeline does not call this service: VAD runs inside `/full` (Kaggle `server.py`; locally WhisperX `vad_method="silero"`). This service is only used by:
 
 - `POST /api/v1/vad/analyze` and `POST /api/v1/vad/analyze-local` (proxies, `backend/app/api/routes/vad/`; no auth dependency).
 - `POST /api/v1/emotion/process` in local mode (`backend/app/api/routes/emotion/pipeline.py`): split with VAD, then call Emotion `/predict` per clip. A VAD connection error returns 503, a non-200 response 502.
